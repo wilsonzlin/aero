@@ -25,6 +25,7 @@ use aero_usb::xhci::context::{XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX
 use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
 
 use crate::guest_memory_bus::{GuestMemoryBus, wasm_memory_byte_len};
+use crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN;
 
 const XHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"XHCB";
 const XHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
@@ -357,7 +358,8 @@ impl XhciControllerBridge {
         let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
-        let actions: Vec<UsbHostAction> = dev.drain_actions();
+        let actions: Vec<UsbHostAction> =
+            dev.drain_actions_limit(MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN);
         if actions.is_empty() {
             return Ok(JsValue::NULL);
         }

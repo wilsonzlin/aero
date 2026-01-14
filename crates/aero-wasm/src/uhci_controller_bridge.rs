@@ -17,6 +17,7 @@ use aero_usb::uhci::UhciController;
 use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbWebUsbPassthroughDevice};
 
 use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len};
+use crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN;
 
 const UHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"UHCB";
 const UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -279,7 +280,8 @@ impl UhciControllerBridge {
             return Ok(JsValue::NULL);
         };
 
-        let actions: Vec<UsbHostAction> = dev.drain_actions();
+        let actions: Vec<UsbHostAction> =
+            dev.drain_actions_limit(MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN);
         if actions.is_empty() {
             return Ok(JsValue::NULL);
         }

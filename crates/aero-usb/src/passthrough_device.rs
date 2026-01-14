@@ -61,6 +61,10 @@ impl UsbWebUsbPassthroughDevice {
         self.0.borrow_mut().passthrough.drain_actions()
     }
 
+    pub fn drain_actions_limit(&self, max: usize) -> Vec<UsbHostAction> {
+        self.0.borrow_mut().passthrough.drain_actions_limit(max)
+    }
+
     pub fn push_completion(&self, completion: UsbHostCompletion) {
         self.0.borrow_mut().passthrough.push_completion(completion);
     }

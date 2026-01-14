@@ -254,6 +254,19 @@ impl UsbPassthroughDevice {
         self.actions.drain(..).collect()
     }
 
+    /// Drain up to `max` queued host actions.
+    ///
+    /// This is primarily used by WASM/JS bridges to keep per-tick work bounded: draining the full
+    /// action queue can allocate very large JS arrays if something goes wrong (e.g. a bug causes
+    /// duplicate actions to be queued).
+    pub fn drain_actions_limit(&mut self, max: usize) -> Vec<UsbHostAction> {
+        if max == 0 || self.actions.is_empty() {
+            return Vec::new();
+        }
+        let count = max.min(self.actions.len());
+        self.actions.drain(..count).collect()
+    }
+
     pub fn push_completion(&mut self, completion: UsbHostCompletion) {
         let (id, result) = UsbHostResult::from_completion(completion);
         if !self.is_inflight_id(id) {
@@ -1143,6 +1156,53 @@ mod tests {
             serde_json::to_value(&fixture.completions).unwrap(),
             fixture_value["completions"]
         );
+    }
+
+    #[test]
+    fn drain_actions_limit_preserves_order_and_leaves_remaining_actions() {
+        let mut dev = UsbPassthroughDevice::new();
+        dev.actions.push_back(UsbHostAction::BulkIn {
+            id: 1,
+            endpoint: 0x81,
+            length: 1,
+        });
+        dev.actions.push_back(UsbHostAction::BulkIn {
+            id: 2,
+            endpoint: 0x81,
+            length: 1,
+        });
+        dev.actions.push_back(UsbHostAction::BulkIn {
+            id: 3,
+            endpoint: 0x81,
+            length: 1,
+        });
+
+        let drained = dev.drain_actions_limit(2);
+        assert_eq!(drained.len(), 2);
+        assert!(
+            matches!(drained[0], UsbHostAction::BulkIn { id: 1, .. }),
+            "expected first drained action to be id=1, got {:?}",
+            drained[0]
+        );
+        assert!(
+            matches!(drained[1], UsbHostAction::BulkIn { id: 2, .. }),
+            "expected second drained action to be id=2, got {:?}",
+            drained[1]
+        );
+
+        assert_eq!(dev.actions.len(), 1);
+        assert!(
+            matches!(
+                dev.actions.front(),
+                Some(UsbHostAction::BulkIn { id: 3, .. })
+            ),
+            "expected remaining queued action to be id=3"
+        );
+
+        let rest = dev.drain_actions_limit(10);
+        assert_eq!(rest.len(), 1);
+        assert!(matches!(rest[0], UsbHostAction::BulkIn { id: 3, .. }));
+        assert!(dev.actions.is_empty());
     }
 
     #[test]

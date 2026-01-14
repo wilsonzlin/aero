@@ -727,7 +727,9 @@ impl UhciRuntime {
             return Ok(JsValue::NULL);
         }
 
-        let actions: Vec<UsbHostAction> = self.webusb_dev.drain_actions();
+        let actions: Vec<UsbHostAction> = self
+            .webusb_dev
+            .drain_actions_limit(crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN);
         if actions.is_empty() {
             return Ok(JsValue::NULL);
         }

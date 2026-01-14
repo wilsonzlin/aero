@@ -911,7 +911,9 @@ impl WebUsbUhciPassthroughHarness {
 
     /// Drain all queued UsbHostAction objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
-        let actions = self.webusb.drain_actions();
+        let actions = self
+            .webusb
+            .drain_actions_limit(crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN);
         self.total_actions_drained = self
             .total_actions_drained
             .saturating_add(actions.len() as u32);

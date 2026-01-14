@@ -10,3 +10,9 @@
 ///
 /// Root ports are 0-based in the host-managed topology contract.
 pub(crate) const WEBUSB_ROOT_PORT: u8 = 1;
+
+/// Maximum number of WebUSB host actions to drain from WASM per JS poll.
+///
+/// Draining actions produces a JS array (`UsbHostAction[]`). Keep this bounded so that a bug or a
+/// malicious guest can't force the runtime to allocate an unbounded array in one tick.
+pub(crate) const MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN: usize = 64;

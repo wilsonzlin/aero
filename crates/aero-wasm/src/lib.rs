@@ -1836,7 +1836,9 @@ impl UsbPassthroughBridge {
 
     /// Drain all queued host actions as plain JS objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
-        let actions = self.inner.drain_actions();
+        let actions = self
+            .inner
+            .drain_actions_limit(crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN);
         if actions.is_empty() {
             // Avoid allocating a fresh empty JS array on every poll tick when there are no
             // pending actions (the worker runtime treats `null`/`undefined` as "no work").
@@ -1937,7 +1939,8 @@ impl UsbPassthroughDemoCore {
     }
 
     fn drain_actions(&mut self) -> Vec<UsbHostAction> {
-        self.device.drain_actions()
+        self.device
+            .drain_actions_limit(crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN)
     }
 
     fn push_completion(&mut self, completion: UsbHostCompletion) {

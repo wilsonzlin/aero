@@ -4,6 +4,8 @@ use aero_usb::device::AttachedUsbDevice;
 use aero_usb::passthrough::{UsbHostCompletion, UsbHostCompletionIn, UsbHostCompletionOut};
 use aero_usb::{SetupPacket as BusSetupPacket, UsbSpeed, UsbWebUsbPassthroughDevice};
 
+use crate::webusb_ports::MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN;
+
 // -------------------------------------------------------------------------------------------------
 // Extremely small EHCI-like harness
 // -------------------------------------------------------------------------------------------------
@@ -460,7 +462,8 @@ impl WebUsbEhciPassthroughHarness {
         let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
-        let actions: Vec<aero_usb::passthrough::UsbHostAction> = dev.drain_actions();
+        let actions: Vec<aero_usb::passthrough::UsbHostAction> =
+            dev.drain_actions_limit(MAX_WEBUSB_HOST_ACTIONS_PER_DRAIN);
         if actions.is_empty() {
             return Ok(JsValue::NULL);
         }
