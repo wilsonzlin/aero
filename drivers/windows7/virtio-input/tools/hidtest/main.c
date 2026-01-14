@@ -172,6 +172,21 @@
 #define IOCTL_VIOINPUT_SET_LOG_MASK \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_WRITE_ACCESS)
 #endif
+#ifndef VIOINPUT_LOG_ERROR
+#define VIOINPUT_LOG_ERROR 0x00000001UL
+#endif
+#ifndef VIOINPUT_LOG_IOCTL
+#define VIOINPUT_LOG_IOCTL 0x00000002UL
+#endif
+#ifndef VIOINPUT_LOG_QUEUE
+#define VIOINPUT_LOG_QUEUE 0x00000004UL
+#endif
+#ifndef VIOINPUT_LOG_VIRTQ
+#define VIOINPUT_LOG_VIRTQ 0x00000008UL
+#endif
+#ifndef VIOINPUT_LOG_VERBOSE
+#define VIOINPUT_LOG_VERBOSE 0x80000000UL
+#endif
 #define VIOINPUT_COUNTERS_VERSION 3
 #define VIOINPUT_STATE_VERSION 3
 #define VIOINPUT_INTERRUPT_INFO_VERSION 1
@@ -5605,6 +5620,16 @@ static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actua
     int manufacturer_valid = 0;
     int product_valid = 0;
     int serial_valid = 0;
+    struct {
+        DWORD bit;
+        const WCHAR *name;
+    } mask_bits[] = {
+        {VIOINPUT_LOG_ERROR, L"Error"},
+        {VIOINPUT_LOG_IOCTL, L"IOCTL"},
+        {VIOINPUT_LOG_QUEUE, L"Queue"},
+        {VIOINPUT_LOG_VIRTQ, L"VirtQ"},
+        {VIOINPUT_LOG_VERBOSE, L"Verbose"},
+    };
 
     if (dev == NULL) {
         wprintf(L"{\"DiagnosticsMask\":\"0x%08lX\",\"DiagnosticsMaskValue\":%lu}\n", (unsigned long)actual_mask,
@@ -5788,8 +5813,42 @@ static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actua
         wprintf(L"null");
     }
     wprintf(L",\n");
+    wprintf(L"  \"RequestedDiagnosticsMaskEnabled\": ");
+    if (have_requested) {
+        size_t i;
+        int first = 1;
+        wprintf(L"[");
+        for (i = 0; i < (sizeof(mask_bits) / sizeof(mask_bits[0])); i++) {
+            if ((requested_mask & mask_bits[i].bit) != 0) {
+                if (!first) {
+                    wprintf(L",");
+                }
+                first = 0;
+                wprintf(L"\"%ls\"", mask_bits[i].name);
+            }
+        }
+        wprintf(L"]");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
     wprintf(L"  \"DiagnosticsMask\": \"0x%08lX\",\n", (unsigned long)actual_mask);
-    wprintf(L"  \"DiagnosticsMaskValue\": %lu\n", (unsigned long)actual_mask);
+    wprintf(L"  \"DiagnosticsMaskValue\": %lu,\n", (unsigned long)actual_mask);
+    wprintf(L"  \"DiagnosticsMaskEnabled\": [");
+    {
+        size_t i;
+        int first = 1;
+        for (i = 0; i < (sizeof(mask_bits) / sizeof(mask_bits[0])); i++) {
+            if ((actual_mask & mask_bits[i].bit) != 0) {
+                if (!first) {
+                    wprintf(L",");
+                }
+                first = 0;
+                wprintf(L"\"%ls\"", mask_bits[i].name);
+            }
+        }
+    }
+    wprintf(L"]\n");
     wprintf(L"}\n");
 }
 
