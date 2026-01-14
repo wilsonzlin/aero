@@ -66,6 +66,7 @@ static __forceinline USHORT VirtioPciWdmMessageCountFromDescriptor(_In_ const CM
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioPciWdmInterruptConnect(
     _In_ PDEVICE_OBJECT DeviceObject,
+    _In_opt_ PDEVICE_OBJECT PhysicalDeviceObject,
     _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDescTranslated,
     _In_opt_ volatile UCHAR* IsrStatusRegister,
     _In_opt_ EVT_VIRTIO_PCI_WDM_CONFIG_CHANGE* EvtConfigChange,
@@ -136,6 +137,11 @@ NTSTATUS VirtioPciWdmInterruptConnect(
         ULONG i;
         IO_CONNECT_INTERRUPT_PARAMETERS params;
 
+        if (PhysicalDeviceObject == NULL) {
+            RtlZeroMemory(Interrupts, sizeof(*Interrupts));
+            return STATUS_INVALID_PARAMETER;
+        }
+
         messageCount = VirtioPciWdmMessageCountFromDescriptor(InterruptDescTranslated);
         if (messageCount == 0) {
             RtlZeroMemory(Interrupts, sizeof(*Interrupts));
@@ -196,7 +202,7 @@ NTSTATUS VirtioPciWdmInterruptConnect(
 
         RtlZeroMemory(&params, sizeof(params));
         params.Version = 2; /* CONNECT_MESSAGE_BASED */
-        params.MessageBased.PhysicalDeviceObject = DeviceObject;
+        params.MessageBased.PhysicalDeviceObject = PhysicalDeviceObject;
         params.MessageBased.ServiceRoutine = VirtioPciWdmMessageIsr;
         params.MessageBased.ServiceContext = Interrupts;
         params.MessageBased.SpinLock = NULL;

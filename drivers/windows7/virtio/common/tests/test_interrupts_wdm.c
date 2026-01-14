@@ -128,6 +128,7 @@ static void test_connect_validation(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -139,21 +140,25 @@ static void test_connect_validation(void)
 
     desc = make_msg_desc(2);
 
-    status = VirtioPciWdmInterruptConnect(&dev, NULL, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, NULL, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_INVALID_PARAMETER);
 
-    status = VirtioPciWdmInterruptConnect(NULL, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(NULL, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_INVALID_PARAMETER);
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, NULL);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, NULL);
+    assert(status == STATUS_INVALID_PARAMETER);
+
+    /* Message interrupts require a PDO for IoConnectInterruptEx. */
+    status = VirtioPciWdmInterruptConnect(&dev, NULL, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_INVALID_PARAMETER);
 
     desc.Type = 0;
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_INVALID_PARAMETER);
 
     desc = make_msg_desc(0);
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_INVALID_PARAMETER);
 
     /* Parameter validation failures must not call through to WDK interrupt routines. */
@@ -184,7 +189,7 @@ static void test_intx_connect_and_dispatch(void)
     WdkTestResetIoConnectInterruptExCount();
     WdkTestResetIoDisconnectInterruptExCount();
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     assert(intr.Mode == VirtioPciWdmInterruptModeIntx);
     assert(WdkTestGetIoConnectInterruptCount() == 1);
@@ -236,6 +241,7 @@ static void test_message_connect_disconnect_calls_wdk_routines(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -244,7 +250,7 @@ static void test_message_connect_disconnect_calls_wdk_routines(void)
     WdkTestResetLastIoConnectInterruptExParams();
 
     desc = make_msg_desc(4);
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_SUCCESS);
     assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
     assert(intr.u.Message.MessageCount == 4);
@@ -252,7 +258,7 @@ static void test_message_connect_disconnect_calls_wdk_routines(void)
     assert(intr.u.Message.MessageInfo->MessageCount == 4);
     assert(WdkTestGetIoConnectInterruptExCount() == 1);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
-    assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == &dev);
+    assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == &pdo);
     assert(WdkTestGetLastIoConnectInterruptExMessageCount() == 4);
     assert(WdkTestGetLastIoConnectInterruptExSynchronizeIrql() == desc.u.MessageInterrupt.Level);
 
@@ -281,6 +287,7 @@ static void test_message_isr_does_not_read_isr_status_byte(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     volatile UCHAR isr_reg = 0xAA;
     interrupts_test_ctx_t ctx;
@@ -292,7 +299,7 @@ static void test_message_isr_does_not_read_isr_status_byte(void)
     g_mmio_read_count = 0;
     WdkSetMmioHandlers(mmio_read_handler, NULL);
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     ctx.expected = &intr;
 
@@ -315,6 +322,7 @@ static void test_message_isr_dpc_routing_and_evt_dpc_override(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     interrupts_test_ctx_t ctx;
     NTSTATUS status;
@@ -322,7 +330,7 @@ static void test_message_isr_dpc_routing_and_evt_dpc_override(void)
     desc = make_msg_desc(3);
     RtlZeroMemory(&ctx, sizeof(ctx));
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     ctx.expected = &intr;
 
@@ -346,7 +354,7 @@ static void test_message_isr_dpc_routing_and_evt_dpc_override(void)
 
     /* Now verify EvtDpc override suppresses per-type callbacks. */
     RtlZeroMemory(&ctx, sizeof(ctx));
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, evt_config, evt_queue, evt_dpc, &ctx, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, evt_config, evt_queue, evt_dpc, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     ctx.expected = &intr;
 
@@ -371,6 +379,7 @@ static void test_message_single_vector_default_mapping_dispatches_queue_work(voi
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     interrupts_test_ctx_t ctx;
     NTSTATUS status;
@@ -378,7 +387,7 @@ static void test_message_single_vector_default_mapping_dispatches_queue_work(voi
     desc = make_msg_desc(1);
     RtlZeroMemory(&ctx, sizeof(ctx));
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, evt_config, evt_queue, NULL, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
     ctx.expected = &intr;
@@ -401,6 +410,7 @@ static void test_message_interrupt_during_dpc_requeues(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     interrupts_test_ctx_t ctx;
     NTSTATUS status;
@@ -408,7 +418,7 @@ static void test_message_interrupt_during_dpc_requeues(void)
     desc = make_msg_desc(2); /* msg0=config, msg1=queue0 */
     RtlZeroMemory(&ctx, sizeof(ctx));
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, evt_queue_trigger_message_interrupt_once, NULL, &ctx, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, evt_queue_trigger_message_interrupt_once, NULL, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     ctx.expected = &intr;
 
@@ -440,6 +450,7 @@ static void test_connect_failure_zeroes_state(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -451,7 +462,7 @@ static void test_connect_failure_zeroes_state(void)
     memset(&intr, 0xA5, sizeof(intr));
 
     WdkTestSetIoConnectInterruptExStatus(STATUS_INSUFFICIENT_RESOURCES);
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_INSUFFICIENT_RESOURCES);
     assert(intr.Initialized == FALSE);
     assert(intr.Mode == VirtioPciWdmInterruptModeUnknown);
@@ -475,7 +486,7 @@ static void test_intx_evt_dpc_override(void)
     desc = make_int_desc();
     RtlZeroMemory(&ctx, sizeof(ctx));
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, &isr_reg, evt_config, evt_queue, evt_dpc, &ctx, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, NULL, &desc, &isr_reg, evt_config, evt_queue, evt_dpc, &ctx, &intr);
     assert(status == STATUS_SUCCESS);
     ctx.expected = &intr;
 
@@ -498,6 +509,7 @@ static void test_disconnect_waits_for_inflight_dpc(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
@@ -505,7 +517,7 @@ static void test_disconnect_waits_for_inflight_dpc(void)
 
     WdkTestResetKeDelayExecutionThreadCount();
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_SUCCESS);
 
     /* Simulate an in-flight DPC (not queued) so disconnect must wait. */
@@ -521,12 +533,13 @@ static void test_disconnect_cancels_queued_dpc(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
     DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
 
     desc = make_msg_desc(2);
 
-    status = VirtioPciWdmInterruptConnect(&dev, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
     assert(status == STATUS_SUCCESS);
 
     assert(WdkTestTriggerMessageInterrupt(intr.u.Message.MessageInfo, 1) != FALSE);

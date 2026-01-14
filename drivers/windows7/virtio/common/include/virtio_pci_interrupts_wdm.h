@@ -123,7 +123,16 @@ typedef struct _VIRTIO_PCI_WDM_INTERRUPTS {
 
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioPciWdmInterruptConnect(
+    /*
+     * Device object for this driver (typically the FDO).
+     *
+     * Note: For message-signaled interrupts, IoConnectInterruptEx requires a
+     * PhysicalDeviceObject (PDO) which may differ from the FDO. Callers must
+     * provide both.
+     */
     _In_ PDEVICE_OBJECT DeviceObject,
+    /* PDO required for IoConnectInterruptEx(CONNECT_MESSAGE_BASED). */
+    _In_opt_ PDEVICE_OBJECT PhysicalDeviceObject,
     _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDescTranslated,
     _In_opt_ volatile UCHAR* IsrStatusRegister,
     _In_opt_ EVT_VIRTIO_PCI_WDM_CONFIG_CHANGE* EvtConfigChange,
