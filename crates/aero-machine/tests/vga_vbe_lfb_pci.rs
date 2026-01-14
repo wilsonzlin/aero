@@ -1,4 +1,45 @@
-use aero_machine::{Machine, MachineConfig};
+use aero_devices::a20_gate::A20_GATE_PORT;
+use aero_machine::{Machine, MachineConfig, RunExit};
+
+fn enable_a20(m: &mut Machine) {
+    // Fast A20 gate at port 0x92: bit1 enables A20.
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+}
+
+fn run_until_halt(m: &mut Machine) {
+    for _ in 0..200 {
+        match m.run_slice(50_000) {
+            RunExit::Halted { .. } => return,
+            RunExit::Completed { .. } => continue,
+            other => panic!("unexpected exit: {other:?}"),
+        }
+    }
+    panic!("guest did not reach HLT");
+}
+
+fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+
+    // mov bx, 0x4118 (mode 0x118 + LFB requested)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0x41]);
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
 
 #[test]
 fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
@@ -29,5 +70,35 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
 
     m.display_present();
     assert_eq!(m.display_resolution(), (64, 64));
+    assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
+}
+
+#[test]
+fn aerogpu_vbe_lfb_is_reachable_via_pci_mmio_router() {
+    let boot = build_int10_vbe_set_mode_boot_sector();
+    let mut m = Machine::new(MachineConfig {
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        enable_vga: false,
+        // Keep output deterministic.
+        enable_serial: false,
+        enable_i8042: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    enable_a20(&mut m);
+
+    // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
+    // changes (e.g. standalone VGA stub vs AeroGPU BAR1-backed legacy VBE).
+    let base = m.vbe_lfb_base();
+    m.write_physical_u32(base, 0x00FF_0000);
+
+    m.display_present();
+    assert_eq!(m.display_resolution(), (1024, 768));
     assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
 }
