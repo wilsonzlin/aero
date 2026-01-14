@@ -2493,6 +2493,45 @@ inline bool SetPrimitiveTopologyLocked(DeviceT* dev, uint32_t topology) {
   return SetPrimitiveTopologyLocked(dev, topology, SetPrimitiveTopologyNoopSetError{});
 }
 
+// -------------------------------------------------------------------------------------------------
+// Resource binding helpers (SET_TEXTURE)
+// -------------------------------------------------------------------------------------------------
+//
+// Emits an AEROGPU_CMD_SET_TEXTURE packet. This is shared across D3D10/D3D10.1/D3D11
+// codepaths; higher-level helpers are responsible for managing per-stage binding
+// tables and resource hazard mitigation.
+//
+// The caller is expected to hold `dev->mutex`.
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetTextureCmdLocked(DeviceT* dev,
+                                    uint32_t shader_stage,
+                                    uint32_t slot,
+                                    aerogpu_handle_t texture,
+                                    SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->slot = slot;
+  cmd->texture = texture;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+struct EmitSetTextureNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetTextureCmdLocked(DeviceT* dev, uint32_t shader_stage, uint32_t slot, aerogpu_handle_t texture) {
+  return EmitSetTextureCmdLocked(dev, shader_stage, slot, texture, EmitSetTextureNoopSetError{});
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);

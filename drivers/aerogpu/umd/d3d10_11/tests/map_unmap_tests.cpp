@@ -472,6 +472,79 @@ bool TestPrimitiveTopologyHelperEmitsAndCaches() {
   return true;
 }
 
+bool TestSetTextureHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetTextureCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+  const bool ok = EmitSetTextureCmdLocked(&dev,
+                                         AEROGPU_SHADER_STAGE_VERTEX,
+                                         /*slot=*/3,
+                                         /*texture=*/static_cast<aerogpu_handle_t>(42),
+                                         [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetTextureCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetTextureCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_texture),
+             "SET_TEXTURE packet emitted")) {
+    return false;
+  }
+  const auto* pkt =
+      reinterpret_cast<const aerogpu_cmd_set_texture*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_TEXTURE, "SET_TEXTURE opcode")) {
+    return false;
+  }
+  if (!Check(pkt->shader_stage == AEROGPU_SHADER_STAGE_VERTEX, "SET_TEXTURE shader_stage")) {
+    return false;
+  }
+  if (!Check(pkt->slot == 3, "SET_TEXTURE slot")) {
+    return false;
+  }
+  if (!Check(pkt->texture == 42, "SET_TEXTURE texture")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "SET_TEXTURE reserved0 cleared")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetTextureCmdLocked(&tiny,
+                                          AEROGPU_SHADER_STAGE_PIXEL,
+                                          /*slot=*/0,
+                                          /*texture=*/static_cast<aerogpu_handle_t>(1),
+                                          [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetTextureCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -9723,6 +9796,7 @@ int main() {
   ok &= TestViewportScissorHelpersDontReportNotImplWhenCmdAppendFails();
   ok &= TestRenderTargetHelpersClearStaleDsvHandles();
   ok &= TestPrimitiveTopologyHelperEmitsAndCaches();
+  ok &= TestSetTextureHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();

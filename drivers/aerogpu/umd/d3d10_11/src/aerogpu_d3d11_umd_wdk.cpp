@@ -1100,15 +1100,9 @@ static bool SetTextureLocked(Device* dev, uint32_t shader_stage, uint32_t slot, 
   if (!dev) {
     return false;
   }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!EmitSetTextureCmdLocked(dev, shader_stage, slot, texture, [&](HRESULT hr) { SetError(dev, hr); })) {
     return false;
   }
-  cmd->shader_stage = shader_stage;
-  cmd->slot = slot;
-  cmd->texture = texture;
-  cmd->reserved0 = 0;
 
   if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
     AEROGPU_D3D10_11_LOG("emit GS SetTexture slot=%u tex=%u",

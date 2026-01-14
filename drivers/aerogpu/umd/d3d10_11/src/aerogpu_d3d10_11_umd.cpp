@@ -999,19 +999,11 @@ bool set_texture_locked(AeroGpuDevice* dev,
                         uint32_t shader_stage,
                         uint32_t slot,
                         aerogpu_handle_t texture) {
-  if (!dev) {
-    return false;
-  }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return false;
-  }
-  cmd->shader_stage = shader_stage;
-  cmd->slot = slot;
-  cmd->texture = texture;
-  cmd->reserved0 = 0;
-  return true;
+  return aerogpu::d3d10_11::EmitSetTextureCmdLocked(dev,
+                                                    shader_stage,
+                                                    slot,
+                                                    texture,
+                                                    [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
 }
 
 bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev,
