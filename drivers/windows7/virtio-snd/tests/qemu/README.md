@@ -458,7 +458,11 @@ After changing a toggle, reboot the guest or disable/enable the device so Window
 Example (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
 
 ```cmd
+REM Force the silent Null backend:
 reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
+
+REM Allow polling-only mode when no usable interrupt can be wired up (modern virtio-pci transport packages only):
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
 ```
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
