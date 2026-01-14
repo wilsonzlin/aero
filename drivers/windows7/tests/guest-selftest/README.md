@@ -212,8 +212,8 @@ Notes:
 - IRQ diagnostics are emitted as standalone lines (in addition to the stable `AERO_VIRTIO_SELFTEST|TEST|...` markers):
   - `virtio-blk`:
     - also emits a standalone miniport IOCTL-derived line (best-effort):
-      - `virtio-blk-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
-      - (and WARN variants like `virtio-blk-irq|WARN|...` when the miniport contract is missing/truncated)
+      - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+      - (and WARN variants like `virtio-blk-miniport-irq|WARN|...` when the miniport contract is missing/truncated)
   - `virtio-net`, `virtio-snd`, `virtio-input`:
     - `virtio-<dev>-irq|INFO|mode=intx`
     - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>`

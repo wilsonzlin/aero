@@ -1077,9 +1077,11 @@ function Try-EmitAeroVirtioBlkIrqMarker {
     }
   }
 
-  # Standalone diagnostics marker emitted by the guest (resource enumeration / IOCTL diagnostics):
-  #   virtio-blk-irq|INFO|mode=msi|messages=...
-  #   virtio-blk-irq|INFO|mode=msi|message_count=...|msix_config_vector=...|msix_queue0_vector=...
+  # Standalone diagnostics markers emitted by the guest:
+  # - resource enumeration (PnP):
+  #     virtio-blk-irq|INFO|mode=msi|messages=...
+  # - miniport IOCTL diagnostics (best-effort; depends on miniport contract):
+  #     virtio-blk-miniport-irq|INFO|mode=msi|message_count=...|msix_config_vector=...|msix_queue0_vector=...
   $irqMatches = [regex]::Matches($Tail, "(?m)^virtio-blk-irq\\|[^`r`n]*")
   if ($irqMatches.Count -gt 0) {
     & $addLineFields $irqMatches[$irqMatches.Count - 1].Value

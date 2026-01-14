@@ -45,6 +45,8 @@ This is not perfect, but it’s a quick “are we even in the right mode?” che
 
 If you have access to Aero’s Windows 7 guest test tool (`aero-virtio-selftest.exe`), it can report which interrupt mode Windows actually assigned **without** WinDbg/DbgView:
 
+- `virtio-blk-irq|INFO|mode=intx`
+- `virtio-blk-irq|INFO|mode=msi|messages=<n>`
 - `virtio-net-irq|INFO|mode=intx`
 - `virtio-net-irq|INFO|mode=msi|messages=<n>`
 - `virtio-input-irq|INFO|mode=intx`
@@ -53,13 +55,13 @@ If you have access to Aero’s Windows 7 guest test tool (`aero-virtio-selftest.
 - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` *(when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface)*
 - `virtio-snd-irq|INFO|mode=msi|messages=<n>` *(fallback: message interrupts; does not distinguish MSI vs MSI-X)*
 
-For `virtio-blk`, the selftest emits a richer line from the miniport IOCTL query:
+For `virtio-blk`, the selftest may also emit a richer miniport-IOCTL-derived line (best-effort; depends on the installed miniport contract):
 
-- `virtio-blk-irq|INFO|mode=<intx|msi|msix>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+- `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
 
 Notes:
 
-- `mode=msi` means **message-signaled interrupts** (MSI or MSI-X). Most markers do not attempt to distinguish MSI vs MSI-X, but some drivers may report `mode=msix` when additional vector routing diagnostics are available (for example via a device-specific diag interface).
+- `mode=msi` means **message-signaled interrupts** (MSI or MSI-X). Most standalone markers do not attempt to distinguish MSI vs MSI-X, but some drivers may report `mode=msix` when additional vector routing diagnostics are available (for example via a device-specific diag interface). For virtio-blk, interpret non-`0xFFFF` `msix_*_vector` values as “MSI-X vectors are assigned” (and see the per-test `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...` marker for `irq_mode=msix` when available).
 - `messages=<n>` / `message_count=<n>` is the number of interrupt messages Windows granted. Drivers must remain functional even when Windows grants fewer than requested (or only INTx).
 - The tool logs to `C:\aero-virtio-selftest.log` and emits markers on stdout/COM1 for host-side parsing.
 
