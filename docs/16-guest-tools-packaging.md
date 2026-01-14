@@ -102,7 +102,10 @@ It applies a small exclusion policy:
 - **Refused (hard error)** to avoid leaking secrets:
   - private key material: `*.pfx`, `*.pvk`, `*.snk`, `*.key`, `*.pem` (case-insensitive)
 
-The same private-key refusal applies to the `guest-tools/` input tree (e.g. `config/`, `certs/`, `licenses/`) as an extra safety net.
+The same private-key refusal applies to the `guest-tools/` input tree (e.g. `tools/`, `config/`, `certs/`, `licenses/`) as an extra safety net.
+
+Files under `guest-tools/tools/` are filtered using the same inclusion/exclusion rules as driver
+directories (for example `*.pdb` is excluded by default), and symlinks are refused.
 
 Per-driver overrides can be configured in the packaging spec via `allow_extensions` and `allow_path_regexes`.
 
