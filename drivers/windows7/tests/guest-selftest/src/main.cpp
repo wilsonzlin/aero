@@ -7801,6 +7801,12 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   };
 
   auto cfg_fields = [&]() -> std::string {
+    // Compute a 32-bit counter delta with wrap-around handling.
+    auto delta_u32 = [](uint32_t after, uint32_t before) -> uint64_t {
+      if (after >= before) return static_cast<uint64_t>(after - before);
+      return (1ULL << 32) + static_cast<uint64_t>(after) - static_cast<uint64_t>(before);
+    };
+
     std::string s;
     if (out.cfg_vector.has_value()) {
       s += "|cfg_vector=" + std::to_string(static_cast<unsigned>(*out.cfg_vector));
@@ -7815,14 +7821,12 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
       s += "|cfg_intr_up=" + std::to_string(static_cast<unsigned long>(*out.cfg_intr_up));
     }
     if (out.cfg_intr_before.has_value() && out.cfg_intr_down.has_value()) {
-      const long long delta =
-          static_cast<long long>(*out.cfg_intr_down) - static_cast<long long>(*out.cfg_intr_before);
-      s += "|cfg_intr_down_delta=" + std::to_string(delta);
+      const uint64_t delta = delta_u32(*out.cfg_intr_down, *out.cfg_intr_before);
+      s += "|cfg_intr_down_delta=" + std::to_string(static_cast<unsigned long long>(delta));
     }
     if (out.cfg_intr_down.has_value() && out.cfg_intr_up.has_value()) {
-      const long long delta =
-          static_cast<long long>(*out.cfg_intr_up) - static_cast<long long>(*out.cfg_intr_down);
-      s += "|cfg_intr_up_delta=" + std::to_string(delta);
+      const uint64_t delta = delta_u32(*out.cfg_intr_up, *out.cfg_intr_down);
+      s += "|cfg_intr_up_delta=" + std::to_string(static_cast<unsigned long long>(delta));
     }
     return s;
   };
@@ -7883,17 +7887,22 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   if (out.cfg_vector.has_value()) {
     const auto d = query_diag();
     out.cfg_intr_down = cfg_intr_count(d, *out.cfg_vector);
-    if (out.cfg_intr_before.has_value() && out.cfg_intr_down.has_value() &&
-        *out.cfg_intr_down <= *out.cfg_intr_before) {
-      out.reason = "config_irq_missing_down";
-      out.total_ms = GetTickCount() - start_ms;
-      const std::string extra = cfg_fields();
-      log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|down_sec=%.2f|total_ms=%lu%s",
-               out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-               static_cast<unsigned long>(out.down_wait_ms), out.down_sec, static_cast<unsigned long>(out.total_ms),
-               extra.c_str());
-      return out;
+    if (out.cfg_intr_before.has_value() && out.cfg_intr_down.has_value()) {
+      const uint64_t delta = (*out.cfg_intr_down >= *out.cfg_intr_before)
+                                 ? static_cast<uint64_t>(*out.cfg_intr_down - *out.cfg_intr_before)
+                                 : (1ULL << 32) + static_cast<uint64_t>(*out.cfg_intr_down) -
+                                       static_cast<uint64_t>(*out.cfg_intr_before);
+      if (delta == 0) {
+        out.reason = "config_irq_missing_down";
+        out.total_ms = GetTickCount() - start_ms;
+        const std::string extra = cfg_fields();
+        log.Logf(
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|down_sec=%.2f|total_ms=%lu%s",
+            out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+            static_cast<unsigned long>(out.down_wait_ms), out.down_sec, static_cast<unsigned long>(out.total_ms),
+            extra.c_str());
+        return out;
+      }
     }
   }
 
@@ -7934,16 +7943,22 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   if (out.cfg_vector.has_value()) {
     const auto d = query_diag();
     out.cfg_intr_up = cfg_intr_count(d, *out.cfg_vector);
-    if (out.cfg_intr_down.has_value() && out.cfg_intr_up.has_value() && *out.cfg_intr_up <= *out.cfg_intr_down) {
-      out.reason = "config_irq_missing_up";
-      out.total_ms = GetTickCount() - start_ms;
-      const std::string extra = cfg_fields();
-      log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|up_wait_ms=%lu|down_sec=%.2f|up_sec=%.2f|total_ms=%lu%s",
-          out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-          static_cast<unsigned long>(out.down_wait_ms), static_cast<unsigned long>(out.up_wait_ms), out.down_sec,
-          out.up_sec, static_cast<unsigned long>(out.total_ms), extra.c_str());
-      return out;
+    if (out.cfg_intr_down.has_value() && out.cfg_intr_up.has_value()) {
+      const uint64_t delta = (*out.cfg_intr_up >= *out.cfg_intr_down)
+                                 ? static_cast<uint64_t>(*out.cfg_intr_up - *out.cfg_intr_down)
+                                 : (1ULL << 32) + static_cast<uint64_t>(*out.cfg_intr_up) -
+                                       static_cast<uint64_t>(*out.cfg_intr_down);
+      if (delta == 0) {
+        out.reason = "config_irq_missing_up";
+        out.total_ms = GetTickCount() - start_ms;
+        const std::string extra = cfg_fields();
+        log.Logf(
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|up_wait_ms=%lu|down_sec=%.2f|up_sec=%.2f|total_ms=%lu%s",
+            out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+            static_cast<unsigned long>(out.down_wait_ms), static_cast<unsigned long>(out.up_wait_ms), out.down_sec,
+            out.up_sec, static_cast<unsigned long>(out.total_ms), extra.c_str());
+        return out;
+      }
     }
   }
 
