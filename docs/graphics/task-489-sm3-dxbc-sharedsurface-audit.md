@@ -317,6 +317,10 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
   - `wgsl_texldd_emits_texture_sample_grad`
   - `wgsl_vs_texld_emits_texture_sample_level`
   - `wgsl_texldl_emits_texture_sample_level_explicit_lod`
+  - `wgsl_predicated_texld_avoids_non_uniform_control_flow`
+  - `wgsl_predicated_texldb_avoids_non_uniform_control_flow`
+  - `wgsl_predicated_texldp_avoids_non_uniform_control_flow`
+  - `wgsl_predicated_texldd_is_valid_with_non_uniform_predicate`
   - `wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord`
   - `wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x`
   - `wgsl_dcl_1d_sampler_texldb_emits_texture_sample_grad_x_with_bias`

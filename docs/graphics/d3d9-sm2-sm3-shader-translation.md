@@ -43,6 +43,10 @@ Supported texture types in the SM3 WGSL backend: 1D/2D/3D/cube, with coordinate 
 Note: WGSL does not support `textureSampleBias` for `texture_1d`, so SM3 `texldb` with a 1D sampler is
 lowered via `textureSampleGrad` with `dpdx`/`dpdy` scaled by `exp2(bias)`.
 
+Note: `texld`/`texldp`/`texldb` use implicit derivatives in WGSL (`textureSample*`) and must execute in
+uniform control flow. Predicated texture sampling lowers via unconditional sampling + `select(...)`
+rather than `if (p0) { ... }` to satisfy naga uniformity validation.
+
 **Where:**
 - `crates/aero-d3d9/src/sm3/wgsl.rs`
 
