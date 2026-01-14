@@ -3303,7 +3303,12 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
         hwids_upper = {h.upper() for h in hwids}
-        if strict_hwid.upper() not in hwids_upper:
+        # Most Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so
+        # binding remains revision-gated even if subsystem IDs are absent/ignored.
+        #
+        # The canonical virtio-input INF is intentionally SUBSYS-only to avoid overlapping
+        # with the tablet INF; the opt-in legacy alias INF provides the strict fallback.
+        if device_name != "virtio-input" and strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: missing strict REV-qualified hardware ID (required for contract major safety):",
@@ -3352,7 +3357,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=True,
+                require_fallback=False,
                 errors=errors,
             )
 
@@ -3384,11 +3389,12 @@ def main() -> None:
             errors=errors,
         )
 
-        drift = check_inf_alias_drift(
+        drift = check_inf_alias_drift_excluding_sections(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
+            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)
