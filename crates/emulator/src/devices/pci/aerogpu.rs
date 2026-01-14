@@ -618,6 +618,10 @@ impl AeroGpuPciDevice {
 
     pub fn set_scanout_state(&mut self, scanout_state: Option<Arc<ScanoutState>>) {
         self.scanout_state = scanout_state;
+        // `last_published_scanout0` caches the last update we published to a `ScanoutState`. If the
+        // host swaps out the `ScanoutState` instance (e.g. attaching a new scanout consumer), force
+        // a re-publish so the new consumer immediately receives the current scanout descriptor.
+        self.last_published_scanout0 = None;
         // Publish a best-effort current state immediately so consumers don't have to wait for the
         // next register write / tick.
         self.maybe_publish_wddm_scanout0_state();

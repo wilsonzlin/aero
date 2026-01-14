@@ -101,6 +101,53 @@ fn publishes_wddm_scanout_state_on_enable_transition() {
 }
 
 #[test]
+fn republishes_wddm_scanout_state_when_scanout_state_is_replaced() {
+    let mut mem = DummyMemory;
+    let scanout0 = Arc::new(ScanoutState::new());
+
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0, 0);
+    dev.set_scanout_state(Some(scanout0.clone()));
+    // Enable PCI MMIO decode so BAR0 writes are accepted.
+    dev.config_write(0x04, 2, 1 << 1);
+
+    // Program and claim a valid WDDM scanout.
+    let fb_gpa: u64 = 0x1234_5678_9abc_def0;
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 800);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 600);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 800 * 4);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u32,
+    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+
+    let snap0 = scanout0.snapshot();
+    assert_eq!(snap0.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap0.base_paddr(), fb_gpa);
+    assert_eq!(snap0.width, 800);
+    assert_eq!(snap0.height, 600);
+    assert_eq!(snap0.pitch_bytes, 800 * 4);
+    assert_eq!(snap0.format, SCANOUT_FORMAT_B8G8R8X8);
+
+    // Swap the scanout state object (e.g. attach a new scanout consumer) and ensure we immediately
+    // republish the current WDDM scanout descriptor to the new shared state.
+    let scanout1 = Arc::new(ScanoutState::new());
+    dev.set_scanout_state(Some(scanout1.clone()));
+
+    let snap1 = scanout1.snapshot();
+    assert_eq!(snap1.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap1.base_paddr(), fb_gpa);
+    assert_eq!(snap1.width, 800);
+    assert_eq!(snap1.height, 600);
+    assert_eq!(snap1.pitch_bytes, 800 * 4);
+    assert_eq!(snap1.format, SCANOUT_FORMAT_B8G8R8X8);
+}
+
+#[test]
 fn unsupported_scanout_format_after_claim_publishes_deterministic_disabled_descriptor() {
     let mut mem = DummyMemory;
     let scanout = Arc::new(ScanoutState::new());
