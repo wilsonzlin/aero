@@ -4,7 +4,7 @@ use std::rc::Rc;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::ehci::regs::{
     reg_portsc, CONFIGFLAG_CF, PORTSC_HSP, PORTSC_PED, PORTSC_PO, PORTSC_PR as EHCI_PORTSC_PR,
-    PORTSC_SUSP, REG_CONFIGFLAG,
+    PORTSC_SUSP, REG_CONFIGFLAG, REG_USBCMD as EHCI_REG_USBCMD, USBCMD_HCRESET,
 };
 use aero_usb::ehci::EhciController;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
@@ -178,6 +178,20 @@ fn usb2_companion_routing_swaps_reachability_between_uhci_and_ehci() {
         let desc = ehci_get_device_descriptor(&mut ehci).expect("EHCI descriptor after toggle");
         assert_eq!(desc, expected, "EHCI descriptor mismatch after toggle {i}");
     }
+
+    // Host Controller Reset should clear CONFIGFLAG and restore the default routing to the
+    // companion controller.
+    ehci.mmio_write(EHCI_REG_USBCMD, 4, USBCMD_HCRESET);
+    assert_eq!(
+        ehci.mmio_read(REG_CONFIGFLAG, 4),
+        0,
+        "HCRESET should clear CONFIGFLAG"
+    );
+    assert!(ehci.hub_mut().device_mut_for_address(0).is_none());
+
+    uhci_reset_root_port(&mut uhci, &mut mem);
+    let desc = uhci_get_device_descriptor(&mut uhci, &mut mem);
+    assert_eq!(desc, expected);
 }
 
 #[test]
