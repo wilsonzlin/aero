@@ -4788,9 +4788,7 @@ impl Machine {
     ///
     /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`).
     pub fn vbe_lfb_base(&self) -> u32 {
-        // VBE encodes the physical base pointer as a 32-bit value, but the machine-side helper
-        // returns `u64` for convenience.
-        u32::try_from(self.inner.vbe_lfb_base()).unwrap_or(0)
+        self.inner.vbe_lfb_base_u32()
     }
 
     /// Returns whether the canonical AeroGPU PCI function (`00:07.0`, `A3A0:0001`) is present.

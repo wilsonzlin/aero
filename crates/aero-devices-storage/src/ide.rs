@@ -232,12 +232,12 @@ impl IdeChannel {
         //
         // Exact semantics vary across controllers, but legacy IDE probing expects that reads
         // float high (0xFF) when the selected drive is absent.
-        let present = self
+        if !self
             .drives
             .get(self.selected)
             .map(|d| d.is_some())
-            .unwrap_or(false);
-        if !present {
+            .unwrap_or(false)
+        {
             return 0xFF;
         }
 
