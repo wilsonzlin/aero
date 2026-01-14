@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter};
 use aero_usb::uhci::UhciController;
 use aero_wasm::{UhciControllerBridge, UhciRuntime, UsbHidPassthroughBridge, WebUsbUhciBridge};
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -274,7 +274,15 @@ fn uhci_runtime_snapshot_restore_rejects_too_many_webhid_devices() {
     let mut webhid_list = Vec::new();
     webhid_list.extend_from_slice(&(MAX_WEBHID_SNAPSHOT_DEVICES + 1).to_le_bytes());
 
-    let mut w = SnapshotWriter::new(*b"UHRT", SnapshotVersion::new(1, 0));
+    // Use the runtime's current snapshot version so this test keeps working if the UHCI runtime
+    // snapshot format version changes in the future.
+    let device_version = {
+        let snap = runtime.snapshot_state().to_vec();
+        let r = SnapshotReader::parse(&snap, *b"UHRT").expect("parse UHRT snapshot");
+        r.header().device_version
+    };
+
+    let mut w = SnapshotWriter::new(*b"UHRT", device_version);
     w.field_bytes(1, ctrl_snapshot); // TAG_CONTROLLER
     w.field_bytes(6, webhid_list); // TAG_WEBHID_DEVICES
     let snapshot = w.finish();
