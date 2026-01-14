@@ -539,6 +539,8 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     return FALSE;
   }
 
+  InterlockedExchange(&devExt->ResetInProgress, 1);
+
   devExt->Vdev.QueueNotifyAddrCache = devExt->QueueNotifyAddrCache;
   devExt->Vdev.QueueNotifyAddrCacheCount = RTL_NUMBER_OF(devExt->QueueNotifyAddrCache);
 
@@ -584,6 +586,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
 
   st = VirtioPciNegotiateFeatures(&devExt->Vdev, requiredFeatures, wantedFeatures, &negotiated);
   if (!NT_SUCCESS(st)) {
+    InterlockedExchange(&devExt->ResetInProgress, 0);
     return FALSE;
   }
 
@@ -659,6 +662,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
 
   VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER_OK);
 
+  InterlockedExchange(&devExt->ResetInProgress, 0);
   StorPortNotification(NextRequest, devExt, NULL);
   return TRUE;
 
@@ -675,6 +679,7 @@ FailDevice:
     /* Leave the device in FAILED for host visibility. */
     VirtioPciFailDevice(&devExt->Vdev);
   }
+  InterlockedExchange(&devExt->ResetInProgress, 0);
   return FALSE;
 }
 
@@ -693,6 +698,11 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   virtio_bool_t needKick;
 
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+
+  if (devExt->ResetInProgress != 0) {
+    StorPortReleaseSpinLock(devExt, &lock);
+    return FALSE;
+  }
 
   if (devExt->Removed) {
     StorPortReleaseSpinLock(devExt, &lock);

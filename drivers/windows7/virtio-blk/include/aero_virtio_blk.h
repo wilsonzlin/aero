@@ -135,6 +135,12 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     LIST_ENTRY FreeRequestList;
     ULONG FreeRequestCount;
 
+    /*
+     * Set to 1 while the miniport is resetting/reinitializing the device/queue.
+     * Used to reject new I/O submissions so StorPort can requeue them.
+     */
+    volatile LONG ResetInProgress;
+
     volatile LONG AbortSrbCount;
     volatile LONG ResetDeviceSrbCount;
     volatile LONG ResetBusSrbCount;
