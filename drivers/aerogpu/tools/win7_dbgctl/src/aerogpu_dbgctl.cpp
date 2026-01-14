@@ -2479,13 +2479,13 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   };
 
   const auto DumpScanoutSnapshot = [&]() {
-    aerogpu_escape_query_scanout_out qs;
+    aerogpu_escape_query_scanout_out_v2 qs;
     ZeroMemory(&qs, sizeof(qs));
-    qs.hdr.version = AEROGPU_ESCAPE_VERSION;
-    qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-    qs.hdr.size = sizeof(qs);
-    qs.hdr.reserved0 = 0;
-    qs.vidpn_source_id = 0;
+    qs.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qs.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    qs.base.hdr.size = sizeof(qs);
+    qs.base.hdr.reserved0 = 0;
+    qs.base.vidpn_source_id = 0;
 
     NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
     if (!NT_SUCCESS(stScanout)) {
@@ -2499,18 +2499,35 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
     wprintf(L"Scanout0:\n");
     wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%S pitch=%lu\n",
-            (unsigned long)qs.cached_enable,
-            (unsigned long)qs.cached_width,
-            (unsigned long)qs.cached_height,
-            AerogpuFormatName(qs.cached_format),
-            (unsigned long)qs.cached_pitch_bytes);
+            (unsigned long)qs.base.cached_enable,
+            (unsigned long)qs.base.cached_width,
+            (unsigned long)qs.base.cached_height,
+            AerogpuFormatName(qs.base.cached_format),
+            (unsigned long)qs.base.cached_pitch_bytes);
     wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
-            (unsigned long)qs.mmio_enable,
-            (unsigned long)qs.mmio_width,
-            (unsigned long)qs.mmio_height,
-            AerogpuFormatName(qs.mmio_format),
-            (unsigned long)qs.mmio_pitch_bytes,
-            (unsigned long long)qs.mmio_fb_gpa);
+            (unsigned long)qs.base.mmio_enable,
+            (unsigned long)qs.base.mmio_width,
+            (unsigned long)qs.base.mmio_height,
+            AerogpuFormatName(qs.base.mmio_format),
+            (unsigned long)qs.base.mmio_pitch_bytes,
+            (unsigned long long)qs.base.mmio_fb_gpa);
+
+    if (qs.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2)) {
+      const uint32_t flags = qs.base.reserved0;
+      const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+      const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+      const bool postDisplayReleased =
+          (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
+
+      wprintf(L"  cached_fb_gpa=0x%I64x flags=0x%08lx\n",
+              (unsigned long long)qs.cached_fb_gpa,
+              (unsigned long)flags);
+      if (flagsValid) {
+        wprintf(L"    cached_fb_gpa_valid=%lu post_display_ownership_released=%lu\n",
+                cachedFbGpaValid ? 1ul : 0ul,
+                postDisplayReleased ? 1ul : 0ul);
+      }
+    }
   };
 
   const auto DumpCursorSummary = [&]() {
@@ -3425,46 +3442,69 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
   // Scanout0 snapshot.
   w.Key("scanout0");
   w.BeginObject();
-  aerogpu_escape_query_scanout_out qs;
+  aerogpu_escape_query_scanout_out_v2 qs;
   ZeroMemory(&qs, sizeof(qs));
-  qs.hdr.version = AEROGPU_ESCAPE_VERSION;
-  qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-  qs.hdr.size = sizeof(qs);
-  qs.hdr.reserved0 = 0;
-  qs.vidpn_source_id = 0;
+  qs.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qs.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+  qs.base.hdr.size = sizeof(qs);
+  qs.base.hdr.reserved0 = 0;
+  qs.base.vidpn_source_id = 0;
   NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
   if (NT_SUCCESS(stScanout)) {
+    const bool haveV2 = (qs.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
+    const uint32_t flags = qs.base.reserved0;
+    const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+    const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+    const bool postDisplayReleased =
+        (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
+
     w.Key("supported");
     w.Bool(true);
     w.Key("vidpn_source_id");
-    w.Uint32(qs.vidpn_source_id);
+    w.Uint32(qs.base.vidpn_source_id);
+
+    JsonWriteU32Hex(w, "flags_u32_hex", flags);
+    w.Key("flags_valid");
+    w.Bool(flagsValid);
+    w.Key("cached_fb_gpa_valid");
+    w.Bool(flagsValid && cachedFbGpaValid);
+    w.Key("post_display_ownership_released");
+    w.Bool(flagsValid && postDisplayReleased);
+    if (haveV2) {
+      w.Key("cached_fb_gpa_hex");
+      w.String(HexU64(qs.cached_fb_gpa));
+    } else {
+      w.Key("cached_fb_gpa_hex");
+      w.Null();
+    }
+
     w.Key("cached");
     w.BeginObject();
     w.Key("enable");
-    w.Uint32(qs.cached_enable);
+    w.Uint32(qs.base.cached_enable);
     w.Key("width");
-    w.Uint32(qs.cached_width);
+    w.Uint32(qs.base.cached_width);
     w.Key("height");
-    w.Uint32(qs.cached_height);
+    w.Uint32(qs.base.cached_height);
     w.Key("format");
-    w.String(AerogpuFormatName(qs.cached_format));
+    w.String(AerogpuFormatName(qs.base.cached_format));
     w.Key("pitch_bytes");
-    w.Uint32(qs.cached_pitch_bytes);
+    w.Uint32(qs.base.cached_pitch_bytes);
     w.EndObject();
     w.Key("mmio");
     w.BeginObject();
     w.Key("enable");
-    w.Uint32(qs.mmio_enable);
+    w.Uint32(qs.base.mmio_enable);
     w.Key("width");
-    w.Uint32(qs.mmio_width);
+    w.Uint32(qs.base.mmio_width);
     w.Key("height");
-    w.Uint32(qs.mmio_height);
+    w.Uint32(qs.base.mmio_height);
     w.Key("format");
-    w.String(AerogpuFormatName(qs.mmio_format));
+    w.String(AerogpuFormatName(qs.base.mmio_format));
     w.Key("pitch_bytes");
-    w.Uint32(qs.mmio_pitch_bytes);
+    w.Uint32(qs.base.mmio_pitch_bytes);
     w.Key("fb_gpa_hex");
-    w.String(HexU64(qs.mmio_fb_gpa));
+    w.String(HexU64(qs.base.mmio_fb_gpa));
     w.EndObject();
   } else {
     w.Key("supported");
@@ -7086,13 +7126,13 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
   bool scanoutKnown = false;
   bool scanoutEnabled = false;
   {
-    aerogpu_escape_query_scanout_out qs;
+    aerogpu_escape_query_scanout_out_v2 qs;
     ZeroMemory(&qs, sizeof(qs));
-    qs.hdr.version = AEROGPU_ESCAPE_VERSION;
-    qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-    qs.hdr.size = sizeof(qs);
-    qs.hdr.reserved0 = 0;
-    qs.vidpn_source_id = vidpnSourceId;
+    qs.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qs.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    qs.base.hdr.size = sizeof(qs);
+    qs.base.hdr.reserved0 = 0;
+    qs.base.vidpn_source_id = vidpnSourceId;
 
     NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
     if (!NT_SUCCESS(stScanout) &&
@@ -7100,16 +7140,20 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
         vidpnSourceId != 0) {
       // Older KMDs may only support source 0; retry.
       ZeroMemory(&qs, sizeof(qs));
-      qs.hdr.version = AEROGPU_ESCAPE_VERSION;
-      qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-      qs.hdr.size = sizeof(qs);
-      qs.hdr.reserved0 = 0;
-      qs.vidpn_source_id = 0;
+      qs.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+      qs.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+      qs.base.hdr.size = sizeof(qs);
+      qs.base.hdr.reserved0 = 0;
+      qs.base.vidpn_source_id = 0;
       stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
     }
     if (NT_SUCCESS(stScanout)) {
+      const uint32_t flags = qs.base.reserved0;
+      const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+      const bool postDisplayReleased =
+          (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
       scanoutKnown = true;
-      scanoutEnabled = (qs.mmio_enable != 0);
+      scanoutEnabled = ((qs.base.mmio_enable != 0) && !(flagsValid && postDisplayReleased));
     }
   }
 
@@ -10979,17 +11023,21 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
   bool scanoutKnown = false;
   bool scanoutEnabled = false;
   {
-    aerogpu_escape_query_scanout_out qs;
+    aerogpu_escape_query_scanout_out_v2 qs;
     ZeroMemory(&qs, sizeof(qs));
-    qs.hdr.version = AEROGPU_ESCAPE_VERSION;
-    qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
-    qs.hdr.size = sizeof(qs);
-    qs.hdr.reserved0 = 0;
-    qs.vidpn_source_id = 0;
+    qs.base.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qs.base.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    qs.base.hdr.size = sizeof(qs);
+    qs.base.hdr.reserved0 = 0;
+    qs.base.vidpn_source_id = 0;
     const NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
     if (NT_SUCCESS(stScanout)) {
+      const uint32_t flags = qs.base.reserved0;
+      const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
+      const bool postDisplayReleased =
+          (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0;
       scanoutKnown = true;
-      scanoutEnabled = (qs.mmio_enable != 0);
+      scanoutEnabled = ((qs.base.mmio_enable != 0) && !(flagsValid && postDisplayReleased));
     }
   }
 
