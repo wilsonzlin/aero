@@ -1,10 +1,21 @@
-//! Helpers for converting geometry-shader strip output into list primitives.
+//! Helpers for converting strip primitives into list primitives.
 //!
 //! Aero's GS emulation pipeline (D3D10/11 → WebGPU) expands `line_strip` / `triangle_strip`
 //! outputs into `line_list` / `triangle_list` so we don't rely on primitive-restart indices.
 //!
 //! A key semantic requirement is that `CutVertex` / `TriangleStream.RestartStrip()` terminates the
 //! current strip and prevents bridging primitives from connecting across the cut boundary.
+//!
+//! This module also contains a deterministic reference implementation for converting a
+//! triangle-strip index buffer (interleaved with [`CUT`] markers) into a triangle-list index
+//! buffer. This is used to validate CPU and WGSL implementations of strip expansion.
+
+/// Marker value for "primitive restart" / "strip cut" in index buffers.
+///
+/// D3D11 supports a configurable strip-cut value (`0xFFFF` for 16-bit indices, `0xFFFF_FFFF` for
+/// 32-bit). The helper in this crate operates on `u32` indices and uses a single canonical cut
+/// value to keep the reference implementation deterministic.
+pub const CUT: u32 = 0xFFFF_FFFF;
 
 /// Supported strip output topologies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,29 +69,83 @@ fn line_strip_to_list_indices(events: &[StreamEvent]) -> Vec<u32> {
 
 fn triangle_strip_to_list_indices(events: &[StreamEvent]) -> Vec<u32> {
     let mut out = Vec::new();
-    let mut strip: Vec<u32> = Vec::new();
+    let mut v0: Option<u32> = None;
+    let mut v1: Option<u32> = None;
+    // `false` => even parity (first triangle uses (v0, v1, v2)).
+    // `true`  => odd parity  (next triangle uses (v1, v0, v2)).
+    let mut odd = false;
+
     for ev in events {
         match *ev {
-            StreamEvent::Vertex(v) => {
-                strip.push(v);
-                let vi = strip.len().wrapping_sub(1);
-                if strip.len() >= 3 {
-                    // D3D-style triangle strip winding alternates each vertex.
-                    let a = strip[vi - 2];
-                    let b = strip[vi - 1];
-                    let c = strip[vi];
-                    if (vi % 2) == 0 {
-                        out.extend_from_slice(&[a, b, c]);
+            StreamEvent::Vertex(v) => match (v0, v1) {
+                (None, _) => v0 = Some(v),
+                (Some(_), None) => v1 = Some(v),
+                (Some(a), Some(b)) => {
+                    if odd {
+                        out.extend_from_slice(&[b, a, v]);
                     } else {
-                        out.extend_from_slice(&[b, a, c]);
+                        out.extend_from_slice(&[a, b, v]);
                     }
+                    odd = !odd;
+                    v0 = Some(b);
+                    v1 = Some(v);
                 }
-            }
+            },
             StreamEvent::Cut => {
-                strip.clear();
+                v0 = None;
+                v1 = None;
+                odd = false;
             }
         }
     }
+    out
+}
+
+/// Converts a triangle-strip index buffer (interleaved with [`CUT`] markers) into a triangle-list
+/// index buffer.
+///
+/// Semantics:
+/// - Maintains a rolling window of the last 2 vertices per strip.
+/// - For each new vertex after the first 2, emits one triangle.
+/// - The winding alternates per emitted triangle (strip parity).
+/// - When [`CUT`] is encountered, the strip window and parity are reset.
+///
+/// This function intentionally does **not** drop degenerate triangles (repeated indices). The GPU
+/// primitive assembler still forms them and they can affect downstream stages (e.g. geometry
+/// shaders) even if they get culled later.
+pub fn strip_to_triangle_list(indices_with_cuts: &[u32]) -> Vec<u32> {
+    // Upper bound: each input index after the first two in its strip contributes one triangle.
+    // Cuts reduce the output size, but `with_capacity` is just a hint.
+    let mut out = Vec::with_capacity(indices_with_cuts.len().saturating_sub(2) * 3);
+
+    let mut v0: Option<u32> = None;
+    let mut v1: Option<u32> = None;
+    let mut odd = false;
+
+    for &idx in indices_with_cuts {
+        if idx == CUT {
+            v0 = None;
+            v1 = None;
+            odd = false;
+            continue;
+        }
+
+        match (v0, v1) {
+            (None, _) => v0 = Some(idx),
+            (Some(_), None) => v1 = Some(idx),
+            (Some(a), Some(b)) => {
+                if odd {
+                    out.extend_from_slice(&[b, a, idx]);
+                } else {
+                    out.extend_from_slice(&[a, b, idx]);
+                }
+                odd = !odd;
+                v0 = Some(b);
+                v1 = Some(idx);
+            }
+        }
+    }
+
     out
 }
 
@@ -153,6 +218,37 @@ mod tests {
 
         let indices = strip_to_list_indices(StripTopology::LineStrip, &events);
         assert_eq!(indices, vec![10, 11, 11, 12, 20, 21]);
+    }
+
+    #[test]
+    fn strip_to_triangle_list_single_strip() {
+        let out = strip_to_triangle_list(&[0, 1, 2, 3]);
+        assert_eq!(out, vec![0, 1, 2, 2, 1, 3]);
+    }
+
+    #[test]
+    fn strip_to_triangle_list_two_strips() {
+        let out = strip_to_triangle_list(&[0, 1, 2, 3, CUT, 4, 5, 6, 7]);
+        assert_eq!(out, vec![0, 1, 2, 2, 1, 3, 4, 5, 6, 6, 5, 7]);
+    }
+
+    #[test]
+    fn strip_to_triangle_list_degenerate_cases() {
+        // Empty inputs / too-short strips.
+        assert!(strip_to_triangle_list(&[]).is_empty());
+        assert!(strip_to_triangle_list(&[0]).is_empty());
+        assert!(strip_to_triangle_list(&[0, 1]).is_empty());
+        assert!(strip_to_triangle_list(&[CUT]).is_empty());
+        assert!(strip_to_triangle_list(&[0, CUT]).is_empty());
+        assert!(strip_to_triangle_list(&[0, 1, CUT]).is_empty());
+
+        // Leading + consecutive cuts must restart the strip.
+        let out = strip_to_triangle_list(&[CUT, CUT, 0, 1, 2, CUT, CUT, 3, 4, 5]);
+        assert_eq!(out, vec![0, 1, 2, 3, 4, 5]);
+
+        // Cut before a strip has produced any triangles.
+        let out = strip_to_triangle_list(&[0, 1, CUT, 2, 3, 4]);
+        assert_eq!(out, vec![2, 3, 4]);
     }
 }
 
