@@ -761,6 +761,10 @@ impl PlatformInterrupts {
         );
     }
 
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
+
     #[cfg(test)]
     pub(crate) fn lapic_apic_id(&self) -> u8 {
         self.lapics[0].apic_id()
