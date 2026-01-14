@@ -1591,6 +1591,8 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
             InterlockedIncrement64(&Adapter->ContigPool.Hits);
 #endif
         } else {
+            /* Be defensive: keep per-class count consistent with list emptiness. */
+            Adapter->ContigPool.FreeCounts[classIndex] = 0;
 #if DBG
             InterlockedIncrement64(&Adapter->ContigPool.Misses);
 #endif
