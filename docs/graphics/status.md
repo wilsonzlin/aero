@@ -241,6 +241,15 @@ Message flow (high level):
 5. Coordinator forwards `kind: "aerogpu.complete_fence"` to the CPU worker, which calls the WASM export
    `Machine.aerogpu_complete_fence(fence: BigInt)` to update the guest-visible fence page + IRQ status.
 
+Robustness note (important for WDDM forward progress):
+
+- While the GPU worker is not READY (startup/restart windows), the coordinator buffers `aerogpu.submit` messages in a
+  bounded FIFO queue. If the queue overflows, it drops the oldest submission and **force-completes its fence** so the
+  guest cannot deadlock waiting for a `submit_complete` that will never arrive.
+- If posting `submit_aerogpu` to the GPU worker fails (for example: transfer list rejected, structured clone error, or the
+  GPU worker is terminated while fences are in flight), the coordinator **force-completes** the affected fences. Rendering
+  correctness is best-effort in these failure modes.
+
 Code pointers:
 
 - WASM bridge exports (enables external-executor semantics on first drain):
@@ -248,8 +257,10 @@ Code pointers:
 - CPU worker drain + completion queue:
   - [`web/src/workers/machine_cpu.worker.ts`](../../web/src/workers/machine_cpu.worker.ts) (`drainAerogpuSubmissions`, `processPendingAerogpuFenceCompletions`)
 - Coordinator routing/buffering + fence forwarding:
-  - [`web/src/runtime/coordinator.ts`](../../web/src/runtime/coordinator.ts) (`forwardAerogpuSubmit`, `forwardAerogpuFenceComplete`)
-  - [`web/src/runtime/coordinator.test.ts`](../../web/src/runtime/coordinator.test.ts) (“buffers aerogpu.submit…”)
+  - [`web/src/runtime/coordinator.ts`](../../web/src/runtime/coordinator.ts)
+    (`forwardAerogpuSubmit`, `sendAerogpuSubmitToGpuWorker`, `forwardAerogpuFenceComplete`, `completeInFlightAerogpuFences`)
+  - [`web/src/runtime/coordinator.test.ts`](../../web/src/runtime/coordinator.test.ts)
+    (“buffers aerogpu.submit…”, “force-completes dropped fences”, “forces completion of in-flight fences…”)
 - GPU worker executor + vsync completion policy:
   - [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`handleSubmitAerogpu`, `enqueueAerogpuSubmitComplete`)
 

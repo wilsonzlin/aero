@@ -71,6 +71,9 @@ Quick reality check (as of this repo revision):
   scanout present + vblank pacing (DWM stability).
   - Note: by default (no backend, submission bridge disabled), `aero_machine` completes fences without executing ACMD so guests can boot
     (with optional vblank pacing when vblank is active and the submission contains a vsync present).
+  - Browser runtime robustness: the coordinator bounds buffered `aerogpu.submit` messages while the GPU worker is not READY, and
+    may **force-complete fences** if a submission cannot be forwarded/executed (for example: queue overflow, postMessage failure, or GPU
+    worker restart). This prevents guest deadlocks/TDRs at the cost of best-effort rendering in those failure modes.
   - Rust-side submission bridge tests: `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked`
   - Browser command-submission e2e: `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts`
   - Browser vsync completion policy e2e: `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu_vsync_completion.spec.ts`
