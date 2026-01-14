@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CI guardrail: ensure Win7 virtio-input HID descriptor lengths stay in sync.
+CI guardrail: ensure Win7 virtio-input HID report descriptors stay in sync.
 
 Why:
   - `drivers/windows7/virtio-input/src/descriptor.c` contains HID report descriptor
@@ -10,9 +10,13 @@ Why:
     report-descriptor lengths for runtime validation on Windows.
 
 This script is Linux-runnable and detects drift between:
-  - literal byte count in the report descriptor arrays
-  - the `C_ASSERT(sizeof(...) == N)` constants
+  - literal byte count in the report descriptor arrays (`0xNN` tokens)
+  - the `C_ASSERT(sizeof(...) == N)` constants (validated only by Windows builds)
   - hidtest's `VIRTIO_INPUT_EXPECTED_*_REPORT_DESC_LEN` macros
+  - (extra) report IDs + report sizes derived from parsing the HID report descriptor
+    semantics (Report Size/Count + Input/Output items), compared against:
+      - `drivers/windows7/virtio-input/src/hid_translate.h` report IDs/sizes
+      - `drivers/windows7/virtio-input/tools/hidtest/main.c` expected caps lengths
 
 Optional extra guardrail:
   - ensure hidtest's expected input report lengths match `HID_TRANSLATE_*_REPORT_SIZE`
