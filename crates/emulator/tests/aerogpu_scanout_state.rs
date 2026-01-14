@@ -82,6 +82,22 @@ fn publishes_wddm_scanout_state_on_enable_transition() {
     dev.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0);
     let snap3 = scanout.snapshot();
     assert_eq!(snap3, snap2);
+
+    // Re-enabling scanout should restore the original WDDM descriptor.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+    let snap4 = scanout.snapshot();
+    assert_eq!(snap4.generation, gen0 + 3);
+    assert_eq!(snap4.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap4.base_paddr(), fb_gpa);
+    assert_eq!(snap4.width, 800);
+    assert_eq!(snap4.height, 600);
+    assert_eq!(snap4.pitch_bytes, 800 * 4);
+    assert_eq!(snap4.format, SCANOUT_FORMAT_B8G8R8X8);
+
+    // Legacy VGA/VBE activity must still not steal scanout ownership after re-enable.
+    dev.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0);
+    let snap5 = scanout.snapshot();
+    assert_eq!(snap5, snap4);
 }
 
 #[test]
