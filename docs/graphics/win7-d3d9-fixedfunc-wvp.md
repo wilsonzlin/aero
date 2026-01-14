@@ -39,8 +39,8 @@ This covers the fixed-function FVFs:
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (VS WVP constants)
 - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants)
 - `D3DFVF_XYZ | D3DFVF_TEX1` (VS WVP constants; driver supplies default diffuse white)
-- `D3DFVF_XYZ | D3DFVF_NORMAL` (VS WVP constants; driver supplies default diffuse white; optional fixed-function lighting)
-- `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (VS WVP constants; driver supplies default diffuse white; optional fixed-function lighting)
+- `D3DFVF_XYZ | D3DFVF_NORMAL` (VS WVP constants; driver supplies default diffuse white when unlit; optional fixed-function lighting)
+- `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (VS WVP constants; driver supplies default diffuse white when unlit; optional fixed-function lighting)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (VS WVP constants; optional fixed-function lighting)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants; optional fixed-function lighting)
 

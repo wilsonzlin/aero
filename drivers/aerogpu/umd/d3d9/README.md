@@ -412,8 +412,8 @@ Supported FVF combinations (bring-up subset):
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform)
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform)
-  - `D3DFVF_XYZ | D3DFVF_NORMAL` (no per-vertex diffuse; driver supplies default white; WVP transform; optional fixed-function lighting)
-  - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white; WVP transform; optional fixed-function lighting)
+  - `D3DFVF_XYZ | D3DFVF_NORMAL` (no per-vertex diffuse; driver supplies default white when unlit; WVP transform; optional fixed-function lighting)
+  - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white when unlit; WVP transform; optional fixed-function lighting)
   - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (WVP transform; optional fixed-function lighting)
   - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform; optional fixed-function lighting)
 

@@ -16385,10 +16385,11 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 // - WORLD/VIEW/PROJECTION matrices drive the fixed-function WVP behavior for
 //   untransformed `D3DFVF_XYZ*` FVFs: internal WVP VS variants consume WVP
 //   columns uploaded into a reserved high VS constant range (`c240..c243`).
-//   - When `D3DFVF_DIFFUSE` is omitted, the internal VS supplies an opaque white
-//     diffuse color.
+//   - When `D3DFVF_DIFFUSE` is omitted and lighting is disabled, the internal VS
+//     supplies an opaque white diffuse color.
 //   - When `D3DRS_LIGHTING` is enabled for the `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`
 //     bring-up subset, the fixed-function fallback binds a lit VS variant and
+//     computes a lit diffuse color (without requiring per-vertex diffuse). It
 //     consumes an additional reserved lighting constant block (`c244..c253`)
 //     uploaded by `ensure_fixedfunc_lighting_constants_locked()`.
 // - Pre-transformed `D3DFVF_XYZRHW*` vertices are converted from screen-space
