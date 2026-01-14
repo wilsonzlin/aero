@@ -118,11 +118,26 @@ export const startFrameScheduler = ({
   }
 
   const updateTelemetry = (msg: { framesReceived: number; framesPresented: number; framesDropped: number; telemetry?: unknown }) => {
+    // Preserve structured GPU events forwarded via `type:"events"` messages; these arrive
+    // out-of-band relative to the regular `metrics` updates.
+    const prevGpuEvents =
+      lastTelemetry && typeof lastTelemetry === "object" && Array.isArray((lastTelemetry as Record<string, unknown>).gpuEvents)
+        ? ((lastTelemetry as Record<string, unknown>).gpuEvents as unknown[])
+        : null;
+
     const baseTelemetry = msg.telemetry;
     if (baseTelemetry && typeof baseTelemetry === 'object') {
-      lastTelemetry = { ...(baseTelemetry as Record<string, unknown>), ...msg };
+      const next = { ...(baseTelemetry as Record<string, unknown>), ...msg } as Record<string, unknown>;
+      if (prevGpuEvents && next.gpuEvents === undefined) {
+        next.gpuEvents = prevGpuEvents;
+      }
+      lastTelemetry = next;
     } else {
-      lastTelemetry = { ...msg };
+      const next = { ...msg } as Record<string, unknown>;
+      if (prevGpuEvents && next.gpuEvents === undefined) {
+        next.gpuEvents = prevGpuEvents;
+      }
+      lastTelemetry = next;
     }
   };
 
