@@ -210,6 +210,12 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
         let did = parse_hex_u16(&dev.pci_device_id)
             .with_context(|| format!("{name}: invalid pci_device_id"))?;
 
+        if dev.virtio_device_type.is_none() && dev.pci_device_id_transitional.is_some() {
+            bail!(
+                "{name}: pci_device_id_transitional is only valid for virtio devices (set virtio_device_type or omit pci_device_id_transitional)"
+            );
+        }
+
         if dev.hardware_id_patterns.is_empty() {
             bail!("{name}: hardware_id_patterns is empty");
         }

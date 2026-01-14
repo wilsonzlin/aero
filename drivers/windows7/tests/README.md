@@ -56,38 +56,38 @@ drivers/windows7/tests/
   - This path reads HID input reports directly from the virtio-input HID interface so it does not depend on UI focus.
   - By default the guest selftest reports `virtio-input-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-events` to enable it.
- - Emits a `virtio-input-media-keys` marker that can be used to validate **end-to-end Consumer Control (media keys)**
-   input report delivery when the host harness injects a deterministic media key via QMP (`input-send-event`).
-   - By default the guest selftest reports `virtio-input-media-keys|SKIP|flag_not_set`; provision the guest to run the
-     selftest with `--test-input-media-keys` to enable it.
- - Emits an optional `virtio-input-led` (and legacy `virtio-input-leds`) marker that can be used to validate the virtio-input
-   **statusq output path** end-to-end (user-mode HID output report write → KMDF HID minidriver → virtio statusq →
-   device consumes/completes).
-   - By default the guest selftest reports `virtio-input-led|SKIP|flag_not_set`; provision the guest to run the selftest
-     with `--test-input-led` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`) to enable it.
-     - Legacy: `--test-input-leds` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`.
+- Emits a `virtio-input-media-keys` marker that can be used to validate **end-to-end Consumer Control (media keys)**
+  input report delivery when the host harness injects a deterministic media key via QMP (`input-send-event`).
+  - By default the guest selftest reports `virtio-input-media-keys|SKIP|flag_not_set`; provision the guest to run the
+    selftest with `--test-input-media-keys` to enable it.
+- Emits an optional `virtio-input-led` (and legacy `virtio-input-leds`) marker that can be used to validate the virtio-input
+  **statusq output path** end-to-end (user-mode HID output report write → KMDF HID minidriver → virtio statusq →
+  device consumes/completes).
+  - By default the guest selftest reports `virtio-input-led|SKIP|flag_not_set`; provision the guest to run the selftest
+    with `--test-input-led` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`) to enable it.
+    - Legacy: `--test-input-leds` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`.
 - Emits a `virtio-input-tablet-events` marker that can be used to validate **end-to-end absolute pointer (tablet)**
   input report delivery when the host harness attaches a `virtio-tablet-pci` device and injects deterministic QMP
   `abs` + click events (`input-send-event`).
   - By default the guest selftest reports `virtio-input-tablet-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-tablet-events` (alias: `--test-tablet-events`) / env var
     `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1` to enable it.
-     - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
-       HID interface.
-     - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
-       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-     - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a
-       more specific match than the generic fallback in `aero_virtio_input.inf`).
-     - If your QEMU/device does **not** expose the Aero contract subsystem IDs, the canonical
-       `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` can still bind the tablet via its strict revision-gated
-       generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) as long as the device reports `REV_01`.
-       - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device**
-         name.
-     - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
-       `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
-     - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional
-       compatibility). Enabling it is **not** required for fallback binding.
-     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
+    - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+      HID interface.
+    - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
+      `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
+    - If your QEMU/device does **not** expose the Aero contract subsystem IDs, the canonical INFs
+      (`aero_virtio_input.inf` / `aero_virtio_tablet.inf`) will not bind. In that case you must either:
+      - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
+        `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
+      - Opt into the legacy alias INF under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the
+        `.disabled` suffix to enable) and install it. This provides the strict revision-gated generic fallback match
+        (`PCI\VEN_1AF4&DEV_1052&REV_01`) (expected for stock QEMU `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+        - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device**
+          name.
+        - Caveat: do not ship/install overlapping virtio-input INFs; the alias INF is intended only for compatibility
+          with non-contract devices.
+    - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
