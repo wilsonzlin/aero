@@ -1044,6 +1044,42 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
 """
 
+    missing_msi_supported = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT.HW]
+AddReg = MsiReg
+
+[MsiReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+"""
+
+    missing_message_number_limit = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT.HW]
+AddReg = MsiReg
+
+[MsiReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+"""
+
     wrong_flags = r"""
 [Version]
 Signature="$WINDOWS NT$"
@@ -1155,6 +1191,28 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
                 format_error(
                     "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly failed for a well-formed sample INF:",
                     good_errors,
+                )
+            )
+
+        missing_msi_supported_path = Path(td) / "missing-msisupported.inf"
+        missing_msi_supported_path.write_text(missing_msi_supported, encoding="utf-8")
+        missing_msi_supported_errors = validate_win7_virtio_inf_msi_settings("virtio-net", missing_msi_supported_path)
+        if not any("missing MSISupported" in e for e in missing_msi_supported_errors):
+            fail(
+                format_error(
+                    "internal unit-test failed: validate_win7_virtio_inf_msi_settings did not report MSISupported as missing:",
+                    missing_msi_supported_errors or ["(no errors)"],
+                )
+            )
+
+        missing_msg_limit_path = Path(td) / "missing-message-number-limit.inf"
+        missing_msg_limit_path.write_text(missing_message_number_limit, encoding="utf-8")
+        missing_msg_limit_errors = validate_win7_virtio_inf_msi_settings("virtio-net", missing_msg_limit_path)
+        if not any("missing MessageNumberLimit" in e for e in missing_msg_limit_errors):
+            fail(
+                format_error(
+                    "internal unit-test failed: validate_win7_virtio_inf_msi_settings did not report MessageNumberLimit as missing:",
+                    missing_msg_limit_errors or ["(no errors)"],
                 )
             )
 
