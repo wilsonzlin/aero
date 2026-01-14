@@ -124,6 +124,48 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(events).toEqual(["restore", "take", "disk-existing"]);
   });
 
+  it("prefers set_disk_opfs_existing_and_set_overlay_ref for base-only primary disks when available", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "" }];
+    });
+    const set_disk_opfs_existing_and_set_overlay_ref = vi.fn(async (_path: string) => {
+      events.push("disk-existing-and-ref");
+    });
+    const set_disk_opfs_existing = vi.fn(async (_path: string) => {
+      events.push("disk-existing");
+    });
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {
+      events.push("set-ref");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_disk_opfs_existing_and_set_overlay_ref,
+      set_disk_opfs_existing,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(set_disk_opfs_existing_and_set_overlay_ref).toHaveBeenCalledWith("aero/disks/win7.base");
+    expect(set_disk_opfs_existing).not.toHaveBeenCalled();
+    expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith("aero/disks/win7.base", "");
+    expect(events).toEqual(["restore", "take", "disk-existing-and-ref", "set-ref"]);
+  });
+
   it("falls back to stable disk IDs when Machine.disk_id_* helpers are unavailable", async () => {
     const events: string[] = [];
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {

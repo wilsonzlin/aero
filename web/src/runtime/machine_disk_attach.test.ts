@@ -168,6 +168,30 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     expect(set_ahci_port0_disk_overlay_ref).not.toHaveBeenCalled();
   });
 
+  it("falls back to set_disk_opfs_existing + set_ahci_port0_disk_overlay_ref when only low-level disk attach is available", async () => {
+    const meta = hddMetaRaw();
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const calls: string[] = [];
+    const set_disk_opfs_existing = vi.fn(async (_path: string) => {
+      calls.push("set_disk_opfs_existing");
+    });
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {
+      calls.push("set_ref");
+    });
+
+    const machine = {
+      set_disk_opfs_existing,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(set_disk_opfs_existing).toHaveBeenCalledWith(plan.opfsPath);
+    expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
+    expect(calls).toEqual(["set_disk_opfs_existing", "set_ref"]);
+  });
+
   it("prefers attach_install_media_iso_opfs_existing_and_set_overlay_ref when present (back-compat)", async () => {
     const meta = cdMeta();
     const plan = planMachineBootDiskAttachment(meta, "cd");
