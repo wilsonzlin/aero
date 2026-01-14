@@ -4,8 +4,9 @@ use aero_d3d11::runtime::gs_translate::{
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
-    DstOperand, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Decl, Sm4Inst,
-    Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, WriteMask,
+    DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef,
+    ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand,
+    Swizzle, WriteMask,
 };
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
@@ -387,8 +388,12 @@ fn gs_translate_rejects_regfile_output_depth_source() {
         stage: ShaderStage::Geometry,
         model: ShaderModel { major: 4, minor: 0 },
         decls: vec![
-            Sm4Decl::GsInputPrimitive { primitive: 3 },
-            Sm4Decl::GsOutputTopology { topology: 3 },
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle,
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip,
+            },
             Sm4Decl::GsMaxOutputVertexCount { max: 3 },
         ],
         instructions: vec![
@@ -432,8 +437,12 @@ fn gs_translate_rejects_regfile_input_without_siv_decl() {
         stage: ShaderStage::Geometry,
         model: ShaderModel { major: 4, minor: 0 },
         decls: vec![
-            Sm4Decl::GsInputPrimitive { primitive: 3 },
-            Sm4Decl::GsOutputTopology { topology: 3 },
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle,
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip,
+            },
             Sm4Decl::GsMaxOutputVertexCount { max: 3 },
         ],
         instructions: vec![
@@ -477,8 +486,12 @@ fn gs_translate_rejects_regfile_output_depth_destination() {
         stage: ShaderStage::Geometry,
         model: ShaderModel { major: 4, minor: 0 },
         decls: vec![
-            Sm4Decl::GsInputPrimitive { primitive: 3 },
-            Sm4Decl::GsOutputTopology { topology: 3 },
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle,
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip,
+            },
             Sm4Decl::GsMaxOutputVertexCount { max: 3 },
         ],
         instructions: vec![

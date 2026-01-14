@@ -3956,6 +3956,7 @@ impl AerogpuD3d11Executor {
                 CmdPrimitiveTopology::PointList
             );
 
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
         let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
@@ -16864,7 +16865,8 @@ mod tests {
             let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [bindings.as_slice()],
+                [reflection_bindings::ShaderBindingSet::Guest(bindings.as_slice())],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("build_pipeline_bindings_info should succeed");
 
