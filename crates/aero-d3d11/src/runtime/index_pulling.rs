@@ -86,7 +86,11 @@ impl IndexPullingParams {
 /// The snippet exposes:
 /// - `index_pulling_load_index_u32(abs_index: u32) -> u32`
 /// - `index_pulling_resolve_vertex_id(index_in_draw: u32) -> i32`
-pub fn wgsl_index_pulling_lib(group: u32, params_binding: u32, index_buffer_binding: u32) -> String {
+pub fn wgsl_index_pulling_lib(
+    group: u32,
+    params_binding: u32,
+    index_buffer_binding: u32,
+) -> String {
     format!(
         r#"
 struct IndexPullingParams {{
