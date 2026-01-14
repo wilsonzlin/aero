@@ -160,6 +160,22 @@ export class EhciPciDevice implements PciDevice, TickableDevice {
       return;
     }
 
+    // PCI Bus Master Enable (command bit 2) gates whether the controller is allowed to DMA into
+    // guest memory (schedule traversal + data transfers).
+    //
+    // EHCI internal time (FRINDEX, root hub port timers) should keep progressing even when BME=0;
+    // when the underlying bridge supports `set_pci_command`, it can enforce DMA gating internally
+    // and we can keep advancing time while BME is disabled.
+    //
+    // For backwards compatibility with older WASM builds that may not implement DMA gating, we
+    // conservatively freeze time until BME is enabled *unless* `set_pci_command` is available.
+    const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
+    if (!busMasterEnabled && typeof this.#bridge.set_pci_command !== "function") {
+      this.#accumulatedMs = 0;
+      this.#syncIrq();
+      return;
+    }
+
     // Clamp catch-up work so long pauses (e.g. tab backgrounded) do not stall the worker.
     deltaMs = Math.min(deltaMs, EHCI_MAX_FRAMES_PER_TICK * EHCI_FRAME_MS);
     this.#accumulatedMs += deltaMs;

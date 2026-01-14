@@ -83,10 +83,57 @@ describe("io/devices/ehci", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new EhciPciDevice({ bridge, irqSink });
+    // Allow the controller to DMA into guest memory.
+    dev.onPciCommandWrite(1 << 2);
     dev.tick(0);
     dev.tick(8);
 
     expect(bridge.step_frames).toHaveBeenCalledTimes(1);
     expect(bridge.step_frames).toHaveBeenCalledWith(8);
+  });
+
+  it("gates DMA stepping on PCI Bus Master Enable (command bit 2) when set_pci_command is unavailable", () => {
+    const bridge: EhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new EhciPciDevice({ bridge, irqSink });
+    dev.tick(0);
+    dev.tick(8);
+    expect(bridge.step_frames).not.toHaveBeenCalled();
+
+    // Enable bus mastering; the device should start stepping from "now" without catching up.
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(9);
+    expect(bridge.step_frames).toHaveBeenCalledTimes(1);
+    expect(bridge.step_frames).toHaveBeenCalledWith(1);
+  });
+
+  it("advances time while BME is off when the bridge supports set_pci_command", () => {
+    const bridge: EhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frames: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      set_pci_command: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new EhciPciDevice({ bridge, irqSink });
+    dev.tick(0);
+    dev.tick(8);
+    expect(bridge.step_frames).toHaveBeenCalledTimes(1);
+    expect(bridge.step_frames).toHaveBeenCalledWith(8);
+
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(9);
+    expect(bridge.step_frames).toHaveBeenCalledTimes(2);
+    expect(bridge.step_frames).toHaveBeenLastCalledWith(1);
   });
 });
