@@ -4462,6 +4462,10 @@ def main() -> None:
         # virtio-input is exposed as two PCI functions (keyboard + mouse) but installs
         # through the same INF + service. For debuggability, the INF should use distinct
         # DeviceDesc strings for each function so they appear separately in Device Manager.
+        #
+        # Policy note: the canonical virtio-input INF matches the SUBSYS-qualified
+        # keyboard/mouse HWIDs and includes a strict REV-qualified generic fallback HWID
+        # (no SUBSYS). It intentionally does not match revision-less generic HWIDs.
         if device_name == "virtio-input":
             validate_virtio_input_model_lines(
                 inf_path=inf_path,
