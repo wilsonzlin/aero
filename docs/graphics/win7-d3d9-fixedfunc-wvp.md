@@ -88,7 +88,8 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
     - When not set and the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present,
       otherwise fills it with opaque white (matching fixed-function behavior). `TEXCOORD0` is copied only when present in
       both the source and destination layouts (supports `FLOAT1/2/3/4`; source texcoord size is derived from
-      `D3DFVF_TEXCOORDSIZE*` when set).
+      `D3DFVF_TEXCOORDSIZE*` when set). Some D3D9 runtimes appear to synthesize destination decls where `TEXCOORD0` uses
+      `Usage=POSITION` (`0`) rather than `D3DDECLUSAGE_TEXCOORD`; the UMD is intentionally permissive and accepts this.
 
 ## Code anchors
 

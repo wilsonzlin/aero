@@ -631,7 +631,8 @@ Current behavior is intentionally bring-up level, with two paths:
   When the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present, otherwise fills it
   with opaque white (matching fixed-function “no diffuse means white” behavior). `TEXCOORD0` is copied only when present
   in both the source and destination layouts (supports `FLOAT1/2/3/4`; source texcoord size is derived from
-  `D3DFVF_TEXCOORDSIZE*` when set).
+  `D3DFVF_TEXCOORDSIZE*` when set). Some D3D9 runtimes appear to synthesize destination decls where `TEXCOORD0` uses
+  `Usage=POSITION` (`0`) rather than `D3DDECLUSAGE_TEXCOORD`; the UMD is intentionally permissive and accepts this.
   - Flags: when `D3DPV_DONOTCOPYDATA` is set in `ProcessVertices.Flags`, the UMD writes only the output position
     (`POSITIONT`) and preserves all other destination bytes (no DIFFUSE/TEX writes, no zeroing).
 - **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from

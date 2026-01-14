@@ -1046,6 +1046,22 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
       return reporter.FailHresult("CreateVertexDeclaration(tex)", hr);
     }
 
+    // Some D3D9 runtimes appear to synthesize decls where TEXCOORD0 has Usage=0
+    // (POSITION) rather than D3DDECLUSAGE_TEXCOORD. AeroGPU's ProcessVertices
+    // dest-decl parsing should accept this (as long as it's not the actual
+    // position element).
+    const D3DVERTEXELEMENT9 decl_tex_usage0_elems[] = {
+        {0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITIONT, 0},
+        {0, 16, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+        {0, 20, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+        D3DDECL_END(),
+    };
+    ComPtr<IDirect3DVertexDeclaration9> decl_tex_usage0;
+    hr = dev->CreateVertexDeclaration(decl_tex_usage0_elems, decl_tex_usage0.put());
+    if (FAILED(hr) || !decl_tex_usage0) {
+      return reporter.FailHresult("CreateVertexDeclaration(tex usage=POSITION)", hr);
+    }
+
     hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetFVF(XYZ|DIFFUSE|TEX1)", hr);
@@ -1081,6 +1097,47 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
 
     if (!tex_bytes_match) {
       return reporter.Fail("ProcessVertices XYZ|TEX1 output bytes did not match expected output");
+    }
+
+    // Regression: dest decl with TEXCOORD0 Usage=POSITION should still work.
+    {
+      ComPtr<IDirect3DVertexBuffer9> dst_vb_tex_usage0;
+      hr = dev->CreateVertexBuffer(sizeof(VertexXyzrhwDiffuseTex1),
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                                   D3DPOOL_SYSTEMMEM,
+                                   dst_vb_tex_usage0.put(),
+                                   NULL);
+      if (FAILED(hr) || !dst_vb_tex_usage0) {
+        return reporter.FailHresult("CreateVertexBuffer(dst_tex_usage0)", hr);
+      }
+
+      hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
+                                /*DestIndex=*/0,
+                                /*VertexCount=*/1,
+                                dst_vb_tex_usage0.get(),
+                                decl_tex_usage0.get(),
+                                /*Flags=*/0);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(xyz|tex1, tex usage=POSITION)", hr);
+      }
+
+      void* dst_tex_usage0_ptr = NULL;
+      hr = dst_vb_tex_usage0->Lock(0, sizeof(VertexXyzrhwDiffuseTex1), &dst_tex_usage0_ptr, D3DLOCK_READONLY);
+      if (FAILED(hr) || !dst_tex_usage0_ptr) {
+        return reporter.FailHresult("dst_vb_tex_usage0->Lock", hr);
+      }
+
+      const VertexXyzrhwDiffuseTex1 expected = {0.5f, 0.5f, 0.0f, 1.0f, src.color, src.u, src.v};
+      const bool bytes_match = (memcmp(dst_tex_usage0_ptr, &expected, sizeof(expected)) == 0);
+
+      hr = dst_vb_tex_usage0->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_vb_tex_usage0->Unlock", hr);
+      }
+      if (!bytes_match) {
+        return reporter.Fail("ProcessVertices XYZ|TEX1 tex-usage=POSITION output bytes did not match expected output");
+      }
     }
 
     // Validate XYZ|TEX1 -> XYZRHW|DIFFUSE|TEX1 when the source vertex format does
