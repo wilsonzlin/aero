@@ -266,6 +266,10 @@ param(
   [Parameter(Mandatory = $false)]
   [int]$VirtioSndWavRmsThreshold = 50,
 
+  # If set, print the computed QEMU argument list and exit 0 without launching QEMU (or starting the HTTP server).
+  [Parameter(Mandatory = $false)]
+  [switch]$DryRun,
+
   # Extra args passed verbatim to QEMU (advanced use).
   [Parameter(Mandatory = $false)]
   [string[]]$QemuExtraArgs = @()
@@ -3806,8 +3810,140 @@ if (-not (Test-Path -LiteralPath $serialParent)) {
 }
 $SerialLogPath = Join-Path (Resolve-Path -LiteralPath $serialParent).Path (Split-Path -Leaf $SerialLogPath)
 
-if (Test-Path -LiteralPath $SerialLogPath) {
+if (-not $DryRun -and (Test-Path -LiteralPath $SerialLogPath)) {
   Remove-Item -LiteralPath $SerialLogPath -Force
+}
+
+if ($DryRun) {
+  function Quote-AeroPsArg {
+    param(
+      [Parameter(Mandatory = $true)] [string]$Value
+    )
+    # Single-quote for PowerShell; escape embedded single quotes by doubling.
+    return "'" + $Value.Replace("'", "''") + "'"
+  }
+
+  $qmpPort = $null
+  $qmpArgs = @()
+  $needInputEvents = [bool]$WithInputEvents
+  $needInputTabletEvents = [bool]$WithInputTabletEvents
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputTabletEvents
+  if ($needQmp) {
+    try {
+      $qmpPort = Get-AeroFreeTcpPort
+      $qmpArgs = @(
+        "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
+      )
+    } catch {
+      if ($needInputEvents -or $needInputTabletEvents) {
+        throw "Failed to allocate QMP port required for -WithInputEvents/-WithInputTabletEvents: $_"
+      }
+      Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
+      $qmpPort = $null
+      $qmpArgs = @()
+    }
+  }
+
+  $serialChardev = "file,id=charserial0,path=$(Quote-AeroWin7QemuKeyvalValue $SerialLogPath)"
+  $netdev = "user,id=net0"
+
+  $needInputTabletEvents = [bool]$WithInputTabletEvents
+  if ($VirtioTransitional) {
+    $nic = "virtio-net-pci,netdev=net0"
+    if ($VirtioMsixVectors -gt 0) { $nic += ",vectors=$VirtioMsixVectors" }
+    $drive = "file=$(Quote-AeroWin7QemuKeyvalValue $DiskImagePath),if=virtio,cache=writeback"
+    if ($Snapshot) { $drive += ",snapshot=on" }
+
+    $virtioInputArgs = @(
+      "-device", "virtio-keyboard-pci,id=$($script:VirtioInputKeyboardQmpId)$(if ($VirtioMsixVectors -gt 0) { ",vectors=$VirtioMsixVectors" } else { "" })",
+      "-device", "virtio-mouse-pci,id=$($script:VirtioInputMouseQmpId)$(if ($VirtioMsixVectors -gt 0) { ",vectors=$VirtioMsixVectors" } else { "" })"
+    )
+    if ($needInputTabletEvents) {
+      $virtioInputArgs += @(
+        "-device", "virtio-tablet-pci,id=$($script:VirtioInputTabletQmpId)$(if ($VirtioMsixVectors -gt 0) { ",vectors=$VirtioMsixVectors" } else { "" })"
+      )
+    }
+
+    $qemuArgs = @(
+      "-m", "$MemoryMB",
+      "-smp", "$Smp",
+      "-display", "none",
+      "-no-reboot"
+    ) + $qmpArgs + @(
+      "-chardev", $serialChardev,
+      "-serial", "chardev:charserial0",
+      "-netdev", $netdev,
+      "-device", $nic
+    ) + $virtioInputArgs + @(
+      "-drive", $drive
+    ) + $QemuExtraArgs
+  } else {
+    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $VirtioMsixVectors
+    $driveId = "drive0"
+    $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
+    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId -MsixVectors $VirtioMsixVectors
+
+    $kbd = "$(New-AeroWin7VirtioKeyboardDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputKeyboardQmpId)"
+    $mouse = "$(New-AeroWin7VirtioMouseDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputMouseQmpId)"
+    $virtioTabletArgs = @()
+    if ($needInputTabletEvents) {
+      $tablet = "$(New-AeroWin7VirtioTabletDeviceArg -MsixVectors $VirtioMsixVectors),id=$($script:VirtioInputTabletQmpId)"
+      $virtioTabletArgs = @(
+        "-device", $tablet
+      )
+    }
+
+    $virtioSndArgs = @()
+    if ($WithVirtioSnd) {
+      $audiodev = ""
+      switch ($VirtioSndAudioBackend) {
+        "none" {
+          $audiodev = "none,id=snd0"
+        }
+        "wav" {
+          $audiodev = "wav,id=snd0,path=$(Quote-AeroWin7QemuKeyvalValue $VirtioSndWavPath)"
+        }
+        default {
+          throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
+        }
+      }
+
+      $virtioSndDevice = "virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=snd0"
+      if ($VirtioMsixVectors -gt 0) { $virtioSndDevice += ",vectors=$VirtioMsixVectors" }
+      $virtioSndArgs = @(
+        "-audiodev", $audiodev,
+        "-device", $virtioSndDevice
+      )
+    }
+
+    $qemuArgs = @(
+      "-m", "$MemoryMB",
+      "-smp", "$Smp",
+      "-display", "none",
+      "-no-reboot"
+    ) + $qmpArgs + @(
+      "-chardev", $serialChardev,
+      "-serial", "chardev:charserial0",
+      "-netdev", $netdev,
+      "-device", $nic,
+      "-device", $kbd,
+      "-device", $mouse
+    ) + $virtioTabletArgs + @(
+      "-drive", $drive,
+      "-device", $blk
+    ) + $virtioSndArgs + $QemuExtraArgs
+  }
+
+  Write-Host "DryRun: QEMU argv (one per line):"
+  Write-Host "  $QemuSystem"
+  $qemuArgs | ForEach-Object { Write-Host "  $_" }
+  Write-Host ""
+  Write-Host "DryRun: QEMU command (PowerShell quoted):"
+  $quoted = @()
+  $quoted += (Quote-AeroPsArg $QemuSystem)
+  $quoted += ($qemuArgs | ForEach-Object { Quote-AeroPsArg $_ })
+  Write-Host ("  & " + ($quoted -join " "))
+  exit 0
 }
 
 Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."

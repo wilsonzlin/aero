@@ -91,6 +91,7 @@ import math
 import re
 import warnings
 import os
+import shutil
 import shlex
 import socket
 import socketserver
@@ -1986,10 +1987,210 @@ def _detect_virtio_snd_device(qemu_system: str) -> str:
     )
 
 
+def _resolve_executable_path(cmd: str) -> str:
+    """
+    Best-effort resolve an executable path for logging/debuggability.
+
+    - If the user passed a path (contains a path separator), resolve it to an absolute path.
+    - Otherwise, try PATH lookup via `shutil.which`.
+    - If resolution fails, return the original string unchanged.
+    """
+    if not cmd:
+        return cmd
+
+    try:
+        has_sep = os.sep in cmd or (os.altsep is not None and os.altsep in cmd)
+    except Exception:
+        has_sep = False
+
+    if has_sep:
+        try:
+            return str(Path(cmd).resolve())
+        except Exception:
+            return cmd
+
+    found = shutil.which(cmd)
+    if found:
+        try:
+            return str(Path(found).resolve())
+        except Exception:
+            return found
+
+    return cmd
+
+
+def _build_qemu_args_dry_run(
+    args: argparse.Namespace,
+    qemu_extra: list[str],
+    *,
+    disk_image: Path,
+    serial_log: Path,
+    qmp_endpoint: Optional[_QmpEndpoint],
+    virtio_net_vectors: Optional[int],
+    virtio_blk_vectors: Optional[int],
+    virtio_input_vectors: Optional[int],
+    virtio_snd_vectors: Optional[int],
+    attach_virtio_tablet: bool,
+) -> list[str]:
+    """
+    Construct the QEMU argv array without probing QEMU (no subprocesses).
+
+    This is used by the host harness dry-run mode to dump the intended QEMU commandline
+    without starting QEMU or the harness HTTP server.
+    """
+    serial_chardev = f"file,id=charserial0,path={_qemu_quote_keyval_value(str(serial_log))}"
+
+    qemu_args: list[str] = [
+        args.qemu_system,
+        "-m",
+        str(args.memory_mb),
+        "-smp",
+        str(args.smp),
+        "-display",
+        "none",
+        "-no-reboot",
+    ]
+    if qmp_endpoint is not None:
+        qemu_args += ["-qmp", qmp_endpoint.qemu_arg()]
+
+    qemu_args += [
+        "-chardev",
+        serial_chardev,
+        "-serial",
+        "chardev:charserial0",
+        "-netdev",
+        "user,id=net0",
+    ]
+
+    if args.virtio_transitional:
+        # Transitional mode: use a close-to-default QEMU layout. If explicit vectors are requested
+        # for virtio-blk, switch to an explicit virtio-blk-pci device so vectors can be applied.
+        virtio_blk_args: list[str] = []
+        if virtio_blk_vectors is None:
+            drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=virtio,cache=writeback"
+            if args.snapshot:
+                drive += ",snapshot=on"
+            virtio_blk_args = ["-drive", drive]
+        else:
+            drive_id = "drive0"
+            drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=none,id={drive_id},cache=writeback"
+            if args.snapshot:
+                drive += ",snapshot=on"
+            virtio_blk = _qemu_device_arg_add_vectors(f"virtio-blk-pci,drive={drive_id}", virtio_blk_vectors)
+            virtio_blk_args = ["-drive", drive, "-device", virtio_blk]
+
+        virtio_net = _qemu_device_arg_add_vectors("virtio-net-pci,netdev=net0", virtio_net_vectors)
+
+        virtio_input_args: list[str] = [
+            "-device",
+            _qemu_device_arg_add_vectors(
+                f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID}",
+                virtio_input_vectors,
+            ),
+            "-device",
+            _qemu_device_arg_add_vectors(
+                f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID}",
+                virtio_input_vectors,
+            ),
+        ]
+        if attach_virtio_tablet:
+            virtio_input_args += [
+                "-device",
+                _qemu_device_arg_add_vectors(
+                    _qemu_virtio_tablet_pci_device_arg(disable_legacy=False, pci_revision=None),
+                    virtio_input_vectors,
+                ),
+            ]
+
+        qemu_args += ["-device", virtio_net] + virtio_input_args + virtio_blk_args + qemu_extra
+        return qemu_args
+
+    # Contract v1: modern-only virtio-pci + forced PCI revision.
+    aero_pci_rev = "0x01"
+    drive_id = "drive0"
+    drive = f"file={_qemu_quote_keyval_value(str(disk_image))},if=none,id={drive_id},cache=writeback"
+    if args.snapshot:
+        drive += ",snapshot=on"
+
+    virtio_net = _qemu_device_arg_add_vectors(
+        f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
+        virtio_net_vectors,
+    )
+    virtio_blk = _qemu_device_arg_add_vectors(
+        f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}",
+        virtio_blk_vectors,
+    )
+    virtio_kbd = _qemu_device_arg_add_vectors(
+        f"virtio-keyboard-pci,id={_VIRTIO_INPUT_QMP_KEYBOARD_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
+        virtio_input_vectors,
+    )
+    virtio_mouse = _qemu_device_arg_add_vectors(
+        f"virtio-mouse-pci,id={_VIRTIO_INPUT_QMP_MOUSE_ID},disable-legacy=on,x-pci-revision={aero_pci_rev}",
+        virtio_input_vectors,
+    )
+
+    qemu_args += [
+        "-device",
+        virtio_net,
+        "-device",
+        virtio_kbd,
+        "-device",
+        virtio_mouse,
+    ]
+    if attach_virtio_tablet:
+        virtio_tablet = _qemu_device_arg_add_vectors(
+            _qemu_virtio_tablet_pci_device_arg(disable_legacy=True, pci_revision=aero_pci_rev),
+            virtio_input_vectors,
+        )
+        qemu_args += ["-device", virtio_tablet]
+
+    qemu_args += [
+        "-drive",
+        drive,
+        "-device",
+        virtio_blk,
+    ]
+
+    if args.enable_virtio_snd:
+        device_arg = ",".join(
+            [
+                "virtio-sound-pci",
+                "audiodev=snd0",
+                "disable-legacy=on",
+                f"x-pci-revision={aero_pci_rev}",
+            ]
+        )
+        device_arg = _qemu_device_arg_add_vectors(device_arg, virtio_snd_vectors)
+
+        backend = args.virtio_snd_audio_backend
+        if backend == "none":
+            audiodev_arg = "none,id=snd0"
+        elif backend == "wav":
+            wav_path = Path(args.virtio_snd_wav_path).resolve()
+            audiodev_arg = f"wav,id=snd0,path={_qemu_quote_keyval_value(str(wav_path))}"
+        else:
+            raise AssertionError(f"Unhandled backend: {backend}")
+
+        qemu_args += ["-audiodev", audiodev_arg, "-device", device_arg]
+
+    qemu_args += qemu_extra
+    return qemu_args
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu-system", required=True, help="Path to qemu-system-* binary")
     parser.add_argument("--disk-image", required=True, help="Prepared Win7 disk image")
+    parser.add_argument(
+        "--dry-run",
+        "--print-qemu-cmd",
+        dest="dry_run",
+        action="store_true",
+        help=(
+            "Construct and print the full QEMU argv (JSON + shell-escaped single line) and exit 0. "
+            "Does not start the HTTP server, QMP, or QEMU."
+        ),
+    )
     parser.add_argument(
         "--serial-log",
         default="win7-virtio-serial.log",
@@ -2345,6 +2546,7 @@ def main() -> int:
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
+    args.qemu_system = _resolve_executable_path(args.qemu_system)
     need_input_wheel = bool(getattr(args, "with_input_wheel", False))
     need_input_events_extended = bool(getattr(args, "with_input_events_extended", False))
     need_input_events = bool(args.with_input_events) or need_input_wheel or need_input_events_extended
@@ -2443,7 +2645,7 @@ def main() -> int:
         if int(args.blk_resize_delta_mib) <= 0:
             parser.error("--blk-resize-delta-mib must be > 0 when --with-blk-resize is enabled")
 
-    if need_input_events:
+    if need_input_events and not args.dry_run:
         # In default (contract-v1) mode we already validate virtio-keyboard-pci/virtio-mouse-pci via
         # `_assert_qemu_supports_aero_w7_virtio_contract_v1`. In transitional mode virtio-input is
         # optional, but input event injection requires these devices to exist.
@@ -2457,12 +2659,16 @@ def main() -> int:
                 "QEMU virtio-keyboard-pci and virtio-mouse-pci support. Upgrade QEMU or omit input event injection."
             )
 
-    if need_input_media_keys and not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci"):
+    if (
+        need_input_media_keys
+        and not args.dry_run
+        and not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci")
+    ):
         parser.error(
             "--with-input-media-keys requires QEMU virtio-keyboard-pci support. Upgrade QEMU or omit media key injection."
         )
 
-    if attach_virtio_tablet:
+    if attach_virtio_tablet and not args.dry_run:
         try:
             help_text = _qemu_device_list_help_text(args.qemu_system)
         except RuntimeError as e:
@@ -2473,7 +2679,7 @@ def main() -> int:
                 "QEMU virtio-tablet-pci support. Upgrade QEMU or omit tablet support."
             )
 
-    if not args.virtio_transitional:
+    if not args.virtio_transitional and not args.dry_run:
         try:
             _assert_qemu_supports_aero_w7_virtio_contract_v1(
                 args.qemu_system,
@@ -2486,19 +2692,23 @@ def main() -> int:
 
     disk_image = Path(args.disk_image).resolve()
     if not disk_image.exists():
-        print(f"ERROR: disk image not found: {disk_image}", file=sys.stderr)
-        return 2
+        if args.dry_run:
+            print(f"WARNING: disk image not found: {disk_image}", file=sys.stderr)
+        else:
+            print(f"ERROR: disk image not found: {disk_image}", file=sys.stderr)
+            return 2
     serial_log = Path(args.serial_log).resolve()
-    serial_log.parent.mkdir(parents=True, exist_ok=True)
-
-    if serial_log.exists():
-        serial_log.unlink()
+    if not args.dry_run:
+        serial_log.parent.mkdir(parents=True, exist_ok=True)
+        if serial_log.exists():
+            serial_log.unlink()
 
     qemu_stderr_log = serial_log.with_name(serial_log.stem + ".qemu.stderr.log")
-    try:
-        qemu_stderr_log.unlink()
-    except FileNotFoundError:
-        pass
+    if not args.dry_run:
+        try:
+            qemu_stderr_log.unlink()
+        except FileNotFoundError:
+            pass
 
     if virtio_disable_msix:
         # INTx-only mode: verify the running QEMU build accepts `vectors=0` for the virtio-pci devices
@@ -2581,10 +2791,11 @@ def main() -> int:
             if len(qmp_path_str) >= 100 or "," in qmp_path_str or len(qmp_path_str.encode("utf-8")) >= 100:
                 qmp_socket = None
             else:
-                try:
-                    qmp_socket.unlink()
-                except FileNotFoundError:
-                    pass
+                if not args.dry_run:
+                    try:
+                        qmp_socket.unlink()
+                    except FileNotFoundError:
+                        pass
                 qmp_endpoint = _QmpEndpoint(unix_socket=qmp_socket)
 
         if qmp_endpoint is None:
@@ -2657,6 +2868,25 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+
+    if args.dry_run:
+        qemu_args = _build_qemu_args_dry_run(
+            args,
+            qemu_extra,
+            disk_image=disk_image,
+            serial_log=serial_log,
+            qmp_endpoint=qmp_endpoint,
+            virtio_net_vectors=virtio_net_vectors,
+            virtio_blk_vectors=virtio_blk_vectors,
+            virtio_input_vectors=virtio_input_vectors,
+            virtio_snd_vectors=virtio_snd_vectors,
+            attach_virtio_tablet=attach_virtio_tablet,
+        )
+        # First line: machine-readable JSON argv array.
+        print(json.dumps(qemu_args, separators=(",", ":")))
+        # Second line: best-effort shell-escaped string (POSIX quoting).
+        print(" ".join(shlex.quote(str(a)) for a in qemu_args))
+        return 0
 
     http_log_path: Optional[Path] = None
     if args.http_log:

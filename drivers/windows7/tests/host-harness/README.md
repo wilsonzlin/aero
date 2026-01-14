@@ -133,6 +133,34 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### Dry-run / print QEMU commandline
+
+To debug CI failures (or just to see the exact device arguments/quoting), both harnesses can print
+the computed QEMU argv without starting the HTTP server or launching QEMU.
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -DryRun
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --dry-run
+```
+
+The Python harness prints:
+
+1. A machine-readable JSON argv array (first line)
+2. A best-effort shell-escaped single-line command (second line)
+
 ### Forcing / limiting virtio MSI-X vector count (QEMU `vectors=`)
 
 To deterministically exercise the Aero virtio drivers' **multi-vector MSI-X** paths *and* fallback behavior when fewer
