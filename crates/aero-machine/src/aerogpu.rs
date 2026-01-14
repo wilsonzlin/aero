@@ -1776,4 +1776,119 @@ mod tests {
             1
         );
     }
+
+    #[derive(Default)]
+    struct TestMem {
+        bytes: Vec<u8>,
+    }
+
+    impl MemoryBus for TestMem {
+        fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+            let start = usize::try_from(paddr).unwrap_or(0);
+            for (i, b) in buf.iter_mut().enumerate() {
+                *b = self.bytes.get(start.saturating_add(i)).copied().unwrap_or(0);
+            }
+        }
+
+        fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+            let start = usize::try_from(paddr).unwrap_or(0);
+            let end = start.saturating_add(buf.len());
+            if end > self.bytes.len() {
+                self.bytes.resize(end, 0);
+            }
+            self.bytes[start..end].copy_from_slice(buf);
+        }
+    }
+
+    #[test]
+    fn scanout_read_rgba8888_converts_32bpp_formats_and_pitch() {
+        #[derive(Clone, Copy)]
+        enum SrcKind {
+            Bgra,
+            Bgrx,
+            Rgba,
+            Rgbx,
+        }
+
+        fn pack(kind: SrcKind, rgba: [u8; 4], x: u8) -> [u8; 4] {
+            let [r, g, b, a] = rgba;
+            match kind {
+                SrcKind::Bgra => [b, g, r, a],
+                SrcKind::Bgrx => [b, g, r, x],
+                SrcKind::Rgba => [r, g, b, a],
+                SrcKind::Rgbx => [r, g, b, x],
+            }
+        }
+
+        let width = 2usize;
+        let height = 2usize;
+        let row_bytes = width * 4;
+        let pitch = 12u32;
+
+        let pixels_rgba: [[u8; 4]; 4] = [
+            [0x10, 0x20, 0x30, 0x40],
+            [0x50, 0x60, 0x70, 0x80],
+            [0x90, 0xA0, 0xB0, 0xC0],
+            [0xD0, 0xE0, 0xF0, 0x01],
+        ];
+
+        let formats: &[(u32, SrcKind, bool)] = &[
+            (pci::AerogpuFormat::B8G8R8A8Unorm as u32, SrcKind::Bgra, false),
+            (
+                pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32,
+                SrcKind::Bgra,
+                false,
+            ),
+            (pci::AerogpuFormat::B8G8R8X8Unorm as u32, SrcKind::Bgrx, true),
+            (
+                pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32,
+                SrcKind::Bgrx,
+                true,
+            ),
+            (pci::AerogpuFormat::R8G8B8A8Unorm as u32, SrcKind::Rgba, false),
+            (
+                pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32,
+                SrcKind::Rgba,
+                false,
+            ),
+            (pci::AerogpuFormat::R8G8B8X8Unorm as u32, SrcKind::Rgbx, true),
+            (
+                pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32,
+                SrcKind::Rgbx,
+                true,
+            ),
+        ];
+
+        for &(format, kind, force_opaque) in formats {
+            let expected: Vec<u32> = pixels_rgba
+                .iter()
+                .map(|&[r, g, b, a]| u32::from_le_bytes([r, g, b, if force_opaque { 0xFF } else { a }]))
+                .collect();
+
+            let fb_gpa = 0x1000u64;
+            let mut mem = TestMem::default();
+            for y in 0..height {
+                let row_gpa = fb_gpa + (y as u64) * u64::from(pitch);
+                let mut row = Vec::with_capacity(row_bytes);
+                for x in 0..width {
+                    let idx = y * width + x;
+                    row.extend_from_slice(&pack(kind, pixels_rgba[idx], 0x12u8.wrapping_add(idx as u8)));
+                }
+                mem.write_physical(row_gpa, &row);
+            }
+
+            let state = AeroGpuScanout0State {
+                wddm_scanout_active: true,
+                enable: true,
+                width: width as u32,
+                height: height as u32,
+                format,
+                pitch_bytes: pitch,
+                fb_gpa,
+            };
+
+            let out = state.read_rgba8888(&mut mem).unwrap();
+            assert_eq!(out, expected, "format={:?}", format);
+        }
+    }
 }
