@@ -248,6 +248,58 @@ fn xhci_msix_table_mmio_is_gated_by_pci_command_mem() {
 }
 
 #[test]
+fn xhci_msix_pending_bit_delivers_after_entry_is_programmed() {
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    enable_msix(&mut dev);
+
+    let (table_base, pba_base) = {
+        let msix = dev
+            .config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability");
+        (u64::from(msix.table_offset()), u64::from(msix.pba_offset()))
+    };
+
+    // Trigger before entry 0 is fully programmed (address/data are zero by default). This should
+    // set PBA[0] instead of delivering an interrupt.
+    dev.raise_event_interrupt();
+    assert_eq!(interrupts.borrow_mut().get_pending(), None);
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        1,
+        "unprogrammed MSI-X entry should set PBA pending bit"
+    );
+
+    // Program the message data first. MMIO writes invoke `service_interrupts()`, so writing the
+    // address first could otherwise deliver an unintended vector (data defaults to 0).
+    MmioHandler::write(&mut dev, table_base + 0x8, 4, 0x45);
+    // Now program the address; this should deliver the pending interrupt.
+    MmioHandler::write(&mut dev, table_base + 0x0, 4, 0xfee0_0000);
+    MmioHandler::write(&mut dev, table_base + 0x4, 4, 0);
+    MmioHandler::write(&mut dev, table_base + 0xc, 4, 0); // unmasked
+
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(ints.get_pending(), Some(0x45));
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
+
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        0,
+        "PBA pending bit should clear after delivery"
+    );
+}
+
+#[test]
 fn xhci_msix_function_mask_sets_pba_and_delivers_on_unmask() {
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());
