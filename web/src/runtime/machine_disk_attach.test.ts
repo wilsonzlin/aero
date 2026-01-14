@@ -400,13 +400,13 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     const dv = new DataView(overlayHeader.buffer);
     dv.setUint32(8, 1, true); // version
     dv.setUint32(12, 64, true); // header size
-    dv.setUint32(16, 4 * 1024 * 1024, true); // block size
-    dv.setBigUint64(24, 8n * 1024n * 1024n, true); // disk size bytes
+    dv.setUint32(16, 4096, true); // block size
+    dv.setBigUint64(24, 4096n, true); // disk size bytes
     dv.setBigUint64(32, 64n, true); // table offset
-    dv.setBigUint64(40, 2n, true); // table entries
-    dv.setBigUint64(48, 4n * 1024n * 1024n, true); // data offset
+    dv.setBigUint64(40, 1n, true); // table entries
+    dv.setBigUint64(48, 4096n, true); // data offset
     dv.setBigUint64(56, 0n, true); // allocated blocks
-    const file = new Blob([overlayHeader]);
+    const file = new Blob([overlayHeader, new Uint8Array(4096 - 64)]);
 
     const originalNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
     try {
@@ -457,7 +457,7 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
 
       await attachMachineBootDisk(machine, "hdd", meta);
 
-      expect(attach).toHaveBeenCalledWith(plan.opfsPath, `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`, 4 * 1024 * 1024);
+      expect(attach).toHaveBeenCalledWith(plan.opfsPath, `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`, 4096);
     } finally {
       if (originalNavigatorDesc) {
         Object.defineProperty(globalThis, "navigator", originalNavigatorDesc);

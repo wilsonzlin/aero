@@ -960,6 +960,13 @@ async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string): Promise<nu
     if (dataOffset !== expectedDataOffset) return null;
     const allocatedBlocks = dv.getBigUint64(56, true);
     if (allocatedBlocks > tableEntries) return null;
+    // Ensure the file is large enough to contain the advertised data region.
+    // (Mirrors the Rust-side `AeroSparseDisk::open` truncation checks.)
+    const fileSize = file.size;
+    if (typeof fileSize === "number" && Number.isFinite(fileSize) && fileSize >= 0 && Number.isSafeInteger(fileSize)) {
+      const expectedMinLen = expectedDataOffset + allocatedBlocks * blockSizeBig;
+      if (BigInt(fileSize) < expectedMinLen) return null;
+    }
 
     return blockSizeBytes;
   } catch {

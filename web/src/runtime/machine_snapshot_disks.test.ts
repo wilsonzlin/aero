@@ -398,13 +398,14 @@ describe("runtime/machine_snapshot_disks", () => {
       const dv = new DataView(header.buffer);
       dv.setUint32(8, 1, true); // version
       dv.setUint32(12, 64, true); // header size
-      dv.setUint32(16, 1024 * 1024, true); // block size
-      dv.setBigUint64(24, 1024n * 1024n, true); // disk size bytes (must be non-zero + sector-aligned)
+      dv.setUint32(16, 4096, true); // block size
+      dv.setBigUint64(24, 4096n, true); // disk size bytes (must be non-zero + sector-aligned)
       dv.setBigUint64(32, 64n, true); // table offset (fixed)
       dv.setBigUint64(40, 1n, true); // table entries (ceil(diskSize/blockSize))
-      dv.setBigUint64(48, 1024n * 1024n, true); // data offset (aligned)
+      dv.setBigUint64(48, 4096n, true); // data offset (aligned)
       dv.setBigUint64(56, 0n, true); // allocated blocks
-      const file = new Blob([header]);
+      // Minimal valid sparse file is `data_offset` bytes long.
+      const file = new Blob([header, new Uint8Array(4096 - 64)]);
 
       const fileHandle = {
         getFile: async () => file,
@@ -496,13 +497,14 @@ describe("runtime/machine_snapshot_disks", () => {
       const dv = new DataView(header.buffer);
       dv.setUint32(8, 1, true); // version
       dv.setUint32(12, 64, true); // header size
-      dv.setUint32(16, 1024 * 1024, true); // block size
-      dv.setBigUint64(24, 1024n * 1024n, true); // disk size bytes (must be non-zero + sector-aligned)
+      dv.setUint32(16, 4096, true); // block size
+      dv.setBigUint64(24, 4096n, true); // disk size bytes (must be non-zero + sector-aligned)
       dv.setBigUint64(32, 64n, true); // table offset (fixed)
       dv.setBigUint64(40, 1n, true); // table entries (ceil(diskSize/blockSize))
-      dv.setBigUint64(48, 1024n * 1024n, true); // data offset (aligned)
+      dv.setBigUint64(48, 4096n, true); // data offset (aligned)
       dv.setBigUint64(56, 0n, true); // allocated blocks
-      const file = new Blob([header]);
+      // Minimal valid sparse file is `data_offset` bytes long.
+      const file = new Blob([header, new Uint8Array(4096 - 64)]);
 
       const fileHandle = {
         getFile: async () => file,
