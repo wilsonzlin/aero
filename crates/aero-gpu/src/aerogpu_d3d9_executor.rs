@@ -8772,7 +8772,7 @@ fn clamp_scissor_rect(
     Some((x, y, width, height))
 }
 
-fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Error> {
+pub(crate) fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Error> {
     Ok(match format {
         x if x == AerogpuFormat::B8G8R8A8Unorm as u32
             || x == AerogpuFormat::B8G8R8X8Unorm as u32
