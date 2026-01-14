@@ -38,6 +38,11 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|"', self.text)
         self.assertIn('reason=([^|\\r\\n]+)', self.text)
 
+    def test_skip_reason_fallback_handles_legacy_marker_token(self) -> None:
+        # Backcompat: older guest selftests may emit `...|SKIP|flag_not_set` (no `reason=` field).
+        # Ensure the harness has a fallback parser for that token form.
+        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)", self.text)
+
     def test_fail_reason_and_err_are_parsed_from_marker(self) -> None:
         # Ensure we surface fail reason/err in the deterministic failure token.
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|"', self.text)

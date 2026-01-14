@@ -172,6 +172,14 @@ class FailureTokenTests(unittest.TestCase):
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_SKIPPED:"))
         self.assertIn("--test-blk-reset", msg)
 
+        # Backcompat: older selftests may emit `...|SKIP|flag_not_set` (no `reason=` key).
+        msg = h._virtio_blk_reset_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|flag_not_set\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_SKIPPED:"))
+        self.assertIn("--test-blk-reset", msg)
+
     def test_virtio_blk_reset_fail_tokens_include_reason_and_err_when_present(self) -> None:
         h = self.harness
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=post_reset_io_failed|err=123\n"

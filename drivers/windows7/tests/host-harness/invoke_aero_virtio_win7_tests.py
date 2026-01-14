@@ -2340,6 +2340,19 @@ def _virtio_blk_reset_skip_failure_message(tail: bytes, *, marker_line: Optional
     if marker is not None:
         fields = _parse_marker_kv_fields(marker)
         reason = fields.get("reason")
+        if not reason:
+            # Backcompat: some older selftest binaries emit `...|SKIP|flag_not_set` (no `reason=` field),
+            # similar to virtio-blk-resize and other SKIP markers.
+            try:
+                toks = marker.split("|")
+                if toks and "SKIP" in toks:
+                    idx = toks.index("SKIP")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
         if reason:
             if reason == "flag_not_set":
                 return (
@@ -11040,6 +11053,19 @@ def _emit_virtio_blk_reset_host_marker(tail: bytes, *, blk_reset_line: Optional[
 
     fields = _parse_marker_kv_fields(marker_line)
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|{status}"]
+
+    # Backcompat: mirror legacy SKIP markers like `...|SKIP|flag_not_set` (no `reason=` field) as
+    # `reason=flag_not_set` so log scraping can treat it uniformly.
+    if status == "SKIP" and "reason" not in fields:
+        try:
+            idx = toks.index("SKIP")
+            if idx + 1 < len(toks):
+                reason_tok = toks[idx + 1].strip()
+                if reason_tok and "=" not in reason_tok:
+                    fields["reason"] = reason_tok
+        except Exception:
+            pass
+
     ordered = ("performed", "counter_before", "counter_after", "err", "reason")
     for k in ordered:
         if k in fields:

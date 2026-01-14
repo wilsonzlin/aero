@@ -75,6 +75,14 @@ class VirtioBlkResetGatingTests(unittest.TestCase):
         self.assertIsNotNone(msg)
         self.assertTrue(str(msg).startswith("FAIL: VIRTIO_BLK_RESET_SKIPPED:"))
 
+    def test_required_marker_skip_legacy_flag_not_set_includes_hint(self) -> None:
+        h = self.harness
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|flag_not_set\n"
+        msg = h._virtio_blk_reset_required_failure_message(tail)
+        self.assertIsNotNone(msg)
+        self.assertTrue(str(msg).startswith("FAIL: VIRTIO_BLK_RESET_SKIPPED:"))
+        self.assertIn("--test-blk-reset", str(msg))
+
     def test_required_marker_missing(self) -> None:
         h = self.harness
         tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"

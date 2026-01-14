@@ -2897,6 +2897,22 @@ function Try-EmitAeroVirtioBlkResetMarker {
   }
   
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|$status"
+
+  # Backcompat: older selftests may emit `...|SKIP|flag_not_set` (no `reason=` field).
+  # Mirror it as `reason=...` so log scraping can treat it uniformly.
+  if ($status -eq "SKIP" -and (-not $fields.ContainsKey("reason"))) {
+    for ($i = 0; $i -lt $toks.Count; $i++) {
+      if ($toks[$i].Trim().ToUpperInvariant() -eq "SKIP") {
+        if ($i + 1 -lt $toks.Count) {
+          $reasonTok = $toks[$i + 1].Trim()
+          if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
+            $fields["reason"] = $reasonTok
+          }
+        }
+        break
+      }
+    }
+  }
   
   # Keep ordering stable for log scraping.
   $ordered = @("performed", "counter_before", "counter_after", "err", "reason")
@@ -7208,6 +7224,7 @@ try {
         -SerialLogPath $SerialLogPath
       if ($null -ne $line) {
         if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)") { $reason = $Matches[1] }
       }
       if ($reason -eq "flag_not_set") {
         Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped (flag_not_set) but -WithBlkReset was enabled (provision the guest with --test-blk-reset)"
