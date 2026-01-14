@@ -1188,7 +1188,13 @@ static BOOLEAN AeroGpuGetScanoutMmioSnapshot(_In_ const AEROGPU_ADAPTER* Adapter
     Out->PitchBytes = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH);
 
     const ULONG legacyFormat = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_FORMAT);
-    if (legacyFormat == AEROGPU_LEGACY_SCANOUT_X8R8G8B8) {
+    if (legacyFormat == AEROGPU_LEGACY_SCANOUT_X8R8G8B8 || legacyFormat == 0) {
+        /*
+         * Legacy scanout format register is a bring-up-only enum. Some device
+         * models may leave it at 0 during boot; default to our canonical 32bpp
+         * scanout format so post-display ownership can still infer a plausible
+         * mode/stride.
+         */
         Out->Format = AEROGPU_FORMAT_B8G8R8X8_UNORM;
     } else {
         Out->Format = AEROGPU_FORMAT_INVALID;
