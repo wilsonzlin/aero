@@ -68,6 +68,30 @@ describe("runtime/boot_disks_protocol", () => {
       });
     });
 
+    it("ignores inherited mount IDs and disk metadata fields", () => {
+      const mounts = Object.create({ hddId: "hdd0", cdId: "cd0" }) as Record<string, unknown>;
+      // Own properties still work.
+      mounts.cdId = "cd0";
+
+      const inheritedDisk = Object.create({ source: "local", id: "hdd0", kind: "hdd" }) as Record<string, unknown>;
+      // Provide only one required field as an own property; the rest are inherited => should be rejected.
+      inheritedDisk.kind = "hdd";
+
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts,
+          hdd: inheritedDisk,
+          cd: null,
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: { cdId: "cd0" },
+        hdd: null,
+        cd: null,
+      });
+    });
+
     it("accepts valid bootDevice values and drops invalid ones", () => {
       expect(
         normalizeSetBootDisksMessage({
