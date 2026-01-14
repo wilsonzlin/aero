@@ -1149,6 +1149,144 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                     )
                 )
 
+    # Structural guardrail: ensure the MSI keys are not only present in the INF,
+    # but are also reachable via Models -> DDInstall*.HW -> AddReg sections.
+    #
+    # This catches refactor mistakes where the AddReg section still exists (so a
+    # simple scan would pass) but is no longer referenced by the install path.
+    sections: dict[str, list[tuple[int, str]]] = {}
+    section_names: dict[str, str] = {}
+    current_section: str | None = None
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        if raw.lstrip().startswith(";"):
+            continue
+        m = re.match(r"^\s*\[(?P<section>[^\]]+)\]\s*$", raw)
+        if m:
+            current_section = m.group("section").strip()
+            key = current_section.lower()
+            section_names.setdefault(key, current_section)
+            sections.setdefault(key, [])
+            continue
+        if current_section is None:
+            continue
+        active = _strip_inf_inline_comment(raw).strip()
+        if not active:
+            continue
+        sections[current_section.lower()].append((line_no, active))
+
+    model_entries = parse_inf_model_entries(inf_path)
+    install_bases = {e.install_section.strip().lower() for e in model_entries if e.install_section.strip()}
+
+    hw_section_keys: list[str] = []
+    for sect_key, name in section_names.items():
+        if not name.lower().endswith(".hw"):
+            continue
+        if not install_bases:
+            hw_section_keys.append(sect_key)
+            continue
+        for base in install_bases:
+            if sect_key == f"{base}.hw" or (sect_key.startswith(base + ".") and sect_key.endswith(".hw")):
+                hw_section_keys.append(sect_key)
+                break
+
+    # De-dupe while preserving order.
+    seen_hw: set[str] = set()
+    hw_section_keys = [k for k in hw_section_keys if not (k in seen_hw or seen_hw.add(k))]
+
+    if not hw_section_keys:
+        errors.append(
+            format_error(
+                f"{inf_path.as_posix()}: could not locate any reachable .HW sections to validate MSI settings reachability:",
+                [
+                    "expected at least one [<InstallSection>*.HW] section referenced by Models.",
+                ],
+            )
+        )
+    else:
+        for hw_key in hw_section_keys:
+            hw_name = section_names.get(hw_key, hw_key)
+            hw_lines = sections.get(hw_key, [])
+
+            addreg_refs: list[str] = []
+            addreg_directives: list[str] = []
+            for line_no, line in hw_lines:
+                m = re.match(r"^\s*AddReg\s*=\s*(?P<rhs>.+)$", line, flags=re.I)
+                if not m:
+                    continue
+                rhs = m.group("rhs").strip()
+                addreg_directives.append(f"{inf_path.as_posix()}:{line_no}: {line}")
+                for part in _split_inf_csv_fields(rhs):
+                    name = _unquote_inf_token(part).strip()
+                    if name:
+                        addreg_refs.append(name)
+
+            # De-dupe AddReg refs while preserving order.
+            seen: set[str] = set()
+            addreg_refs = [r for r in addreg_refs if not (r.lower() in seen or seen.add(r.lower()))]
+
+            if not addreg_refs:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: [{hw_name}] does not reference any AddReg sections (required for MSI/MSI-X opt-in):",
+                        [
+                            "expected an AddReg directive pointing at a section that sets:",
+                            'HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, ..., 1',
+                            'HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, ..., <n>',
+                        ],
+                    )
+                )
+                continue
+
+            missing_addreg_sections = [r for r in addreg_refs if r.lower() not in sections]
+            if missing_addreg_sections:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: [{hw_name}] references missing AddReg section(s):",
+                        [
+                            *(f"missing section: [{r}]" for r in missing_addreg_sections),
+                            "AddReg directive(s):",
+                            *([f"- {d}" for d in addreg_directives] if addreg_directives else ["- (none found)"]),
+                        ],
+                    )
+                )
+
+            found: dict[str, str] = {}
+            for ref in addreg_refs:
+                ref_key = ref.lower()
+                for line_no, line in sections.get(ref_key, []):
+                    if not line.lstrip().upper().startswith("HKR"):
+                        continue
+                    parts = _split_inf_csv_fields(line)
+                    if not parts or parts[0].strip().upper() != "HKR":
+                        continue
+                    subkey = _normalize_inf_reg_subkey(parts[1] if len(parts) > 1 else "")
+                    if subkey != "interrupt management\\messagesignaledinterruptproperties":
+                        continue
+                    value_name = _normalize_inf_reg_value_name(parts[2] if len(parts) > 2 else "")
+                    if value_name in ("msisupported", "messagenumberlimit") and value_name not in found:
+                        found[value_name] = f"{inf_path.as_posix()}:{line_no}: {line}"
+
+            missing_keys = [k for k in ("msisupported", "messagenumberlimit") if k not in found]
+            if missing_keys:
+                key_display = {
+                    "msisupported": "MSISupported",
+                    "messagenumberlimit": "MessageNumberLimit",
+                }
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: [{hw_name}] MSI/MSI-X opt-in keys are missing from referenced AddReg section(s):",
+                        [
+                            *[f"missing key: {key_display.get(k, k)}" for k in missing_keys],
+                            "expected to set both under:",
+                            'HKR, "Interrupt Management\\MessageSignaledInterruptProperties", <Key>, ...',
+                            "referenced AddReg sections:",
+                            *[f"- [{r}]" for r in addreg_refs],
+                            "AddReg directive(s):",
+                            *([f"- {d}" for d in addreg_directives] if addreg_directives else ["- (none found)"]),
+                        ],
+                    )
+                )
+
     return errors
 
 
