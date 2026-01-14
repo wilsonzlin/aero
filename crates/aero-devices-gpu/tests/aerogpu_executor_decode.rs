@@ -228,6 +228,69 @@ fn write_cmd_stream_header(
     ProtocolCmdStreamHeader::SIZE_BYTES as u32
 }
 
+fn write_vsync_present_cmd_stream(mem: &mut VecMemory, gpa: u64, abi_version: u32) -> u32 {
+    let stream_size = (ProtocolCmdStreamHeader::SIZE_BYTES + ProtocolCmdPresent::SIZE_BYTES) as u32;
+
+    mem.write_u32(gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(gpa + CMD_STREAM_ABI_VERSION_OFFSET, abi_version);
+    mem.write_u32(gpa + CMD_STREAM_SIZE_BYTES_OFFSET, stream_size);
+    mem.write_u32(gpa + CMD_STREAM_FLAGS_OFFSET, 0);
+    mem.write_u32(gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
+    mem.write_u32(gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
+
+    let present_gpa = gpa + ProtocolCmdStreamHeader::SIZE_BYTES as u64;
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64,
+        AerogpuCmdOpcode::Present as u32,
+    );
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64,
+        ProtocolCmdPresent::SIZE_BYTES as u32,
+    );
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64,
+        0,
+    );
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, flags) as u64,
+        AEROGPU_PRESENT_FLAG_VSYNC,
+    );
+
+    stream_size
+}
+
+#[derive(Default)]
+struct CompletingBackend {
+    completed: Vec<AeroGpuBackendCompletion>,
+}
+
+impl AeroGpuCommandBackend for CompletingBackend {
+    fn reset(&mut self) {
+        self.completed.clear();
+    }
+
+    fn submit(
+        &mut self,
+        _mem: &mut dyn MemoryBus,
+        submission: AeroGpuBackendSubmission,
+    ) -> Result<(), String> {
+        // Complete immediately; vblank gating should still block fence advancement.
+        self.completed.push(AeroGpuBackendCompletion {
+            fence: submission.signal_fence,
+            error: None,
+        });
+        Ok(())
+    }
+
+    fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+        self.completed.drain(..).collect()
+    }
+
+    fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+        None
+    }
+}
+
 #[test]
 fn decodes_alloc_table_and_cmd_stream_header() {
     let mut mem = VecMemory::new(0x40_000);
@@ -1031,33 +1094,8 @@ fn vsync_present_is_gated_until_vblank_tick_immediate_mode() {
         fence_completion: AeroGpuFenceCompletionMode::Immediate,
     });
 
-    // Command stream: header + Present(vsync).
     let cmd_gpa = 0x6000u64;
-    let stream_size = (ProtocolCmdStreamHeader::SIZE_BYTES + ProtocolCmdPresent::SIZE_BYTES) as u32;
-    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, regs.abi_version);
-    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, stream_size);
-    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
-
-    let present_gpa = cmd_gpa + ProtocolCmdStreamHeader::SIZE_BYTES as u64;
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64,
-        AerogpuCmdOpcode::Present as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64,
-        ProtocolCmdPresent::SIZE_BYTES as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64,
-        0,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, flags) as u64,
-        AEROGPU_PRESENT_FLAG_VSYNC,
-    );
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
 
     // Ring with one PRESENT submission that signals fence=1.
     let ring_gpa = 0x1000u64;
@@ -1102,33 +1140,8 @@ fn vsync_present_is_gated_even_without_submit_present_hint_immediate_mode() {
         fence_completion: AeroGpuFenceCompletionMode::Immediate,
     });
 
-    // Command stream: header + Present(vsync).
     let cmd_gpa = 0x6000u64;
-    let stream_size = (ProtocolCmdStreamHeader::SIZE_BYTES + ProtocolCmdPresent::SIZE_BYTES) as u32;
-    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, regs.abi_version);
-    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, stream_size);
-    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
-
-    let present_gpa = cmd_gpa + ProtocolCmdStreamHeader::SIZE_BYTES as u64;
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64,
-        AerogpuCmdOpcode::Present as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64,
-        ProtocolCmdPresent::SIZE_BYTES as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64,
-        0,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, flags) as u64,
-        AEROGPU_PRESENT_FLAG_VSYNC,
-    );
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
 
     // Ring with one PRESENT submission that signals fence=1, but without the submit-level PRESENT
     // hint flag set.
@@ -1160,6 +1173,131 @@ fn vsync_present_is_gated_even_without_submit_present_hint_immediate_mode() {
 }
 
 #[test]
+fn pending_vsync_fence_is_flushed_when_scanout_is_disabled_immediate_mode() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.features |= FEATURE_VBLANK;
+    regs.scanout0.enable = true;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let cmd_gpa = 0x6000u64;
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, cmd_gpa, stream_size, 0, 0, 1);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 0);
+
+    // If scanout/vblank pacing is disabled after a vsync present is queued, do not leave the fence
+    // blocked forever. The device should flush/publish the completion.
+    regs.scanout0.enable = false;
+    exec.flush_pending_fences(&mut regs, &mut mem);
+
+    assert_eq!(regs.completed_fence, 1);
+}
+
+#[test]
+fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank_immediate_mode() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.features |= FEATURE_VBLANK;
+    regs.scanout0.enable = true;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let cmd_gpa = 0x6000u64;
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
+
+    // Two submissions: fence 1 (vsync) then fence 2 (immediate, empty submission).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
+
+    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
+    // Empty submission (no cmd stream) should be treated as immediate.
+    write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, 2);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(
+        regs.completed_fence, 0,
+        "immediate fence behind vsync fence must not complete on doorbell"
+    );
+
+    exec.process_vblank_tick(&mut regs, &mut mem);
+
+    // Completing the vsync fence should also allow the immediate fence behind it to complete on
+    // the same vblank tick.
+    assert_eq!(regs.completed_fence, 2);
+}
+
+#[test]
+fn completes_at_most_one_vsync_fence_per_vblank_tick_immediate_mode() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.features |= FEATURE_VBLANK;
+    regs.scanout0.enable = true;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let cmd_gpa = 0x6000u64;
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
+
+    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
+    write_submit_desc(&mut mem, desc1_gpa, cmd_gpa, stream_size, 0, 0, 2);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 0);
+
+    exec.process_vblank_tick(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 1);
+
+    exec.process_vblank_tick(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 2);
+}
+
+#[test]
 fn vblank_irq_is_only_latched_while_enabled() {
     let mut mem = VecMemory::new(0x1000);
     let mut regs = AeroGpuRegs::default();
@@ -1183,38 +1321,6 @@ fn vblank_irq_is_only_latched_while_enabled() {
 
 #[test]
 fn flush_pending_fences_unblocks_vsync_fence_when_scanout_disabled_deferred_mode() {
-    #[derive(Default)]
-    struct CompletingBackend {
-        completed: Vec<AeroGpuBackendCompletion>,
-    }
-
-    impl AeroGpuCommandBackend for CompletingBackend {
-        fn reset(&mut self) {
-            self.completed.clear();
-        }
-
-        fn submit(
-            &mut self,
-            _mem: &mut dyn MemoryBus,
-            submission: AeroGpuBackendSubmission,
-        ) -> Result<(), String> {
-            // Complete immediately; vblank gating should still block fence advancement.
-            self.completed.push(AeroGpuBackendCompletion {
-                fence: submission.signal_fence,
-                error: None,
-            });
-            Ok(())
-        }
-
-        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
-            self.completed.drain(..).collect()
-        }
-
-        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
-            None
-        }
-    }
-
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
     regs.features |= FEATURE_VBLANK;
@@ -1228,33 +1334,8 @@ fn flush_pending_fences_unblocks_vsync_fence_when_scanout_disabled_deferred_mode
     });
     exec.set_backend(Box::<CompletingBackend>::default());
 
-    // Command stream: header + Present(vsync).
     let cmd_gpa = 0x6000u64;
-    let stream_size = (ProtocolCmdStreamHeader::SIZE_BYTES + ProtocolCmdPresent::SIZE_BYTES) as u32;
-    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, regs.abi_version);
-    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, stream_size);
-    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
-
-    let present_gpa = cmd_gpa + ProtocolCmdStreamHeader::SIZE_BYTES as u64;
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64,
-        AerogpuCmdOpcode::Present as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64,
-        ProtocolCmdPresent::SIZE_BYTES as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64,
-        0,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, flags) as u64,
-        AEROGPU_PRESENT_FLAG_VSYNC,
-    );
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
 
     // Ring with one PRESENT submission that signals fence=1.
     let ring_gpa = 0x1000u64;
@@ -1290,38 +1371,6 @@ fn flush_pending_fences_unblocks_vsync_fence_when_scanout_disabled_deferred_mode
 
 #[test]
 fn vsync_present_is_gated_until_vblank_tick_deferred_mode() {
-    #[derive(Default)]
-    struct CompletingBackend {
-        completed: Vec<AeroGpuBackendCompletion>,
-    }
-
-    impl AeroGpuCommandBackend for CompletingBackend {
-        fn reset(&mut self) {
-            self.completed.clear();
-        }
-
-        fn submit(
-            &mut self,
-            _mem: &mut dyn MemoryBus,
-            submission: AeroGpuBackendSubmission,
-        ) -> Result<(), String> {
-            // Complete immediately; vblank gating should still block fence advancement.
-            self.completed.push(AeroGpuBackendCompletion {
-                fence: submission.signal_fence,
-                error: None,
-            });
-            Ok(())
-        }
-
-        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
-            self.completed.drain(..).collect()
-        }
-
-        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
-            None
-        }
-    }
-
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
     regs.features |= FEATURE_VBLANK;
@@ -1334,33 +1383,8 @@ fn vsync_present_is_gated_until_vblank_tick_deferred_mode() {
     });
     exec.set_backend(Box::<CompletingBackend>::default());
 
-    // Command stream: header + Present(vsync).
     let cmd_gpa = 0x6000u64;
-    let stream_size = (ProtocolCmdStreamHeader::SIZE_BYTES + ProtocolCmdPresent::SIZE_BYTES) as u32;
-    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, regs.abi_version);
-    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, stream_size);
-    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
-
-    let present_gpa = cmd_gpa + ProtocolCmdStreamHeader::SIZE_BYTES as u64;
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64,
-        AerogpuCmdOpcode::Present as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64,
-        ProtocolCmdPresent::SIZE_BYTES as u32,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64,
-        0,
-    );
-    mem.write_u32(
-        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, flags) as u64,
-        AEROGPU_PRESENT_FLAG_VSYNC,
-    );
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
 
     // Ring with one PRESENT submission that signals fence=1.
     let ring_gpa = 0x1000u64;
@@ -1390,6 +1414,91 @@ fn vsync_present_is_gated_until_vblank_tick_deferred_mode() {
 
     exec.process_vblank_tick(&mut regs, &mut mem);
     assert_eq!(regs.completed_fence, 1);
+}
+
+#[test]
+fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank_deferred_mode() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.features |= FEATURE_VBLANK;
+    regs.scanout0.enable = true;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::<CompletingBackend>::default());
+
+    let cmd_gpa = 0x6000u64;
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
+
+    // Two submissions: fence 1 (vsync) then fence 2 (immediate, empty submission).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
+
+    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
+    write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, 2);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(
+        regs.completed_fence, 0,
+        "immediate fence behind vsync fence must not complete on doorbell"
+    );
+
+    exec.process_vblank_tick(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 2);
+}
+
+#[test]
+fn completes_at_most_one_vsync_fence_per_vblank_tick_deferred_mode() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.features |= FEATURE_VBLANK;
+    regs.scanout0.enable = true;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::<CompletingBackend>::default());
+
+    let cmd_gpa = 0x6000u64;
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
+
+    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
+    write_submit_desc(&mut mem, desc1_gpa, cmd_gpa, stream_size, 0, 0, 2);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 0);
+
+    exec.process_vblank_tick(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 1);
+
+    exec.process_vblank_tick(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 2);
 }
 
 #[test]
