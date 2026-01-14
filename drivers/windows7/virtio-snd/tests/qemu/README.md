@@ -98,6 +98,11 @@ To view these logs in a Windows 7 guest:
 - Attach a kernel debugger, or
 - Use Sysinternals **DebugView** with **Capture Kernel** enabled.
 
+If `aero-virtio-selftest.exe` is installed, it also emits a serial/stdout marker indicating which interrupt mode Windows assigned:
+
+- `virtio-snd-irq|INFO|mode=intx`
+- `virtio-snd-irq|INFO|mode=msi|messages=<n>` (message interrupts; MSI/MSI-X)
+
 ## Optional bring-up: polling-only mode (no interrupts)
 
 If you are testing against an early/buggy virtio-snd device model where interrupts are not delivered or cannot be connected, the driver supports an **opt-in** polling-only mode.

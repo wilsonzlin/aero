@@ -98,15 +98,31 @@ MSI-X as disabled on the corresponding PCI function (best-effort introspection v
 - PowerShell:
   - `-RequireVirtioNetMsix`
   - `-RequireVirtioBlkMsix`
-  - `-RequireVirtioSndMsix` (only relevant when `-WithVirtioSnd` is enabled)
+  - `-RequireVirtioSndMsix` *(requires `-WithVirtioSnd`)*
 - Python:
   - `--require-virtio-net-msix`
   - `--require-virtio-blk-msix`
-  - `--require-virtio-snd-msix` (only relevant when `--with-virtio-snd` is enabled)
+  - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`)*
 
-Note: this checks whether MSI-X is enabled on the **QEMU device**, not whether Windows actually granted multiple message
-interrupts. For guest-observed mode/message counts, use the guest `virtio-<dev>-irq|INFO|...` lines and the mirrored
-host markers (`AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` / `...|VIRTIO_*_IRQ_DIAG|...`).
+Notes:
+
+- This check relies on QMP support for either `query-pci` or `human-monitor-command` (`info pci`).
+- On failure, the harness reports tokens like `VIRTIO_SND_MSIX_NOT_ENABLED` (or `QMP_MSIX_CHECK_UNSUPPORTED` if QEMU cannot report MSI-X state).
+- This checks whether MSI-X is enabled on the **QEMU device**, not whether Windows actually granted multiple message
+  interrupts. For guest-observed mode/message counts, use the guest `virtio-<dev>-irq|INFO|...` lines and the mirrored
+  host markers (`AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` / `...|VIRTIO_*_IRQ_DIAG|...`).
+
+Example (PowerShell):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -Snapshot `
+  -WithVirtioSnd `
+  -RequireVirtioSndMsix `
+  -TimeoutSeconds 600
+```
 
 ### virtio-input event delivery (QMP input injection)
 
