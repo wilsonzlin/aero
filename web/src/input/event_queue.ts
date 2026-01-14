@@ -106,6 +106,10 @@ export type InputBatchFlushHook = (
 
 const HEADER_WORDS = 2;
 const WORDS_PER_EVENT = 4;
+// Hard cap on how many events we will store in a single batch. Keep this in sync with
+// `web/src/workers/io_input_batch.ts::MAX_INPUT_EVENTS_PER_BATCH` so the main thread never
+// allocates buffers larger than what the I/O worker will process.
+const MAX_EVENTS_PER_BATCH = 4096;
 
 let nextInputBatchId = 1;
 type BufferFactory = (byteLength: number) => ArrayBuffer;
@@ -133,7 +137,7 @@ export class InputEventQueue {
     // buffer (via `new ArrayBuffer(NaN)` -> 0), leaving the queue in a corrupted state where pushes
     // "succeed" but do not actually write event data.
     if (Number.isFinite(capacityEvents)) {
-      this.capacityEvents = Math.max(1, Math.floor(capacityEvents));
+      this.capacityEvents = Math.max(1, Math.min(MAX_EVENTS_PER_BATCH, Math.floor(capacityEvents)));
     } else {
       this.capacityEvents = 128;
     }
@@ -281,6 +285,11 @@ export class InputEventQueue {
   private push(type: InputEventType, timestampUs: number, a: number, b: number): void {
     if (this.count >= this.capacityEvents) {
       this.grow();
+      // If we hit the hard cap, drop the event. The I/O worker clamps processing to
+      // `MAX_EVENTS_PER_BATCH` anyway, so retaining additional events would only waste memory.
+      if (this.count >= this.capacityEvents) {
+        return;
+      }
     }
 
     if (this.count === 0) {
@@ -296,7 +305,11 @@ export class InputEventQueue {
   }
 
   private grow(): void {
-    const nextCapacity = this.capacityEvents * 2;
+    if (this.capacityEvents >= MAX_EVENTS_PER_BATCH) {
+      return;
+    }
+
+    const nextCapacity = Math.min(MAX_EVENTS_PER_BATCH, this.capacityEvents * 2);
     const nextBuf = this.allocateBuffer((HEADER_WORDS + nextCapacity * WORDS_PER_EVENT) * 4);
     new Int32Array(nextBuf).set(this.words);
     this.capacityEvents = nextCapacity;

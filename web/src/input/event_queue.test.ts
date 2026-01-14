@@ -115,4 +115,27 @@ describe("InputEventQueue", () => {
       expect(words[base + 3]).toBe(0);
     }
   });
+
+  it("caps the per-batch event count to avoid unbounded buffer growth", () => {
+    // Use an absurd initial capacity that would previously throw (invalid ArrayBuffer length).
+    const queue = new InputEventQueue(Number.MAX_SAFE_INTEGER);
+
+    // Push more events than the hard cap; extra events should be dropped.
+    for (let i = 0; i < 5000; i += 1) {
+      queue.pushKeyHidUsage(i, 0x04, true);
+    }
+
+    const state: { posted: InputBatchMessage | null } = { posted: null };
+    const target: InputBatchTarget = {
+      postMessage: (msg, _transfer) => {
+        state.posted = msg;
+      },
+    };
+
+    queue.flush(target);
+    if (!state.posted) throw new Error("expected flush to post a batch");
+
+    const words = new Int32Array(state.posted.buffer);
+    expect(words[0]).toBe(4096);
+  });
 });
