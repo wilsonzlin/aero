@@ -2390,6 +2390,8 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
 
+        self.validate_gs_hs_ds_emulation_capabilities()?;
+
         let Some(next) = stream.iter.peek() else {
             return Ok(());
         };
@@ -12154,11 +12156,27 @@ mod tests {
             let err = exec
                 .execute_cmd_stream(&stream, None, &mut guest_mem)
                 .expect_err("patchlist draw should error until tessellation emulation is implemented");
-            assert!(
-                err.to_string()
-                    .contains("patchlist topology requires tessellation emulation"),
-                "unexpected error: {err:#}"
-            );
+            let err_str = err.to_string();
+            if !exec.caps.supports_compute {
+                assert!(
+                    err_str.contains(
+                        "GS/HS/DS emulation requires compute shaders; backend does not support compute"
+                    ),
+                    "unexpected error: {err:#}"
+                );
+            } else if !exec.supports_indirect {
+                assert!(
+                    err_str.contains(
+                        "GS/HS/DS emulation requires indirect draws; backend does not support indirect draws"
+                    ),
+                    "unexpected error: {err:#}"
+                );
+            } else {
+                assert!(
+                    err_str.contains("patchlist topology requires tessellation emulation"),
+                    "unexpected error: {err:#}"
+                );
+            }
 
             assert_eq!(
                 exec.state.primitive_topology,
