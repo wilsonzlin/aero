@@ -88,6 +88,11 @@ on:
         required: false
         default: false
         type: boolean
+      with_virtio_tablet:
+        description: Attach a virtio-tablet-pci device (in addition to virtio keyboard/mouse). Requires the guest tablet driver to be installed if you expect virtio-input binding checks to pass.
+        required: false
+        default: false
+        type: boolean
       require_virtio_net_msix:
         description: Require virtio-net MSI-X to be enabled/effective (host QMP check + guest mode marker)
         required: false
@@ -308,6 +313,7 @@ jobs:
             echo "  force_intx: '${{ inputs.force_intx }}'"
             echo "  require_intx: '${{ inputs.require_intx }}'"
             echo "  require_msi: '${{ inputs.require_msi }}'"
+            echo "  with_virtio_tablet: '${{ inputs.with_virtio_tablet }}'"
             echo "  require_virtio_net_msix: '${{ inputs.require_virtio_net_msix }}'"
             echo "  require_virtio_blk_msix: '${{ inputs.require_virtio_blk_msix }}'"
             echo "  require_virtio_snd_msix: '${{ inputs.require_virtio_snd_msix }}'"
@@ -432,6 +438,7 @@ jobs:
             force_intx="${{ inputs.force_intx }}"
             require_intx="${{ inputs.require_intx }}"
             require_msi="${{ inputs.require_msi }}"
+            with_virtio_tablet="${{ inputs.with_virtio_tablet }}"
             virtio_transitional="${{ inputs.virtio_transitional }}"
             require_virtio_net_msix="${{ inputs.require_virtio_net_msix }}"
             require_virtio_blk_msix="${{ inputs.require_virtio_blk_msix }}"
@@ -639,6 +646,9 @@ jobs:
             fi
             if [[ "${with_virtio_input_tablet_events}" == "true" ]]; then
               args+=(--with-tablet-events)
+            fi
+            if [[ "${with_virtio_tablet}" == "true" ]]; then
+              args+=(--with-virtio-tablet)
             fi
             if [[ "${with_blk_resize}" == "true" ]]; then
               args+=(--with-blk-resize)
