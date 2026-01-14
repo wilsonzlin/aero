@@ -762,6 +762,23 @@ For patchlist topologies:
 
 Patchlist draws are invalid unless both HS and DS are bound.
 
+**Geometry shader instancing (`SV_GSInstanceID`)**
+
+SM5 geometry shaders may declare an **instance count** (`dcl_gs_instance_count` / HLSL
+`[instance(n)]`). This causes the GS to be invoked `n` times per input primitive, with
+`SV_GSInstanceID` in `0..n`.
+
+Let:
+
+- `gs_instance_count` be the declared GS instance count (default 1 when the declaration is absent).
+
+This affects:
+
+- **GS dispatch sizing:** the GS compute pass must cover both dimensions (`primitive_id` and
+  `gs_instance_id`).
+- **Output sizing:** worst-case output bounds must be multiplied by `gs_instance_count` (see “GS
+  output sizing” below).
+
 #### 2.2) Scratch buffers (logical) and required WebGPU usages
 
 The expansion pipeline uses per-draw (or per-encoder) scratch allocations. These are *logical*
@@ -876,13 +893,13 @@ So a conservative capacity is:
 
 ```
 out_max_vertices =
-  input_prim_count * instance_count * max_list_vertices_per_input_prim
+  input_prim_count * instance_count * gs_instance_count * max_list_vertices_per_input_prim
 ```
 
 If using strategy (2), then:
 
-- `out_max_vertices = input_prim_count * instance_count * M`
-- `out_max_indices = input_prim_count * instance_count * max_list_vertices_per_input_prim`
+- `out_max_vertices = input_prim_count * instance_count * gs_instance_count * M`
+- `out_max_indices = input_prim_count * instance_count * gs_instance_count * max_list_vertices_per_input_prim`
 
 **Expanded vertex layout (concrete):**
 
@@ -1021,6 +1038,10 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
     - Trigger: `gs != 0` or adjacency topology.
     - Reads primitive inputs from the previous stage output (`vs_out` for no tessellation,
       otherwise `tess_out_vertices`).
+    - Dispatch shape (for `SV_PrimitiveID` / `SV_GSInstanceID`):
+      - Use a 2D grid where:
+        - `global_invocation_id.x` = input `primitive_id` in `0..input_prim_count`
+        - `global_invocation_id.y` = `gs_instance_id` in `0..gs_instance_count`
     - Emits vertices/indices to `gs_out_*`, updates counters, then writes final `indirect_args`.
 
 4. **Final render**
