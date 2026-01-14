@@ -60,6 +60,16 @@ export type WorkerInitMessage = {
    * Byte offset within `scanoutState` where the scanout header begins (typically 0).
    */
   scanoutStateOffsetBytes?: number;
+  /**
+   * Shared hardware cursor descriptor used to present the WDDM hardware cursor.
+   *
+   * Layout/protocol: `web/src/ipc/cursor_state.ts` / `crates/aero-shared/src/cursor_state.rs`.
+   */
+  cursorState?: SharedArrayBuffer;
+  /**
+   * Byte offset within `cursorState` where the cursor header begins (typically 0).
+   */
+  cursorStateOffsetBytes?: number;
   /** Optional precompiled WASM module (structured-cloneable in modern browsers). */
   wasmModule?: WebAssembly.Module;
   /** Variant corresponding to `wasmModule` (or the preferred variant when no module is sent). */

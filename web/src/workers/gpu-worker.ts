@@ -65,6 +65,12 @@ import {
   snapshotScanoutState,
   type ScanoutStateSnapshot,
 } from "../ipc/scanout_state";
+import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_FORMAT_B8G8R8X8,
+  snapshotCursorState,
+  type CursorStateSnapshot,
+} from "../ipc/cursor_state";
 
 import {
   FRAMEBUFFER_FORMAT_RGBA8888,
@@ -89,10 +95,12 @@ import { readScanoutRgba8FromGuestRam } from "../runtime/scanout_readback";
 import type { AeroConfig } from '../config/aero_config';
 import {
   createSharedMemoryViews,
+  guestPaddrToRamOffset,
+  guestRangeInBounds,
   ringRegionsForWorker,
   setReadyFlag,
-  type GuestRamLayout,
   StatusIndex,
+  type GuestRamLayout,
   type WorkerRole,
 } from '../runtime/shared_layout';
 import { RingBuffer } from '../ipc/ring_buffer';
@@ -175,6 +183,7 @@ let wddmScanoutHeight = 0;
 // When set, treat WDDM/AeroGPU as owning scanout so legacy shared-framebuffer updates do not
 // "flash back" over WDDM output.
 let wddmOwnsScanoutFallback = false;
+let hwCursorState: Int32Array | null = null;
 
 // Optional `present()` entrypoint supplied by a dynamically imported module.
 // When unset, the worker uses the built-in presenter backends.
@@ -480,6 +489,17 @@ let cursorHotY = 0;
 // Normally true; temporarily disabled for cursor-less screenshots.
 let cursorRenderEnabled = true;
 
+// -----------------------------------------------------------------------------
+// Hardware cursor (CursorState descriptor) tracking.
+// -----------------------------------------------------------------------------
+
+// The legacy cursor APIs (cursor_set_image/state) are still supported for harnesses and
+// pre-WDDM demos. The hardware cursor path becomes authoritative once we observe a
+// non-default CursorState publish (generation != 0 or any non-zero fields).
+let hwCursorActive = false;
+let hwCursorLastGeneration: number | null = null;
+let hwCursorLastImageKey: string | null = null;
+
 const getCursorPresenter = (): CursorPresenter | null => presenter as unknown as CursorPresenter | null;
 
 const syncCursorToPresenter = (): void => {
@@ -521,10 +541,163 @@ const redrawCursor = (): void => {
     return;
   }
 
+  if (aerogpuLastOutputSource === "wddm_scanout") {
+    const lastScanout = wddmScanoutRgba;
+    if (lastScanout && wddmScanoutWidth > 0 && wddmScanoutHeight > 0) {
+      presenter.present(lastScanout, wddmScanoutWidth * BYTES_PER_PIXEL_RGBA8);
+      return;
+    }
+    // If the scanout cache is unavailable, fall through and attempt to read the current frame.
+  }
+
   const frame = getCurrentFrameInfo();
   if (!frame) return;
-  aerogpuLastOutputSource = "framebuffer";
+  const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
+  aerogpuLastOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
   presenter.present(frame.pixels, frame.strideBytes);
+};
+
+const MAX_HW_CURSOR_DIM = 256;
+
+const tryReadHwCursorImageRgba8 = (
+  basePaddr: bigint,
+  width: number,
+  height: number,
+  pitchBytes: number,
+  format: number,
+): Uint8Array | null => {
+  const guest = guestU8;
+  const layout = guestLayout;
+  if (!guest || !layout) return null;
+
+  if (basePaddr === 0n) return null;
+  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+
+  const base = Number(basePaddr);
+  if (!Number.isFinite(base) || base < 0) return null;
+
+  const w = Math.max(0, width | 0);
+  const h = Math.max(0, height | 0);
+  const pitch = pitchBytes >>> 0;
+  if (w === 0 || h === 0 || pitch === 0) return null;
+
+  const rowBytes = w * 4;
+  if (pitch < rowBytes) return null;
+
+  const requiredBytesBig = BigInt(pitch) * BigInt(h);
+  if (requiredBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  const requiredBytes = Number(requiredBytesBig);
+
+  if (!guestRangeInBounds(layout, base, requiredBytes)) return null;
+  const start = guestPaddrToRamOffset(layout, base);
+  if (start === null) return null;
+  const end = start + requiredBytes;
+  if (end < start || end > guest.byteLength) return null;
+
+  const src = guest.subarray(start, end);
+  const out = new Uint8Array(rowBytes * h);
+
+  const isBgra = (format >>> 0) === CURSOR_FORMAT_B8G8R8A8;
+  const isBgrx = (format >>> 0) === CURSOR_FORMAT_B8G8R8X8;
+  if (!isBgra && !isBgrx) return null;
+
+  for (let y = 0; y < h; y += 1) {
+    const srcRow = y * pitch;
+    const dstRow = y * rowBytes;
+    for (let x = 0; x < w; x += 1) {
+      const s = srcRow + x * 4;
+      const d = dstRow + x * 4;
+      // BGR(A/X) -> RGBA.
+      out[d + 0] = src[s + 2]!;
+      out[d + 1] = src[s + 1]!;
+      out[d + 2] = src[s + 0]!;
+      out[d + 3] = isBgra ? src[s + 3]! : 255;
+    }
+  }
+
+  return out;
+};
+
+const syncHardwareCursorFromState = (): void => {
+  const words = hwCursorState;
+  if (!words) return;
+
+  let snap: CursorStateSnapshot;
+  try {
+    snap = snapshotCursorState(words);
+  } catch {
+    return;
+  }
+
+  if (!hwCursorActive) {
+    const anyNonZero =
+      (snap.generation >>> 0) !== 0 ||
+      (snap.enable >>> 0) !== 0 ||
+      (snap.width >>> 0) !== 0 ||
+      (snap.height >>> 0) !== 0 ||
+      ((snap.basePaddrLo | snap.basePaddrHi) >>> 0) !== 0;
+    if (!anyNonZero) return;
+    hwCursorActive = true;
+  }
+
+  const gen = snap.generation >>> 0;
+  if (hwCursorLastGeneration === gen) {
+    return;
+  }
+  hwCursorLastGeneration = gen;
+
+  const w = Math.min(snap.width >>> 0, MAX_HW_CURSOR_DIM);
+  const h = Math.min(snap.height >>> 0, MAX_HW_CURSOR_DIM);
+  const pitchBytes = snap.pitchBytes >>> 0;
+  const format = snap.format >>> 0;
+  const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
+
+  const imageKey = `${basePaddr.toString(16)}:${w}:${h}:${pitchBytes}:${format}`;
+  let imageUpdated = false;
+  if (hwCursorLastImageKey !== imageKey) {
+    hwCursorLastImageKey = imageKey;
+    imageUpdated = true;
+
+    const rgba =
+      w > 0 && h > 0 && pitchBytes > 0 && basePaddr !== 0n
+        ? tryReadHwCursorImageRgba8(basePaddr, w, h, pitchBytes, format)
+        : null;
+    if (rgba) {
+      cursorImage = rgba;
+      cursorWidth = w;
+      cursorHeight = h;
+    } else {
+      cursorImage = null;
+      cursorWidth = 0;
+      cursorHeight = 0;
+    }
+  }
+
+  const enabledFlag = (snap.enable >>> 0) !== 0;
+  const hasImage = !!cursorImage && cursorWidth > 0 && cursorHeight > 0;
+  const nextEnabled = enabledFlag && hasImage;
+  const nextX = snap.x | 0;
+  const nextY = snap.y | 0;
+  const nextHotX = snap.hotX >>> 0;
+  const nextHotY = snap.hotY >>> 0;
+
+  const stateChanged =
+    cursorEnabled !== nextEnabled ||
+    cursorX !== nextX ||
+    cursorY !== nextY ||
+    cursorHotX !== nextHotX ||
+    cursorHotY !== nextHotY;
+
+  cursorEnabled = nextEnabled;
+  cursorX = nextX;
+  cursorY = nextY;
+  cursorHotX = nextHotX;
+  cursorHotY = nextHotY;
+
+  if (imageUpdated || stateChanged) {
+    syncCursorToPresenter();
+    redrawCursor();
+  }
 };
 
 const compositeCursorOverRgba8 = (
@@ -1815,9 +1988,13 @@ const presentOnce = async (): Promise<boolean> => {
         lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
         // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
         // does not clobber the active scanout with a stale shared framebuffer upload.
-        aerogpuLastOutputSource = scanoutSnap?.source === SCANOUT_SOURCE_WDDM ? "aerogpu" : "framebuffer";
+        const wddmOwnsScanout =
+          scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
+        const hasBasePaddr =
+          !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
+        aerogpuLastOutputSource = wddmOwnsScanout ? (hasBasePaddr ? "wddm_scanout" : "aerogpu") : "framebuffer";
         clearSharedFramebufferDirty();
-      } else if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM) {
+      } else if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback)) {
         // Even if the custom present() declined to draw, WDDM ownership means the legacy
         // shared framebuffer must not "steal" the output later.
         clearSharedFramebufferDirty();
@@ -1899,7 +2076,8 @@ const presentOnce = async (): Promise<boolean> => {
         presenter.present(frame.pixels, frame.strideBytes);
         lastPresentUploadKind = "full";
       }
-      aerogpuLastOutputSource = "framebuffer";
+      const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
+      aerogpuLastOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
       clearSharedFramebufferDirty();
       return true;
     }
@@ -2143,16 +2321,18 @@ const handleTick = async () => {
     return;
   }
 
+  syncHardwareCursorFromState();
+
   // When scanout is WDDM-owned the frame scheduler continues ticking even if the legacy shared
   // framebuffer is idle (FRAME_STATUS=PRESENTED). Read the scanout source to decide whether we
   // should run a present pass even when `frameState` isn't DIRTY.
   const scanoutIsWddm = (() => {
     const words = scanoutState;
-    if (!words) return false;
+    if (!words) return wddmOwnsScanoutFallback;
     try {
       return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
     } catch {
-      return false;
+      return wddmOwnsScanoutFallback;
     }
   })();
 
@@ -2624,12 +2804,17 @@ async function maybeSendReady(): Promise<void> {
 
 const handleRuntimeInit = (init: WorkerInitMessage) => {
   role = init.role ?? 'gpu';
+  hwCursorActive = false;
+  hwCursorLastGeneration = null;
+  hwCursorLastImageKey = null;
   const segments = {
     control: init.controlSab,
     guestMemory: init.guestMemory,
     vgaFramebuffer: init.vgaFramebuffer,
     scanoutState: init.scanoutState,
     scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
+    cursorState: init.cursorState,
+    cursorStateOffsetBytes: init.cursorStateOffsetBytes ?? 0,
     ioIpc: init.ioIpcSab,
     sharedFramebuffer: init.sharedFramebuffer,
     sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
@@ -2639,9 +2824,12 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   scanoutState = views.scanoutStateI32 ?? null;
   wddmOwnsScanoutFallback = false;
   (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = scanoutState ?? undefined;
+  hwCursorState = views.cursorStateI32 ?? null;
+  (globalThis as unknown as { __aeroCursorState?: Int32Array }).__aeroCursorState = hwCursorState ?? undefined;
   // `guestU8` is a flat backing store of guest RAM bytes (length = `guest_size`). On PC/Q35 with
   // ECAM/PCI holes + high-RAM remap, GPAs in AeroGPU submissions are guest *physical* addresses
   // (which may be >=4GiB); executors must translate them back into this view before slicing.
+  guestLayout = views.guestLayout;
   guestU8 = views.guestU8;
   guestLayout = views.guestLayout;
   if (aerogpuWasm) {
@@ -2864,6 +3052,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         cursorHotX = 0;
         cursorHotY = 0;
         cursorRenderEnabled = true;
+        hwCursorActive = false;
+        hwCursorLastGeneration = null;
+        hwCursorLastImageKey = null;
 
         presenterUserOnError = runtimeOptions?.presenter?.onError;
         presenterInitOptions = { ...(runtimeOptions?.presenter ?? {}) };
@@ -3221,18 +3412,35 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                   presenterNeedsFullUpload = false;
                 }
               } else {
-                const frame = getCurrentFrameInfo();
-                if (frame) {
-                  if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
-                    presenterSrcWidth = frame.width;
-                    presenterSrcHeight = frame.height;
-                    if (presenter.backend === "webgpu") surfaceReconfigures += 1;
-                    presenter.resize(frame.width, frame.height, outputDpr);
-                    presenterNeedsFullUpload = true;
+                if (aerogpuLastOutputSource === "wddm_scanout") {
+                  const lastScanout = wddmScanoutRgba;
+                  if (lastScanout && wddmScanoutWidth > 0 && wddmScanoutHeight > 0) {
+                    if (wddmScanoutWidth !== presenterSrcWidth || wddmScanoutHeight !== presenterSrcHeight) {
+                      presenterSrcWidth = wddmScanoutWidth;
+                      presenterSrcHeight = wddmScanoutHeight;
+                      if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                      presenter.resize(wddmScanoutWidth, wddmScanoutHeight, outputDpr);
+                      presenterNeedsFullUpload = true;
+                    }
+                    presenter.present(lastScanout, wddmScanoutWidth * BYTES_PER_PIXEL_RGBA8);
+                    aerogpuLastOutputSource = "wddm_scanout";
+                    presenterNeedsFullUpload = false;
                   }
-                  presenter.present(frame.pixels, frame.strideBytes);
-                  aerogpuLastOutputSource = "framebuffer";
-                  presenterNeedsFullUpload = false;
+                } else {
+                  const frame = getCurrentFrameInfo();
+                  if (frame) {
+                    if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
+                      presenterSrcWidth = frame.width;
+                      presenterSrcHeight = frame.height;
+                      if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                      presenter.resize(frame.width, frame.height, outputDpr);
+                      presenterNeedsFullUpload = true;
+                    }
+                    presenter.present(frame.pixels, frame.strideBytes);
+                    const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
+                    aerogpuLastOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
+                    presenterNeedsFullUpload = false;
+                  }
                 }
               }
             }
@@ -3572,6 +3780,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
     case "cursor_set_image": {
       const req = msg as GpuRuntimeCursorSetImageMessage;
+      if (hwCursorActive) {
+        // Hardware cursor state is authoritative once active; ignore legacy messages to
+        // avoid flicker when both sources are present.
+        break;
+      }
       const w = Math.max(0, req.width | 0);
       const h = Math.max(0, req.height | 0);
       if (w === 0 || h === 0) {
@@ -3589,6 +3802,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
     case "cursor_set_state": {
       const req = msg as GpuRuntimeCursorSetStateMessage;
+      if (hwCursorActive) {
+        break;
+      }
       cursorEnabled = !!req.enabled;
       cursorX = req.x | 0;
       cursorY = req.y | 0;

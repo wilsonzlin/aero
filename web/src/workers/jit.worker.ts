@@ -239,6 +239,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         vgaFramebuffer: init.vgaFramebuffer!,
         scanoutState: init.scanoutState,
         scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
+        cursorState: init.cursorState,
+        cursorStateOffsetBytes: init.cursorStateOffsetBytes ?? 0,
         ioIpc: init.ioIpcSab!,
         sharedFramebuffer: init.sharedFramebuffer!,
         sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,

@@ -18,6 +18,12 @@ import {
   ScanoutStateIndex,
   wrapScanoutState,
 } from "../ipc/scanout_state";
+import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_STATE_U32_LEN,
+  CursorStateIndex,
+  wrapCursorState,
+} from "../ipc/cursor_state";
 
 export const WORKER_ROLES = ["cpu", "gpu", "io", "jit", "net"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -299,6 +305,17 @@ export interface SharedMemorySegments {
    */
   scanoutStateOffsetBytes?: number;
   /**
+   * Shared hardware cursor descriptor used to present the WDDM hardware cursor without
+   * legacy `cursor_set_*` postMessages.
+   *
+   * Layout/protocol: `web/src/ipc/cursor_state.ts` / `crates/aero-shared/src/cursor_state.rs`.
+   */
+  cursorState?: SharedArrayBuffer;
+  /**
+   * Byte offset within `cursorState` where the cursor header begins (typically 0).
+   */
+  cursorStateOffsetBytes?: number;
+  /**
    * Byte offset within `sharedFramebuffer` where the header begins.
    *
    * Note: `sharedFramebuffer` may alias `guestMemory.buffer` (embedded in WASM
@@ -324,6 +341,9 @@ export interface SharedMemoryViews {
   scanoutState?: SharedArrayBuffer;
   scanoutStateOffsetBytes?: number;
   scanoutStateI32?: Int32Array;
+  cursorState?: SharedArrayBuffer;
+  cursorStateOffsetBytes?: number;
+  cursorStateI32?: Int32Array;
 }
 
 function align(value: number, alignment: number): number {
@@ -564,6 +584,23 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(scanoutWords, ScanoutStateIndex.PITCH_BYTES, 0);
   Atomics.store(scanoutWords, ScanoutStateIndex.FORMAT, SCANOUT_FORMAT_B8G8R8X8);
 
+  // Hardware cursor state descriptor (WDDM cursor registers + surface pointer).
+  const cursorState = new SharedArrayBuffer(CURSOR_STATE_U32_LEN * 4);
+  const cursorStateOffsetBytes = 0;
+  const cursorWords = new Int32Array(cursorState, cursorStateOffsetBytes, CURSOR_STATE_U32_LEN);
+  Atomics.store(cursorWords, CursorStateIndex.GENERATION, 0);
+  Atomics.store(cursorWords, CursorStateIndex.ENABLE, 0);
+  Atomics.store(cursorWords, CursorStateIndex.X, 0);
+  Atomics.store(cursorWords, CursorStateIndex.Y, 0);
+  Atomics.store(cursorWords, CursorStateIndex.HOT_X, 0);
+  Atomics.store(cursorWords, CursorStateIndex.HOT_Y, 0);
+  Atomics.store(cursorWords, CursorStateIndex.WIDTH, 0);
+  Atomics.store(cursorWords, CursorStateIndex.HEIGHT, 0);
+  Atomics.store(cursorWords, CursorStateIndex.PITCH_BYTES, 0);
+  Atomics.store(cursorWords, CursorStateIndex.FORMAT, CURSOR_FORMAT_B8G8R8A8);
+  Atomics.store(cursorWords, CursorStateIndex.BASE_PADDR_LO, 0);
+  Atomics.store(cursorWords, CursorStateIndex.BASE_PADDR_HI, 0);
+
   return {
     control,
     guestMemory,
@@ -580,6 +617,8 @@ export function allocateSharedMemorySegments(options?: {
     sharedFramebufferOffsetBytes,
     scanoutState,
     scanoutStateOffsetBytes,
+    cursorState,
+    cursorStateOffsetBytes,
   };
 }
 
@@ -635,6 +674,10 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
   const scanoutStateOffsetBytes = segments.scanoutStateOffsetBytes ?? 0;
   const scanoutStateI32 =
     scanoutState instanceof SharedArrayBuffer ? wrapScanoutState(scanoutState, scanoutStateOffsetBytes) : undefined;
+  const cursorState = segments.cursorState;
+  const cursorStateOffsetBytes = segments.cursorStateOffsetBytes ?? 0;
+  const cursorStateI32 =
+    cursorState instanceof SharedArrayBuffer ? wrapCursorState(cursorState, cursorStateOffsetBytes) : undefined;
   return {
     segments,
     status,
@@ -647,6 +690,9 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     scanoutState,
     scanoutStateOffsetBytes,
     scanoutStateI32,
+    cursorState,
+    cursorStateOffsetBytes,
+    cursorStateI32,
   };
 }
 

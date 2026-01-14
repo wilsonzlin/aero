@@ -67,6 +67,12 @@ import {
   ScanoutStateIndex,
   wrapScanoutState,
 } from "../ipc/scanout_state";
+import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_STATE_GENERATION_BUSY_BIT,
+  CursorStateIndex,
+  wrapCursorState,
+} from "../ipc/cursor_state";
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
@@ -607,6 +613,7 @@ export class WorkerCoordinator {
 
     this.resetSharedStatus(shared);
     this.resetScanoutState(shared);
+    this.resetCursorState(shared);
     this.resetAllRings(shared.segments.control);
     // Reset the CPU↔I/O AIPC rings so the restarted workers don't observe stale
     // device-bus traffic from the previous run.
@@ -1525,6 +1532,34 @@ export class WorkerCoordinator {
     Atomics.store(words, ScanoutStateIndex.GENERATION, 0);
   }
 
+  private resetCursorState(shared: SharedMemoryViews): void {
+    const sab = shared.cursorState;
+    if (!(sab instanceof SharedArrayBuffer)) return;
+    const offsetBytes = shared.cursorStateOffsetBytes ?? 0;
+    let words: Int32Array;
+    try {
+      words = wrapCursorState(sab, offsetBytes);
+    } catch {
+      return;
+    }
+
+    // Publish a reset cursor descriptor using the seqlock busy-bit convention so any concurrent
+    // readers never observe a partially-written state.
+    Atomics.store(words, CursorStateIndex.GENERATION, CURSOR_STATE_GENERATION_BUSY_BIT | 0);
+    Atomics.store(words, CursorStateIndex.ENABLE, 0);
+    Atomics.store(words, CursorStateIndex.X, 0);
+    Atomics.store(words, CursorStateIndex.Y, 0);
+    Atomics.store(words, CursorStateIndex.HOT_X, 0);
+    Atomics.store(words, CursorStateIndex.HOT_Y, 0);
+    Atomics.store(words, CursorStateIndex.WIDTH, 0);
+    Atomics.store(words, CursorStateIndex.HEIGHT, 0);
+    Atomics.store(words, CursorStateIndex.PITCH_BYTES, 0);
+    Atomics.store(words, CursorStateIndex.FORMAT, CURSOR_FORMAT_B8G8R8A8 | 0);
+    Atomics.store(words, CursorStateIndex.BASE_PADDR_LO, 0);
+    Atomics.store(words, CursorStateIndex.BASE_PADDR_HI, 0);
+    Atomics.store(words, CursorStateIndex.GENERATION, 0);
+  }
+
   private resetAllRings(control: SharedArrayBuffer): void {
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
@@ -1778,20 +1813,22 @@ export class WorkerCoordinator {
       const info = this.workers[role];
       if (!info) continue;
 
-      const baseInit: WorkerInitMessage = {
-        kind: "init",
-        role,
-        controlSab: segments.control,
-        guestMemory: segments.guestMemory,
-        vgaFramebuffer: segments.vgaFramebuffer,
-        scanoutState: segments.scanoutState,
-        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
-        ioIpcSab: segments.ioIpc,
-        sharedFramebuffer: segments.sharedFramebuffer,
-        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-        frameStateSab: this.frameStateSab,
-        platformFeatures: this.platformFeatures ?? undefined,
-      };
+        const baseInit: WorkerInitMessage = {
+          kind: "init",
+          role,
+          controlSab: segments.control,
+          guestMemory: segments.guestMemory,
+          vgaFramebuffer: segments.vgaFramebuffer,
+          scanoutState: segments.scanoutState,
+          scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+          cursorState: segments.cursorState,
+          cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+          ioIpcSab: segments.ioIpc,
+          sharedFramebuffer: segments.sharedFramebuffer,
+          sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+          frameStateSab: this.frameStateSab,
+          platformFeatures: this.platformFeatures ?? undefined,
+        };
 
       if (perfChannel) {
         const workerKind = workerRoleToPerfWorkerKind(role);

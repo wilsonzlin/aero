@@ -7,4 +7,5 @@
 //! scanout selection).
 
 pub mod scanout_state;
+pub mod cursor_state;
 pub mod shared_framebuffer;
