@@ -878,6 +878,33 @@ test("AerogpuCmdWriter stage_ex Ex helpers reject stageEx=0 and do not emit pack
   assert.equal(bytes.byteLength, AEROGPU_CMD_STREAM_HEADER_SIZE);
 });
 
+test("AerogpuCmdWriter stage_ex Ex helpers reject invalid stageEx=1 and do not emit packets", () => {
+  const w = new AerogpuCmdWriter();
+  // DXBC program type 1 is Vertex, but stage_ex intentionally forbids encoding Vertex via reserved0.
+  const bad = 1 as unknown as AerogpuShaderStageEx;
+
+  assert.throws(() => w.setTextureEx(bad, 0, 99), /invalid stage_ex value 1/);
+  assert.throws(() => w.setSamplersEx(bad, 0, new Uint32Array([1])), /invalid stage_ex value 1/);
+  assert.throws(
+    () => w.setConstantBuffersEx(bad, 0, [{ buffer: 3, offsetBytes: 0, sizeBytes: 16 }]),
+    /invalid stage_ex value 1/,
+  );
+  assert.throws(
+    () => w.setShaderResourceBuffersEx(bad, 0, [{ buffer: 4, offsetBytes: 0, sizeBytes: 32 }]),
+    /invalid stage_ex value 1/,
+  );
+  assert.throws(
+    () => w.setUnorderedAccessBuffersEx(bad, 0, [{ buffer: 5, offsetBytes: 4, sizeBytes: 16, initialCount: 0 }]),
+    /invalid stage_ex value 1/,
+  );
+  assert.throws(() => w.setShaderConstantsFEx(bad, 0, new Float32Array([1, 2, 3, 4])), /invalid stage_ex value 1/);
+  assert.throws(() => w.setShaderConstantsIEx(bad, 0, new Int32Array([1, 2, 3, 4])), /invalid stage_ex value 1/);
+  assert.throws(() => w.setShaderConstantsBEx(bad, 0, [1]), /invalid stage_ex value 1/);
+
+  const bytes = w.finish();
+  assert.equal(bytes.byteLength, AEROGPU_CMD_STREAM_HEADER_SIZE);
+});
+
 test("AerogpuCmdWriter.createShaderDxbc encodes stage=Pixel and keeps reserved0=0", () => {
   const w = new AerogpuCmdWriter();
   const dxbc = new Uint8Array([0xaa]);
