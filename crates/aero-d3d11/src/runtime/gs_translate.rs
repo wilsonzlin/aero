@@ -829,6 +829,13 @@ fn emit_src_vec4(
                 };
                 expand_u32_to_vec4(u32_expr, info.mask)
             }
+            other => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: format!("unsupported source register file {other:?}"),
+                })
+            }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
         SrcKind::ImmediateF32(vals) => {
