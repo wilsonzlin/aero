@@ -49,6 +49,84 @@ static bool DirExistsW(const std::wstring& path) {
   return (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
+static void AppendArtifactIfExistsW(const std::wstring& path, std::vector<std::wstring>* out) {
+  if (!out) {
+    return;
+  }
+  if (FileExistsW(path)) {
+    out->push_back(path);
+  }
+}
+
+static std::wstring BuildIndexedBinPath(const std::wstring& base, uint32_t index) {
+  if (base.empty()) {
+    return std::wstring();
+  }
+  const wchar_t* const kExt = L".bin";
+  size_t prefix_len = base.size();
+  if (base.size() >= 4 && _wcsicmp(base.c_str() + (base.size() - 4), kExt) == 0) {
+    prefix_len = base.size() - 4;
+  }
+  std::wstring out = base.substr(0, prefix_len);
+  out.append(L"_");
+  out.append(aerogpu_test::Utf8ToWideFallbackAcp(aerogpu_test::FormatString("%lu", (unsigned long)index)));
+  out.append(kExt);
+  return out;
+}
+
+static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
+                                                  const std::vector<std::wstring>& artifacts,
+                                                  std::string* err) {
+  if (err) {
+    err->clear();
+  }
+  if (!obj) {
+    if (err) {
+      *err = "AppendArtifactsToTestReportJsonObject: obj == NULL";
+    }
+    return false;
+  }
+  if (artifacts.empty()) {
+    return true;
+  }
+
+  const char* const kNeedle = "\"artifacts\":[";
+  size_t pos = obj->find(kNeedle);
+  if (pos == std::string::npos) {
+    if (err) {
+      *err = "AppendArtifactsToTestReportJsonObject: missing artifacts array";
+    }
+    return false;
+  }
+  const size_t array_start = pos + strlen(kNeedle);
+  const size_t array_end = obj->find(']', array_start);
+  if (array_end == std::string::npos) {
+    if (err) {
+      *err = "AppendArtifactsToTestReportJsonObject: unterminated artifacts array";
+    }
+    return false;
+  }
+
+  const bool is_empty = (array_end == array_start);
+
+  std::string insert;
+  insert.reserve(256);
+  for (size_t i = 0; i < artifacts.size(); ++i) {
+    if (artifacts[i].empty()) {
+      continue;
+    }
+    if (!insert.empty() || !is_empty) {
+      insert.push_back(',');
+    }
+    aerogpu_test::JsonAppendEscaped(&insert, aerogpu_test::WideToUtf8(artifacts[i]));
+  }
+  if (insert.empty()) {
+    return true;
+  }
+  obj->insert(array_end, insert);
+  return true;
+}
+
 static std::wstring DirName(const std::wstring& path) {
   size_t pos = path.find_last_of(L"\\/");
   if (pos == std::wstring::npos) {
@@ -1124,6 +1202,7 @@ int main(int argc, char** argv) {
     aerogpu_test::TestReport fallback;
     fallback.test_name = test_name;
     fallback.adapter = suite_adapter;
+    std::vector<std::wstring> dbgctl_artifacts;
 
     if (!FileExistsW(exe_path)) {
       bool should_skip = false;
@@ -1203,6 +1282,7 @@ int main(int argc, char** argv) {
         if (DumpDbgctlStatusSnapshotBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &snapshot_path, &snapshot_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
+          AppendArtifactIfExistsW(snapshot_path, &dbgctl_artifacts);
         } else if (!snapshot_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
         }
@@ -1213,12 +1293,29 @@ int main(int argc, char** argv) {
         if (DumpDbgctlLastCmdDumpBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &cmd_base_path, &cmd_log_path, &cmd_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl last-cmd dump: %ls (and sibling outputs)", cmd_base_path.c_str());
+          AppendArtifactIfExistsW(cmd_log_path, &dbgctl_artifacts);
+          // Best-effort: collect expected output names. dbgctl may emit either:
+          // - a single file at cmd_base_path (if only one descriptor is available), or
+          // - multiple files derived from cmd_base_path (if multiple descriptors are available).
+          static const uint32_t kDumpLastCmdCount = 4;
+          AppendArtifactIfExistsW(cmd_base_path, &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".txt", &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".alloc_table.bin", &dbgctl_artifacts);
+          for (uint32_t j = 0; j < kDumpLastCmdCount; ++j) {
+            const std::wstring indexed = BuildIndexedBinPath(cmd_base_path, j);
+            AppendArtifactIfExistsW(indexed, &dbgctl_artifacts);
+            AppendArtifactIfExistsW(indexed + L".txt", &dbgctl_artifacts);
+            AppendArtifactIfExistsW(indexed + L".alloc_table.bin", &dbgctl_artifacts);
+          }
         } else if (!cmd_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl last-cmd dump failed: %s", cmd_err.c_str());
         }
       }
 
       if (emit_json) {
+        for (size_t j = 0; j < dbgctl_artifacts.size(); ++j) {
+          fallback.artifacts_utf8.push_back(aerogpu_test::WideToUtf8(dbgctl_artifacts[j]));
+        }
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
         WriteTestReportJsonBestEffort(per_test_json_path, fallback);
       }
@@ -1235,6 +1332,7 @@ int main(int argc, char** argv) {
         if (DumpDbgctlStatusSnapshotBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &snapshot_path, &snapshot_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
+          AppendArtifactIfExistsW(snapshot_path, &dbgctl_artifacts);
         } else if (!snapshot_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
         }
@@ -1245,6 +1343,17 @@ int main(int argc, char** argv) {
         if (DumpDbgctlLastCmdDumpBestEffort(
                 dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &cmd_base_path, &cmd_log_path, &cmd_err)) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl last-cmd dump: %ls (and sibling outputs)", cmd_base_path.c_str());
+          AppendArtifactIfExistsW(cmd_log_path, &dbgctl_artifacts);
+          static const uint32_t kDumpLastCmdCount = 4;
+          AppendArtifactIfExistsW(cmd_base_path, &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".txt", &dbgctl_artifacts);
+          AppendArtifactIfExistsW(cmd_base_path + L".alloc_table.bin", &dbgctl_artifacts);
+          for (uint32_t j = 0; j < kDumpLastCmdCount; ++j) {
+            const std::wstring indexed = BuildIndexedBinPath(cmd_base_path, j);
+            AppendArtifactIfExistsW(indexed, &dbgctl_artifacts);
+            AppendArtifactIfExistsW(indexed + L".txt", &dbgctl_artifacts);
+            AppendArtifactIfExistsW(indexed + L".alloc_table.bin", &dbgctl_artifacts);
+          }
         } else if (!cmd_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl last-cmd dump failed: %s", cmd_err.c_str());
         }
@@ -1272,6 +1381,14 @@ int main(int argc, char** argv) {
             obj.replace(pos, strlen(kNeedle), replacement);
           }
         }
+        if (!dbgctl_artifacts.empty()) {
+          std::string inject_err;
+          if (!AppendArtifactsToTestReportJsonObject(&obj, dbgctl_artifacts, &inject_err)) {
+            aerogpu_test::PrintfStdout("INFO: %s: failed to inject dbgctl artifacts into JSON: %s",
+                                       test_name.c_str(),
+                                       inject_err.c_str());
+          }
+        }
         test_json_objects.push_back(obj);
       } else {
         // Best-effort fallback if the child couldn't write its report.
@@ -1280,6 +1397,9 @@ int main(int argc, char** argv) {
         fallback.failure = (rr.exit_code == 0)
                                ? std::string()
                                : aerogpu_test::FormatString("exit_code=%lu", (unsigned long)rr.exit_code);
+        for (size_t j = 0; j < dbgctl_artifacts.size(); ++j) {
+          fallback.artifacts_utf8.push_back(aerogpu_test::WideToUtf8(dbgctl_artifacts[j]));
+        }
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
         WriteTestReportJsonBestEffort(per_test_json_path, fallback);
       }
