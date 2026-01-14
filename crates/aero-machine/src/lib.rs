@@ -832,6 +832,8 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
         };
         vcpu_init::reset_ap_vcpu_to_init_state(cpu);
         set_cpu_apic_base_bsp_bit(cpu, false);
+        // After INIT, application processors wait for a SIPI before executing.
+        cpu.state.halted = true;
     }
 
     fn reset_all_aps(&mut self) {
@@ -839,6 +841,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
         for cpu in ap_cpus.iter_mut() {
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
+            cpu.state.halted = true;
         }
     }
 
@@ -850,6 +853,73 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
                 continue;
             }
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
+            set_cpu_apic_base_bsp_bit(cpu, false);
+            cpu.state.halted = true;
+        }
+    }
+
+    fn maybe_deliver_sipi_ipi(&mut self, icr_low: u32, icr_high: u32) {
+        // Intel SDM Vol. 3: ICR delivery mode.
+        // 0b110 = Startup (SIPI).
+        let delivery_mode = (icr_low >> 8) & 0b111;
+        if delivery_mode != 0b110 {
+            return;
+        }
+        let vector = (icr_low & 0xFF) as u8;
+
+        let shorthand = (icr_low >> 18) & 0b11;
+        match shorthand {
+            // No shorthand: use ICR_HIGH destination field (xAPIC physical destination).
+            0 => {
+                let dest = (icr_high >> 24) as u8;
+                self.start_ap_by_apic_id(dest, vector);
+            }
+            // Self: ignore (starting self is undefined / meaningless).
+            1 => {}
+            // All including self: start all APs (ignore BSP/self semantics; APs are index-based).
+            2 => self.start_all_aps(vector),
+            // All excluding self: start all APs except the sender (if it is an AP).
+            3 => self.start_all_aps_excluding_sender(vector),
+            _ => {}
+        }
+    }
+
+    fn start_ap_by_apic_id(&mut self, apic_id: u8, vector: u8) {
+        if apic_id == 0 {
+            // Destination 0 = BSP (ignore).
+            return;
+        }
+        if apic_id == 0xFF {
+            // Destination 0xFF is commonly used as a broadcast.
+            self.start_all_aps_excluding_sender(vector);
+            return;
+        }
+
+        let idx = (apic_id as usize).saturating_sub(1);
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        let Some(cpu) = ap_cpus.get_mut(idx) else {
+            return;
+        };
+        vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
+        set_cpu_apic_base_bsp_bit(cpu, false);
+    }
+
+    fn start_all_aps(&mut self, vector: u8) {
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        for cpu in ap_cpus.iter_mut() {
+            vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
+            set_cpu_apic_base_bsp_bit(cpu, false);
+        }
+    }
+
+    fn start_all_aps_excluding_sender(&mut self, vector: u8) {
+        let sender_idx = self.apic_id.checked_sub(1).map(|v| v as usize);
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+            if Some(idx) == sender_idx {
+                continue;
+            }
+            vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
             set_cpu_apic_base_bsp_bit(cpu, false);
         }
     }
@@ -951,7 +1021,10 @@ impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
                         );
                         u32::from_le_bytes(tmp)
                     };
+                    // IPI delivery is handled by the machine integration layer, not by the LAPIC
+                    // device model. Detect INIT+SIPI sequences by observing ICR_LOW writes.
                     self.maybe_deliver_init_ipi(icr_low, icr_high);
+                    self.maybe_deliver_sipi_ipi(icr_low, icr_high);
                 }
                 paddr = paddr.wrapping_add(chunk_len as u64);
                 offset += chunk_len;
@@ -4687,6 +4760,23 @@ impl Machine {
         if delta_ns != 0 {
             self.tick_platform(delta_ns);
         }
+
+        // Keep AP TSC state synchronized to the BSP/global time. This models the fact that the TSC
+        // continues ticking even while APs are waiting-for-SIPI and not being scheduled/executed.
+        self.sync_ap_tsc_to_bsp();
+    }
+
+    fn sync_ap_tsc_to_bsp(&mut self) {
+        if self.cfg.cpu_count <= 1 {
+            return;
+        }
+
+        let tsc = self.cpu.state.msr.tsc;
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        for cpu in ap_cpus.iter_mut() {
+            cpu.time.set_tsc(tsc);
+            cpu.state.msr.tsc = tsc;
+        }
     }
 
     fn idle_tick_platform_1ms(&mut self) {
@@ -6612,6 +6702,8 @@ impl Machine {
         for _ in 1..self.cfg.cpu_count {
             let mut cpu = CpuCore::new(CpuMode::Real);
             set_cpu_apic_base_bsp_bit(&mut cpu, false);
+            // APs remain in a halted wait-for-SIPI state until started by the BSP.
+            cpu.state.halted = true;
             ap_cpus.push(cpu);
         }
         *self.ap_cpus.borrow_mut() = ap_cpus;
@@ -6968,6 +7060,53 @@ impl Machine {
             MAX_FRAMES_PER_POLL,
         );
     }
+
+    fn run_ap_cpus(&mut self, cfg: &Tier0Config, max_insts: u64) {
+        if self.cfg.cpu_count <= 1 || max_insts == 0 {
+            return;
+        }
+
+        let interrupts = self.interrupts.clone();
+
+        // Run each AP for a bounded number of instructions. This is intentionally a very simple
+        // cooperative scheduler (BSP-driven) that is "good enough" for SMP bring-up tests like
+        // INIT+SIPI.
+        //
+        // AP vCPUs are stored in a `RefCell<Vec<_>>` to share them with the per-vCPU LAPIC bus
+        // adapter; holding the borrow across CPU execution means AP code must not attempt to issue
+        // IPIs (which would re-borrow the same `RefCell`). This is acceptable for the current
+        // minimal SMP tests.
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+            if cpu.state.halted {
+                continue;
+            }
+
+            // Keep the core's A20 view coherent with the chipset latch.
+            cpu.state.a20_enabled = self.chipset.a20().enabled();
+
+            // Wrap the shared `SystemMemory` in the per-vCPU LAPIC routing adapter.
+            let apic_id = (idx as u8).saturating_add(1);
+            let phys = PerCpuSystemMemoryBus::new(
+                apic_id,
+                interrupts.clone(),
+                self.ap_cpus.clone(),
+                &mut self.mem,
+            );
+            let inner = aero_cpu_core::PagingBus::new_with_io(
+                phys,
+                StrictIoPortBus { io: &mut self.io },
+            );
+            let mut bus = MachineCpuBus {
+                a20: self.chipset.a20(),
+                reset: self.reset_latch.clone(),
+                inner,
+            };
+
+            let _ = run_batch_cpu_core_with_assists(cfg, &mut self.assist, cpu, &mut bus, max_insts);
+        }
+    }
+
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {
         let mut executed = 0u64;
@@ -7064,6 +7203,11 @@ impl Machine {
                 self.flush_serial();
                 return RunExit::ResetRequested { kind, executed };
             }
+
+            // Allow any started application processors (APs) to run a bounded amount of work per
+            // host slice. APs begin in a halted wait-for-SIPI state and become runnable once the
+            // BSP delivers a SIPI.
+            self.run_ap_cpus(&cfg, remaining);
 
             match batch.exit {
                 BatchExit::Completed => {
