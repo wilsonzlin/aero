@@ -127,12 +127,10 @@ async function handleInit(ramBytes: number): Promise<DemoVmWorkerInitResult> {
   serialBytes = 0;
   savedSerialBytesByPath.clear();
 
-  const syncAccessHandles =
-    typeof (globalThis as unknown as { FileSystemFileHandle?: unknown }).FileSystemFileHandle !== "undefined" &&
-    typeof (
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).FileSystemFileHandle?.prototype?.createSyncAccessHandle
-    ) === "function";
+  const fileHandleCtor = (globalThis as unknown as { FileSystemFileHandle?: unknown }).FileSystemFileHandle;
+  const fileHandleProto = (fileHandleCtor as { prototype?: unknown } | undefined)?.prototype;
+  const createSyncAccessHandle = (fileHandleProto as { createSyncAccessHandle?: unknown } | undefined)?.createSyncAccessHandle;
+  const syncAccessHandles = typeof createSyncAccessHandle === "function";
 
   const streamingSnapshots =
     typeof (newVm as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs === "function";

@@ -39,34 +39,29 @@ export type DemoVmWorkerStepResult = { steps: number; serialBytes: number | null
 export type DemoVmWorkerSerialOutputLenResult = { serialBytes: number | null };
 export type DemoVmWorkerSerialStatsResult = { steps: number; serialBytes: number | null };
 
+function isSerializedError(value: unknown): value is DemoVmWorkerSerializedError {
+  if (!value || typeof value !== "object") return false;
+  const err = value as { name?: unknown; message?: unknown; stack?: unknown };
+  return (
+    typeof err.name === "string" &&
+    typeof err.message === "string" &&
+    (typeof err.stack === "string" || typeof err.stack === "undefined")
+  );
+}
+
 export function isDemoVmWorkerMessage(value: unknown): value is DemoVmWorkerMessage {
   if (!value || typeof value !== "object") return false;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const msg = value as any;
+  const msg = value as Record<string, unknown>;
   switch (msg.type) {
     case "rpcResult": {
       if (typeof msg.id !== "number" || typeof msg.ok !== "boolean") return false;
       if (msg.ok) return true;
-      const err = msg.error;
-      return (
-        !!err &&
-        typeof err === "object" &&
-        typeof err.name === "string" &&
-        typeof err.message === "string" &&
-        (typeof err.stack === "string" || typeof err.stack === "undefined")
-      );
+      return isSerializedError(msg.error);
     }
     case "status":
       return typeof msg.steps === "number" && (typeof msg.serialBytes === "number" || msg.serialBytes === null);
     case "error": {
-      const err = msg.error;
-      return (
-        !!err &&
-        typeof err === "object" &&
-        typeof err.name === "string" &&
-        typeof err.message === "string" &&
-        (typeof err.stack === "string" || typeof err.stack === "undefined")
-      );
+      return isSerializedError(msg.error);
     }
     default:
       return false;

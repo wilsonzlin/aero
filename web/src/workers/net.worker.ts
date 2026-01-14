@@ -549,7 +549,7 @@ async function runLoop(): Promise<void> {
     throw new Error("net.worker was not initialized correctly (missing forwarder or rings).");
   }
 
-  const hasWaitAsync = typeof (Atomics as any).waitAsync === "function";
+  const hasWaitAsync = typeof (Atomics as unknown as { waitAsync?: unknown }).waitAsync === "function";
 
   // Use a single loop: drain control commands, pump the forwarder, then park on
   // the NET_TX ring while idle. The `waitForDataAsync` call keeps the worker
