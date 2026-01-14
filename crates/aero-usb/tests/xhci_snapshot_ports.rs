@@ -286,7 +286,7 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_probe_state() {
     let bytes = make_tick_time_snapshot();
     let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
 
-    // Snapshot v0.8 stores the 1ms tick counter + last tick DMA dword.
+    // xHCI snapshot v0.7+ stores the 1ms tick counter + last tick DMA dword.
     assert_eq!(r.u64(27).unwrap().unwrap(), 3);
     assert_eq!(r.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
 
