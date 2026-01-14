@@ -4416,7 +4416,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 format === SCANOUT_FORMAT_B8G8R8X8 ||
                 format === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
                 format === SCANOUT_FORMAT_B8G8R8A8 ||
-                format === SCANOUT_FORMAT_B8G8R8A8_SRGB;
+                format === SCANOUT_FORMAT_B8G8R8A8_SRGB ||
+                format === AerogpuFormat.R8G8B8A8Unorm ||
+                format === AerogpuFormat.R8G8B8A8UnormSrgb ||
+                format === AerogpuFormat.R8G8B8X8Unorm ||
+                format === AerogpuFormat.R8G8B8X8UnormSrgb;
 
               // Screenshot buffers must be transferable to the main thread, which means the
               // backing store must be an `ArrayBuffer` (not a `SharedArrayBuffer`).
@@ -4428,7 +4432,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
 
                 // Guest RAM-backed scanout: use the unit-tested helper (handles guest paddr translation,
-                // pitch padding, and BGRX/BGRA swizzle semantics).
+                // pitch padding, and BGRA/BGRX/RGBA/RGBX swizzle + alpha policy).
                 out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
               } else {
                 if (!scanoutIsInVram) {
