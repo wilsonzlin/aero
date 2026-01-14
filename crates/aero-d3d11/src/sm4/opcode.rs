@@ -358,11 +358,16 @@ pub const OPCODE_HS_JOIN_PHASE: u32 = 0x11c;
 pub const OPCODE_DCL_INPUT_CONTROL_POINT_COUNT: u32 = 0x112;
 
 /// `dcl_tessellator_domain` (tri/quad/isoline).
-pub const OPCODE_DCL_TESS_DOMAIN: u32 = 0x113;
+///
+/// In the tokenized DXBC format this opcode shares the same numeric value as
+/// `D3D11_SB_OPCODE_DCL_HS_DOMAIN` and historically appeared under both names in
+/// different SDK headers. Treat it as an alias so opcode IDs remain globally
+/// unique.
+pub const OPCODE_DCL_TESS_DOMAIN: u32 = OPCODE_DCL_HS_DOMAIN;
 /// `dcl_tessellator_partitioning` (integer/fractional_even/fractional_odd/pow2).
-pub const OPCODE_DCL_TESS_PARTITIONING: u32 = 0x114;
+pub const OPCODE_DCL_TESS_PARTITIONING: u32 = OPCODE_DCL_HS_PARTITIONING;
 /// `dcl_tessellator_output_primitive` (triangle_cw/triangle_ccw/line).
-pub const OPCODE_DCL_TESS_OUTPUT_PRIMITIVE: u32 = 0x115;
+pub const OPCODE_DCL_TESS_OUTPUT_PRIMITIVE: u32 = OPCODE_DCL_HS_OUTPUT_TOPOLOGY;
 
 /// `dcl_thread_group` declaration.
 ///
@@ -593,9 +598,9 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => Some("dcl_gs_max_output_vertex_count"),
         OPCODE_DCL_GS_INSTANCE_COUNT => Some("dcl_gs_instance_count"),
         OPCODE_DCL_HS_MAX_TESSFACTOR => Some("dcl_hs_max_tessfactor"),
-        OPCODE_DCL_TESS_DOMAIN => Some("dcl_tessellator_domain"),
-        OPCODE_DCL_TESS_PARTITIONING => Some("dcl_tessellator_partitioning"),
-        OPCODE_DCL_TESS_OUTPUT_PRIMITIVE => Some("dcl_tessellator_output_primitive"),
+        OPCODE_DCL_HS_DOMAIN => Some("dcl_hs_domain"),
+        OPCODE_DCL_HS_PARTITIONING => Some("dcl_hs_partitioning"),
+        OPCODE_DCL_HS_OUTPUT_TOPOLOGY => Some("dcl_hs_output_topology"),
         OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT => Some("dcl_hs_output_control_point_count"),
         OPCODE_DCL_DS_DOMAIN => Some("dcl_ds_domain"),
         OPCODE_DCL_INPUT_CONTROL_POINT_COUNT => Some("dcl_inputcontrolpoints"),
