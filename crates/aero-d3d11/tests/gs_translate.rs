@@ -2204,6 +2204,52 @@ fn sm4_gs_half_float_conversions_translate_via_pack_unpack() {
 }
 
 #[test]
+fn sm4_gs_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
+    // `f16tof32` consumes raw binary16 payloads stored in the low 16 bits of untyped DXBC register
+    // lanes. Operand modifiers (e.g. -abs) would reinterpret the lane numerically and corrupt the
+    // packed half bits, so the GS compute-prepass translator must ignore them.
+    let mut tokens = base_gs_tokens();
+
+    // mov r0.xyzw, l(1,0,0,0)
+    let mut mov_r0 = vec![opcode_token(OPCODE_MOV, 0)];
+    mov_r0.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov_r0.extend_from_slice(&imm32_vec4([1.0f32.to_bits(), 0, 0, 0]));
+    mov_r0[0] = opcode_token(OPCODE_MOV, mov_r0.len() as u32);
+    tokens.extend_from_slice(&mov_r0);
+
+    // f32tof16 r1.xyzw, r0.xyzw
+    tokens.push(opcode_token(OPCODE_F32TOF16, 5));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+
+    // f16tof32 r2.xyzw, -r1.xyzw
+    //
+    // Operand modifier encoding:
+    // - 1 = neg
+    tokens.push(opcode_token(OPCODE_F16TOF32, 6));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src_swizzle_modifier(
+        OPERAND_TYPE_TEMP,
+        1,
+        Swizzle::XYZW.0,
+        1,
+    ));
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert_wgsl_validates(&wgsl);
+    assert!(
+        wgsl.contains("unpack2x16float"),
+        "expected f16tof32 lowering to use unpack2x16float:\n{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("vec4<u32>(0u) -"),
+        "expected f16tof32 to ignore source operand modifiers (preserve half bits):\n{wgsl}"
+    );
+}
+
+#[test]
 fn gs_translate_supports_setp_and_predicated_emit_cut() {
     const D3D_NAME_PRIMITIVE_ID: u32 = 7;
 
