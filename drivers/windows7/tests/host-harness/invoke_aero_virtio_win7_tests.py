@@ -2388,6 +2388,18 @@ def _virtio_blk_reset_fail_failure_message(tail: bytes, *, marker_line: Optional
     if marker is not None:
         fields = _parse_marker_kv_fields(marker)
         reason = fields.get("reason", "").strip()
+        if not reason:
+            # Backcompat: older selftest binaries may emit `...|FAIL|post_reset_io_failed|err=...` (no `reason=` field).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
         err = fields.get("err", "").strip()
         details = ""
         if reason or err:
@@ -12052,11 +12064,11 @@ def _emit_virtio_blk_reset_host_marker(tail: bytes, *, blk_reset_line: Optional[
     fields = _parse_marker_kv_fields(marker_line)
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|{status}"]
 
-    # Backcompat: mirror legacy SKIP markers like `...|SKIP|flag_not_set` (no `reason=` field) as
-    # `reason=flag_not_set` so log scraping can treat it uniformly.
-    if status == "SKIP" and "reason" not in fields:
+    # Backcompat: mirror legacy markers like `...|SKIP|flag_not_set` / `...|FAIL|post_reset_io_failed` (no `reason=` field)
+    # as `reason=...` so log scraping can treat it uniformly.
+    if status in ("SKIP", "FAIL") and "reason" not in fields:
         try:
-            idx = toks.index("SKIP")
+            idx = toks.index(status)
             if idx + 1 < len(toks):
                 reason_tok = toks[idx + 1].strip()
                 if reason_tok and "=" not in reason_tok:

@@ -213,6 +213,16 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("reason=post_reset_io_failed", msg)
         self.assertIn("err=123", msg)
 
+        # Backcompat: older selftests may emit `...|FAIL|post_reset_io_failed|err=123` (no `reason=` field).
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|post_reset_io_failed|err=123\n"
+        msg = h._virtio_blk_reset_required_failure_message(tail)
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_FAILED:"))
+        self.assertIn("reason=post_reset_io_failed", msg)
+        self.assertIn("err=123", msg)
+
     def test_virtio_blk_reset_missing_token(self) -> None:
         h = self.harness
 

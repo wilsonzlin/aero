@@ -65,6 +65,16 @@ class VirtioBlkResetHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|FAIL|err=123|reason=post_reset_io_failed",
         )
 
+    def test_emits_legacy_fail_reason_token(self) -> None:
+        # Backcompat: older selftests may emit `...|FAIL|post_reset_io_failed|err=123` (no `reason=` field).
+        out = self._emit(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|post_reset_io_failed|err=123\n"
+        )
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|FAIL|err=123|reason=post_reset_io_failed",
+        )
+
     def test_no_output_when_marker_missing(self) -> None:
         out = self._emit(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n")
         self.assertEqual(out, "")
