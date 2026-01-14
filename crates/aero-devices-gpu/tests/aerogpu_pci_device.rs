@@ -18,7 +18,9 @@ use aero_devices_gpu::ring::{
 use aero_devices_gpu::AeroGpuPciDevice;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_PRESENT_FLAG_VSYNC,
 };
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use memory::{MemoryBus, MmioHandler};
 #[derive(Clone, Debug)]
 struct VecMemory {
@@ -359,6 +361,107 @@ fn enabling_vblank_irq_does_not_latch_stale_irq_from_catchup_ticks() {
     // The next vblank edge after the enable should latch the IRQ status bit.
     dev.tick(&mut mem, period_ns * 4);
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+}
+
+#[test]
+fn vsynced_present_does_not_complete_on_elapsed_vblank_before_submission() {
+    // Regression test for subtle ordering: if the device needs to "catch up" its vblank clock, it
+    // must do so *before* processing doorbells. Otherwise a vsynced PRESENT submitted just after a
+    // vblank edge could complete on that already-elapsed edge.
+    let mut mem = VecMemory::new(0x20_000);
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(100),
+        ..Default::default()
+    };
+    let mut dev = new_test_device(cfg);
+
+    let period_ns = u64::from(dev.regs.scanout0_vblank_period_ns);
+    assert!(
+        period_ns > 1,
+        "test requires a non-trivial vblank period (got {period_ns})"
+    );
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let cmd_gpa = 0x2000u64;
+    let fence_gpa = 0x3000u64;
+    let signal_fence = 1u64;
+
+    // Command stream containing a vsynced PRESENT.
+    let mut writer = AerogpuCmdWriter::new();
+    writer.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+    let cmd_stream = writer.finish();
+    mem.write_physical(cmd_gpa, &cmd_stream);
+
+    // Ring layout in guest memory (one PRESENT submission).
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_FLAGS_OFFSET,
+        AeroGpuSubmitDesc::FLAG_PRESENT,
+    );
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
+        cmd_stream.len() as u32,
+    );
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, signal_fence);
+
+    // Hook up registers.
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
+    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
+    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
+    dev.write(mmio::SCANOUT0_ENABLE, 4, 1);
+
+    // Establish vblank schedule and tick to just before the first vblank edge.
+    dev.tick(&mut mem, 0);
+    dev.tick(&mut mem, period_ns - 1);
+
+    // Jump past the vblank edge (without ticking at the exact edge), submit the doorbell, and tick
+    // at the current time. The first vblank edge is already elapsed at the time of submission, so
+    // the fence must not complete until the *next* vblank edge.
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, period_ns + 1);
+
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
+
+    // Still before the next edge: fence remains pending.
+    dev.tick(&mut mem, period_ns * 2 - 1);
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
+
+    // At the next vblank, the vsync fence becomes eligible and completes.
+    dev.tick(&mut mem, period_ns * 2);
+    assert_eq!(dev.regs.completed_fence, signal_fence);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        signal_fence
+    );
 }
 
 #[test]
