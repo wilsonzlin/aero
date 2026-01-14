@@ -47,6 +47,7 @@
 #include "aerogpu_alloc.h"
 #include "aerogpu_trace.h"
 #include "aerogpu_wddm_alloc.h"
+#include "../../../protocol/aerogpu_dbgctl_escape.h"
 #include "../../common/aerogpu_win32_security.h"
 
 namespace {
@@ -1438,8 +1439,9 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 // fully implemented (DWM should not rely on it).
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
 
-// Cursor management is implemented as a software overlay composited at Present
-// time (see device_set_cursor_* and the Present paths).
+// Cursor management is implemented via driver-private KMD escapes when available
+// (programs the AeroGPU cursor MMIO block), with a software overlay fallback
+// composited at Present time (see device_set_cursor_* and the Present paths).
 
 // Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch).
 // ProcessVertices is implemented for a small fixed-function subset elsewhere.
@@ -2743,12 +2745,6 @@ constexpr uint32_t kD3DLOCK_NOOVERWRITE = 0x00001000u;
 constexpr uint32_t kD3DPOOL_DEFAULT = 0u;
 constexpr uint32_t kD3DPOOL_SYSTEMMEM = 2u;
 
-// Dynamic buffer renaming configuration.
-//
-// This is the maximum number of backing buffers (including the current one)
-// kept per logical D3D9 buffer when implementing DISCARD via renaming.
-constexpr size_t kDynamicBufferMaxBackings = 8;
-
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
 
@@ -2771,8 +2767,6 @@ uint32_t d3d9_index_format_to_aerogpu(D3DDDIFORMAT fmt) {
 // D3DUSAGE_* subset (numeric values from d3d9types.h).
 constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
 constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
-// D3DUSAGE_DYNAMIC
-constexpr uint32_t kD3DUsageDynamic = 0x00000200u;
 
 uint32_t d3d9_usage_to_aerogpu_usage_flags(uint32_t usage) {
   uint32_t flags = AEROGPU_RESOURCE_USAGE_TEXTURE;
@@ -2901,7 +2895,8 @@ bool fixedfunc_fvf_supported(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
-  switch (fvf) {
+  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  switch (base) {
     case kSupportedFvfXyzrhwDiffuse:
     case kSupportedFvfXyzrhwDiffuseTex1:
     case kSupportedFvfXyzrhwTex1:
@@ -2915,18 +2910,20 @@ constexpr bool fixedfunc_supported_fvf(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
-  return (fvf == kSupportedFvfXyzrhwDiffuse) ||
-         (fvf == kSupportedFvfXyzrhwDiffuseTex1) ||
-         (fvf == kSupportedFvfXyzrhwTex1);
+  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  return (base == kSupportedFvfXyzrhwDiffuse) ||
+         (base == kSupportedFvfXyzrhwDiffuseTex1) ||
+         (base == kSupportedFvfXyzrhwTex1);
 }
 
 constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
   // Fixed-function emulation for non-pretransformed XYZ vertices uses internal
   // vertex shaders that apply the cached WORLD/VIEW/PROJECTION matrix via a
   // reserved high VS constant range (c240..c243).
-  return (fvf == kSupportedFvfXyzDiffuse) ||
-         (fvf == kSupportedFvfXyzDiffuseTex1) ||
-         (fvf == kSupportedFvfXyzTex1);
+  const uint32_t base = fvf & ~kD3dFvfTexCoordSizeMask;
+  return (base == kSupportedFvfXyzDiffuse) ||
+         (base == kSupportedFvfXyzDiffuseTex1) ||
+         (base == kSupportedFvfXyzTex1);
 }
 
 #pragma pack(push, 1)
@@ -3044,7 +3041,6 @@ static void d3d9_mul_mat4_row_major(const float a[16], const float b[16], float 
 // - POSITION: D3DFVF_XYZ, D3DFVF_XYZW, D3DFVF_XYZRHW, or D3DFVF_XYZB1..D3DFVF_XYZB5
 // - BLENDWEIGHT: XYZB* (BLENDWEIGHT0) with optional LASTBETA_* (BLENDINDICES0)
 // - NORMAL: D3DFVF_NORMAL
-// - PSIZE: D3DFVF_PSIZE
 // - DIFFUSE: D3DFVF_DIFFUSE (COLOR0)
 // - SPECULAR: D3DFVF_SPECULAR (COLOR1)
 // - TEXn: D3DFVF_TEX0..D3DFVF_TEX8 with per-set D3DFVF_TEXCOORDSIZE[1..4]
@@ -4217,132 +4213,6 @@ HRESULT track_draw_state_locked(Device* dev) {
   return S_OK;
 }
 
-// -----------------------------------------------------------------------------
-// Dynamic buffer renaming (D3DLOCK_DISCARD / D3DLOCK_NOOVERWRITE)
-// -----------------------------------------------------------------------------
-namespace {
-
-bool is_dynamic_default_pool_buffer(const Resource* res) {
-  return res &&
-         res->kind == ResourceKind::Buffer &&
-         res->pool == kD3DPOOL_DEFAULT &&
-         (res->usage & kD3DUsageDynamic) != 0 &&
-         !res->is_shared &&
-         !res->is_shared_alias &&
-         res->share_token == 0 &&
-         res->handle != 0;
-}
-
-bool ranges_overlap_u32(uint32_t a_offset, uint32_t a_size, uint32_t b_offset, uint32_t b_size) {
-  if (a_size == 0 || b_size == 0) {
-    return false;
-  }
-  const uint64_t a0 = static_cast<uint64_t>(a_offset);
-  const uint64_t a1 = a0 + static_cast<uint64_t>(a_size);
-  const uint64_t b0 = static_cast<uint64_t>(b_offset);
-  const uint64_t b1 = b0 + static_cast<uint64_t>(b_size);
-  return (a1 > b0) && (b1 > a0);
-}
-
-void prune_completed_dynamic_ranges(std::vector<Resource::DynamicBufferRange>& ranges, uint64_t completed_fence) {
-  ranges.erase(
-      std::remove_if(ranges.begin(), ranges.end(),
-                     [completed_fence](const Resource::DynamicBufferRange& r) {
-                       return r.fence_value != 0 && r.fence_value <= completed_fence;
-                     }),
-      ranges.end());
-}
-
-bool dynamic_buffer_range_overlaps_in_flight_locked(const Resource* res,
-                                                    uint32_t offset_bytes,
-                                                    uint32_t size_bytes,
-                                                    uint64_t completed_fence) {
-  if (!res || size_bytes == 0) {
-    return false;
-  }
-  for (const Resource::DynamicBufferRange& r : res->dynamic_in_flight_ranges) {
-    if (r.size_bytes == 0) {
-      continue;
-    }
-    if (r.fence_value != 0 && r.fence_value <= completed_fence) {
-      // Should have been pruned, but be defensive.
-      continue;
-    }
-    if (ranges_overlap_u32(offset_bytes, size_bytes, r.offset_bytes, r.size_bytes)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-void record_dynamic_buffer_read_range_locked(Device* dev, Resource* res, uint32_t offset_bytes, uint32_t size_bytes) {
-  if (!dev || !res || size_bytes == 0) {
-    return;
-  }
-  if (!is_dynamic_default_pool_buffer(res)) {
-    return;
-  }
-
-  if (offset_bytes >= res->size_bytes) {
-    return;
-  }
-  const uint32_t max_size = res->size_bytes - offset_bytes;
-  size_bytes = std::min(size_bytes, max_size);
-  if (size_bytes == 0) {
-    return;
-  }
-
-  Resource::DynamicBufferRange range{};
-  range.offset_bytes = offset_bytes;
-  range.size_bytes = size_bytes;
-  range.fence_value = 0; // pending submission
-  res->dynamic_in_flight_ranges.push_back(range);
-
-  if (!res->dynamic_pending_listed) {
-    res->dynamic_pending_listed = true;
-    dev->dynamic_pending_buffers.push_back(res);
-  }
-}
-
-void stamp_pending_dynamic_ranges(std::vector<Resource::DynamicBufferRange>& ranges, uint64_t fence_value) {
-  for (auto& r : ranges) {
-    if (r.fence_value == 0) {
-      r.fence_value = fence_value;
-    }
-  }
-}
-
-void on_submit_stamp_dynamic_ranges_locked(Device* dev, uint64_t fence_value) {
-  if (!dev) {
-    return;
-  }
-  for (Resource* res : dev->dynamic_pending_buffers) {
-    if (!res) {
-      continue;
-    }
-    stamp_pending_dynamic_ranges(res->dynamic_in_flight_ranges, fence_value);
-    for (auto& backing : res->dynamic_backings) {
-      stamp_pending_dynamic_ranges(backing.in_flight_ranges, fence_value);
-    }
-    res->dynamic_pending_listed = false;
-  }
-  dev->dynamic_pending_buffers.clear();
-}
-
-void clear_dynamic_pending_list_locked(Device* dev) {
-  if (!dev) {
-    return;
-  }
-  for (Resource* res : dev->dynamic_pending_buffers) {
-    if (res) {
-      res->dynamic_pending_listed = false;
-    }
-  }
-  dev->dynamic_pending_buffers.clear();
-}
-
-} // namespace
-
 HRESULT track_render_targets_locked(Device* dev) {
   if (!dev) {
     return E_INVALIDARG;
@@ -5350,6 +5220,8 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     return D3DERR_INVALIDCALL;
   }
 
+  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+
   Shader** vs_slot = nullptr;
   Shader** ps_slot = nullptr;
   VertexDecl* fvf_decl = nullptr;
@@ -5357,7 +5229,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   uint32_t vs_size = 0;
   bool needs_matrix = false;
 
-  switch (dev->fvf) {
+  switch (fvf_base) {
     case kSupportedFvfXyzrhwDiffuse:
       vs_slot = &dev->fixedfunc_vs;
       ps_slot = &dev->fixedfunc_ps;
@@ -5467,7 +5339,8 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
   if (!dev) {
     return nullptr;
   }
-  switch (dev->fvf) {
+  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  switch (fvf_base) {
     case kSupportedFvfXyzrhwDiffuse:
       return dev->fixedfunc_vs;
     case kSupportedFvfXyzDiffuse:
@@ -5700,7 +5573,8 @@ static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs)
   }
 
   Shader* vs = nullptr;
-  switch (dev->fvf) {
+  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  switch (fvf_base) {
     case kSupportedFvfXyzrhwDiffuse:
       vs = dev->fixedfunc_vs;
       break;
@@ -7062,9 +6936,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     for (uint32_t i = 0; i < vertex_count; ++i) {
       const uint8_t* src = src_vertices + static_cast<size_t>(i) * src_stride;
       uint8_t* dst = dst_vertices + static_cast<size_t>(i) * dst_stride;
-      // Deterministic output: clear destination bytes that are not written by the
-      // fixed-function mapping (e.g. dst has TEX0 but src does not), unless the
-      // caller requested D3DPV_DONOTCOPYDATA.
+      // Deterministic output: clear any destination elements that are not written
+      // by the source FVF/decl mapping (e.g. dst has TEX0 but src does not).
+      // Honor D3DPV_DONOTCOPYDATA by preserving the existing destination vertex
+      // data where we are not explicitly writing.
       if (!do_not_copy_data) {
         std::memset(dst, 0, dst_stride);
       }
@@ -8414,12 +8289,7 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
         dev->alloc_list_tracker.list_capacity() != dev->wddm_context.AllocationListSize;
     if (needs_alloc_list_rebind) {
       std::vector<AllocationListTracker::TrackedAllocation> preserved_allocs;
-      // If the runtime rotates the allocation-list pointer, we must preserve any
-      // allocations already tracked for the current submission. This can happen
-      // even when the command stream is non-empty (e.g. runtimes that update
-      // allocation-list pointers aggressively). Dropping tracked entries would
-      // cause the subsequent submit to omit required allocations.
-      if (dev->alloc_list_tracker.list_len() != 0) {
+      if (dev->cmd.empty() && dev->alloc_list_tracker.list_len() != 0) {
         preserved_allocs = dev->alloc_list_tracker.snapshot_tracked_allocations();
       }
       dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
@@ -8629,7 +8499,6 @@ uint64_t submit(Device* dev, bool is_present) {
     dev->cmd.rewind();
     dev->alloc_list_tracker.reset();
     dev->wddm_context.reset_submission_buffers();
-    clear_dynamic_pending_list_locked(dev);
     return dev->last_submission_fence;
   }
 
@@ -8648,7 +8517,6 @@ uint64_t submit(Device* dev, bool is_present) {
     dev->cmd.rewind();
     dev->alloc_list_tracker.reset();
     dev->wddm_context.reset_submission_buffers();
-    clear_dynamic_pending_list_locked(dev);
     return fence;
   }
 
@@ -8826,7 +8694,6 @@ uint64_t submit(Device* dev, bool is_present) {
     dev->cmd.rewind();
     dev->alloc_list_tracker.reset();
     dev->wddm_context.reset_submission_buffers();
-    clear_dynamic_pending_list_locked(dev);
     return dev->last_submission_fence;
   }
 
@@ -8931,7 +8798,6 @@ uint64_t submit(Device* dev, bool is_present) {
   }
 
   dev->last_submission_fence = per_submission_fence;
-  on_submit_stamp_dynamic_ranges_locked(dev, per_submission_fence);
   resolve_pending_event_queries(dev, per_submission_fence);
   dev->cmd.rewind();
   dev->alloc_list_tracker.reset();
@@ -9408,16 +9274,16 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       delete dev->fixedfunc_vs_tex1_nodiffuse;
       dev->fixedfunc_vs_tex1_nodiffuse = nullptr;
     }
-    // Stage0 fixed-function PS variants may be reused across multiple cache
-    // slots (e.g. when two different stage0 keys map to the same fallback
-    // bytecode). Deduplicate deletes to avoid double-free.
-    std::unordered_set<Shader*> destroyed_stage0_ps;
-    destroyed_stage0_ps.reserve(sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]));
+    // Stage0 cache entries can alias the same Shader* (e.g. if two different keys
+    // map to the same fallback bytecode). Deduplicate deletes so device teardown
+    // can't double-free.
+    std::unordered_set<Shader*> freed_stage0;
+    freed_stage0.reserve(sizeof(dev->fixedfunc_stage0_ps_variants) / sizeof(dev->fixedfunc_stage0_ps_variants[0]));
     for (Shader*& ps : dev->fixedfunc_stage0_ps_variants) {
       if (!ps) {
         continue;
       }
-      if (destroyed_stage0_ps.insert(ps).second) {
+      if (freed_stage0.insert(ps).second) {
         (void)emit_destroy_shader_locked(dev, ps->handle);
         delete ps;
       }
@@ -10851,6 +10717,17 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   if (dev->cursor_bitmap == res) {
     dev->cursor_bitmap = nullptr;
     dev->cursor_visible = FALSE;
+    dev->cursor_hw_active = false;
+    if (dev->adapter) {
+      aerogpu_escape_set_cursor_visibility_in vis{};
+      vis.hdr.version = AEROGPU_ESCAPE_VERSION;
+      vis.hdr.op = AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY;
+      vis.hdr.size = sizeof(vis);
+      vis.hdr.reserved0 = 0;
+      vis.visible = 0;
+      vis.reserved0 = 0;
+      (void)dev->adapter->kmd_query.SendEscape(&vis, sizeof(vis));
+    }
   }
 
   for (uint32_t stream = 0; stream < 16; ++stream) {
@@ -10891,41 +10768,22 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   // Shared surfaces are refcounted host-side: DESTROY_RESOURCE releases a single
   // handle (original or alias) and the underlying surface is freed once the last
   // reference is gone.
-  //
-  // Dynamic buffers can be renamed (DISCARD) and therefore may have multiple
-  // host handles + kernel allocation handles associated with a single D3D9
-  // Resource object. Release all of them on destruction.
   (void)emit_destroy_resource_locked(dev, res->handle);
-  for (const auto& backing : res->dynamic_backings) {
-    if (backing.handle != 0) {
-      (void)emit_destroy_resource_locked(dev, backing.handle);
-    }
-  }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  if (dev->wddm_device != 0) {
+  if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
     // Ensure the allocation handle is no longer referenced by the current DMA
     // buffer before we destroy it.
     (void)submit(dev);
-    auto destroy_alloc = [&](WddmAllocationHandle hAllocation, uint32_t alloc_id) {
-      if (hAllocation == 0) {
-        return;
-      }
-      const HRESULT hr =
-          wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation, dev->wddm_context.hContext);
-      if (FAILED(hr)) {
-        logf("aerogpu-d3d9: DestroyAllocation failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
-             static_cast<unsigned long>(hr),
-             static_cast<unsigned>(alloc_id),
-             static_cast<unsigned long long>(hAllocation));
-      }
-    };
-
-    destroy_alloc(res->wddm_hAllocation, res->backing_alloc_id);
-    res->wddm_hAllocation = 0;
-    for (const auto& backing : res->dynamic_backings) {
-      destroy_alloc(backing.wddm_hAllocation, backing.backing_alloc_id);
+    const HRESULT hr =
+        wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, res->wddm_hAllocation, dev->wddm_context.hContext);
+    if (FAILED(hr)) {
+      logf("aerogpu-d3d9: DestroyAllocation failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+           static_cast<unsigned long>(hr),
+           static_cast<unsigned>(res->backing_alloc_id),
+           static_cast<unsigned long long>(res->wddm_hAllocation));
     }
+    res->wddm_hAllocation = 0;
   }
 #endif
   delete res;
@@ -11775,8 +11633,6 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     WddmAllocationHandle wddm_hAllocation = 0;
     std::vector<uint8_t> storage;
     std::vector<uint8_t> shared_private_driver_data;
-    std::vector<Resource::DynamicBufferRange> dynamic_in_flight_ranges;
-    std::vector<Resource::DynamicBufferBacking> dynamic_backings;
   };
 
   auto take_identity = [](Resource* res) -> ResourceIdentity {
@@ -11794,8 +11650,6 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     id.wddm_hAllocation = res->wddm_hAllocation;
     id.storage = std::move(res->storage);
     id.shared_private_driver_data = std::move(res->shared_private_driver_data);
-    id.dynamic_in_flight_ranges = std::move(res->dynamic_in_flight_ranges);
-    id.dynamic_backings = std::move(res->dynamic_backings);
     return id;
   };
 
@@ -11813,8 +11667,6 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     res->wddm_hAllocation = id.wddm_hAllocation;
     res->storage = std::move(id.storage);
     res->shared_private_driver_data = std::move(id.shared_private_driver_data);
-    res->dynamic_in_flight_ranges = std::move(id.dynamic_in_flight_ranges);
-    res->dynamic_backings = std::move(id.dynamic_backings);
   };
 
   auto undo_rotation = [&resources, resource_count, &take_identity, &put_identity]() {
@@ -11832,55 +11684,6 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
     put_identity(resources[i], take_identity(resources[i + 1]));
   }
   put_identity(resources[resource_count - 1], std::move(saved));
-
-  // Dynamic buffer renaming bookkeeping: if any rotated resources have pending
-  // in-flight ranges (fence_value==0), `submit()` must be able to stamp them
-  // with the correct fence. Rotating identities moves those ranges between
-  // Resource objects, so rebuild the device-local pending list for the rotated
-  // set.
-  if (!dev->dynamic_pending_buffers.empty()) {
-    dev->dynamic_pending_buffers.erase(
-        std::remove_if(dev->dynamic_pending_buffers.begin(),
-                       dev->dynamic_pending_buffers.end(),
-                       [&is_rotated](Resource* res) {
-                         return res && is_rotated(res);
-                       }),
-        dev->dynamic_pending_buffers.end());
-  }
-  for (Resource* res : resources) {
-    if (res) {
-      res->dynamic_pending_listed = false;
-    }
-  }
-  for (Resource* res : resources) {
-    if (!res) {
-      continue;
-    }
-    bool pending = false;
-    for (const auto& r : res->dynamic_in_flight_ranges) {
-      if (r.fence_value == 0 && r.size_bytes != 0) {
-        pending = true;
-        break;
-      }
-    }
-    if (!pending) {
-      for (const auto& backing : res->dynamic_backings) {
-        for (const auto& r : backing.in_flight_ranges) {
-          if (r.fence_value == 0 && r.size_bytes != 0) {
-            pending = true;
-            break;
-          }
-        }
-        if (pending) {
-          break;
-        }
-      }
-    }
-    if (pending) {
-      res->dynamic_pending_listed = true;
-      dev->dynamic_pending_buffers.push_back(res);
-    }
-  }
 
   if (dev->wddm_context.hContext != 0 &&
       dev->alloc_list_tracker.list_base() != nullptr &&
@@ -12059,310 +11862,6 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
   return trace.ret(S_OK);
 }
 
-namespace {
-
-uint32_t allocate_dynamic_alloc_id(Adapter* adapter) {
-  if (!adapter) {
-    return 0;
-  }
-  uint64_t token = 0;
-  uint32_t alloc_id = 0;
-  do {
-    token = allocate_shared_alloc_id_token(adapter);
-    alloc_id = static_cast<uint32_t>(token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
-  } while (token != 0 && alloc_id == 0);
-  return alloc_id;
-}
-
-void swap_dynamic_backing(Resource* res, Resource::DynamicBufferBacking* backing) {
-  if (!res || !backing) {
-    return;
-  }
-  std::swap(res->handle, backing->handle);
-  std::swap(res->backing_alloc_id, backing->backing_alloc_id);
-  std::swap(res->backing_offset_bytes, backing->backing_offset_bytes);
-  std::swap(res->wddm_hAllocation, backing->wddm_hAllocation);
-  std::swap(res->storage, backing->storage);
-  std::swap(res->dynamic_in_flight_ranges, backing->in_flight_ranges);
-}
-
-HRESULT create_dynamic_buffer_backing_locked(Device* dev, const Resource* template_res, Resource::DynamicBufferBacking* out) {
-  if (!dev || !dev->adapter || !template_res || !out) {
-    return E_INVALIDARG;
-  }
-
-  Resource::DynamicBufferBacking backing{};
-  backing.handle = allocate_global_handle(dev->adapter);
-  backing.backing_offset_bytes = 0;
-  backing.backing_alloc_id = 0;
-  backing.wddm_hAllocation = 0;
-
-  const bool want_guest_backing = (template_res->backing_alloc_id != 0);
-  bool have_guest_backing = false;
-
-  if (want_guest_backing) {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (dev->wddm_device != 0) {
-      const uint32_t alloc_id = allocate_dynamic_alloc_id(dev->adapter);
-      if (alloc_id == 0) {
-        return E_OUTOFMEMORY;
-      }
-
-      aerogpu_wddm_alloc_priv priv{};
-      priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
-      priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
-      priv.alloc_id = alloc_id;
-      priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
-      priv.share_token = 0;
-      priv.size_bytes = static_cast<aerogpu_wddm_u64>(template_res->size_bytes);
-      priv.reserved0 = encode_wddm_alloc_priv_desc(template_res->format, template_res->width, template_res->height);
-
-      WddmAllocationHandle hAllocation = 0;
-      const HRESULT hr = wddm_create_allocation(dev->wddm_callbacks,
-                                                dev->wddm_device,
-                                                template_res->size_bytes,
-                                                &priv,
-                                                sizeof(priv),
-                                                &hAllocation,
-                                                dev->wddm_context.hContext);
-      if (FAILED(hr) || hAllocation == 0) {
-        return FAILED(hr) ? hr : E_FAIL;
-      }
-
-      backing.backing_alloc_id = alloc_id;
-      backing.wddm_hAllocation = hAllocation;
-      have_guest_backing = true;
-    }
-#endif
-  }
-
-  if (!have_guest_backing) {
-    // Host-backed fallback: allocate a CPU shadow buffer and update via
-    // UPLOAD_RESOURCE on Unlock.
-    try {
-      backing.storage.resize(template_res->size_bytes);
-    } catch (...) {
-      return E_OUTOFMEMORY;
-    }
-    backing.backing_alloc_id = 0;
-    backing.backing_offset_bytes = 0;
-    backing.wddm_hAllocation = 0;
-  }
-
-  // Create the host resource object for the new backing.
-  Resource tmp{};
-  tmp.handle = backing.handle;
-  tmp.kind = ResourceKind::Buffer;
-  tmp.size_bytes = template_res->size_bytes;
-  tmp.backing_alloc_id = backing.backing_alloc_id;
-  tmp.backing_offset_bytes = backing.backing_offset_bytes;
-  tmp.wddm_hAllocation = backing.wddm_hAllocation;
-  tmp.share_token = 0;
-
-  if (!emit_create_resource_locked(dev, &tmp)) {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (backing.wddm_hAllocation != 0 && dev->wddm_device != 0) {
-      (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, backing.wddm_hAllocation, dev->wddm_context.hContext);
-      backing.wddm_hAllocation = 0;
-    }
-#endif
-    return E_OUTOFMEMORY;
-  }
-
-  *out = std::move(backing);
-  return S_OK;
-}
-
-bool rebind_dynamic_buffer_if_bound_locked(Device* dev, Resource* res) {
-  if (!dev || !res) {
-    return false;
-  }
-
-  size_t needed_bytes = 0;
-  for (uint32_t stream = 0; stream < 16; ++stream) {
-    if (dev->streams[stream].vb != res) {
-      continue;
-    }
-    needed_bytes += align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4);
-  }
-  if (dev->index_buffer == res) {
-    needed_bytes += align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
-  }
-  if (needed_bytes == 0) {
-    return true;
-  }
-
-  if (!ensure_cmd_space(dev, needed_bytes)) {
-    return false;
-  }
-
-  const HRESULT track_hr = track_resource_allocation_locked(dev, res, /*write=*/false);
-  if (FAILED(track_hr)) {
-    return false;
-  }
-
-  for (uint32_t stream = 0; stream < 16; ++stream) {
-    if (dev->streams[stream].vb != res) {
-      continue;
-    }
-
-    aerogpu_vertex_buffer_binding binding{};
-    binding.buffer = res->handle;
-    binding.stride_bytes = dev->streams[stream].stride_bytes;
-    binding.offset_bytes = dev->streams[stream].offset_bytes;
-    binding.reserved0 = 0;
-
-    auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
-        dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
-    if (!cmd) {
-      return false;
-    }
-    cmd->start_slot = stream;
-    cmd->buffer_count = 1;
-  }
-
-  if (dev->index_buffer == res) {
-    auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
-    if (!cmd) {
-      return false;
-    }
-    cmd->buffer = res->handle;
-    cmd->format = d3d9_index_format_to_aerogpu(dev->index_format);
-    cmd->offset_bytes = dev->index_offset_bytes;
-    cmd->reserved0 = 0;
-  }
-
-  return true;
-}
-
-HRESULT dynamic_buffer_discard_locked(Device* dev, Resource* res) {
-  if (!dev || !dev->adapter || !res) {
-    return E_INVALIDARG;
-  }
-  if (!is_dynamic_default_pool_buffer(res)) {
-    return S_OK;
-  }
-
-  const uint64_t completed = refresh_fence_snapshot(dev->adapter).last_completed;
-  prune_completed_dynamic_ranges(res->dynamic_in_flight_ranges, completed);
-  for (auto& backing : res->dynamic_backings) {
-    prune_completed_dynamic_ranges(backing.in_flight_ranges, completed);
-  }
-
-  // If the current backing is not in use, DISCARD does not need a rename.
-  if (res->dynamic_in_flight_ranges.empty()) {
-    res->dynamic_in_flight_ranges.clear();
-    return S_OK;
-  }
-
-  // Prefer reusing an existing free backing.
-  for (auto& backing : res->dynamic_backings) {
-    if (!backing.in_flight_ranges.empty()) {
-      continue;
-    }
-
-    swap_dynamic_backing(res, &backing);
-    res->dynamic_in_flight_ranges.clear();
-    return rebind_dynamic_buffer_if_bound_locked(dev, res) ? S_OK : E_OUTOFMEMORY;
-  }
-
-  // Allocate a new backing if we are still within the per-resource ring limit.
-  const size_t total_backings = res->dynamic_backings.size() + 1;
-  if (total_backings < kDynamicBufferMaxBackings) {
-    Resource::DynamicBufferBacking new_backing{};
-    HRESULT hr = create_dynamic_buffer_backing_locked(dev, res, &new_backing);
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    // Move the current backing into the ring and switch to the new one.
-    Resource::DynamicBufferBacking old{};
-    old.handle = res->handle;
-    old.backing_alloc_id = res->backing_alloc_id;
-    old.backing_offset_bytes = res->backing_offset_bytes;
-    old.wddm_hAllocation = res->wddm_hAllocation;
-    old.storage = std::move(res->storage);
-    old.in_flight_ranges = std::move(res->dynamic_in_flight_ranges);
-    res->dynamic_backings.push_back(std::move(old));
-
-    res->handle = new_backing.handle;
-    res->backing_alloc_id = new_backing.backing_alloc_id;
-    res->backing_offset_bytes = new_backing.backing_offset_bytes;
-    res->wddm_hAllocation = new_backing.wddm_hAllocation;
-    res->storage = std::move(new_backing.storage);
-    res->dynamic_in_flight_ranges.clear();
-
-    return rebind_dynamic_buffer_if_bound_locked(dev, res) ? S_OK : E_OUTOFMEMORY;
-  }
-
-  // Ring exhausted: flush and retry. This is a correctness fallback; it may
-  // stall but avoids unbounded allocation growth.
-  (void)submit(dev);
-
-  const uint64_t completed2 = refresh_fence_snapshot(dev->adapter).last_completed;
-  prune_completed_dynamic_ranges(res->dynamic_in_flight_ranges, completed2);
-  for (auto& backing : res->dynamic_backings) {
-    prune_completed_dynamic_ranges(backing.in_flight_ranges, completed2);
-  }
-
-  if (res->dynamic_in_flight_ranges.empty()) {
-    res->dynamic_in_flight_ranges.clear();
-    return S_OK;
-  }
-
-  for (auto& backing : res->dynamic_backings) {
-    if (!backing.in_flight_ranges.empty()) {
-      continue;
-    }
-    swap_dynamic_backing(res, &backing);
-    res->dynamic_in_flight_ranges.clear();
-    return rebind_dynamic_buffer_if_bound_locked(dev, res) ? S_OK : E_OUTOFMEMORY;
-  }
-
-  // Still no free backing: wait for the oldest referenced fence to complete.
-  uint64_t oldest_fence = 0;
-  auto consider_range = [&oldest_fence](const Resource::DynamicBufferRange& r) {
-    if (r.fence_value == 0) {
-      return;
-    }
-    if (oldest_fence == 0 || r.fence_value < oldest_fence) {
-      oldest_fence = r.fence_value;
-    }
-  };
-  for (const auto& r : res->dynamic_in_flight_ranges) {
-    consider_range(r);
-  }
-  for (const auto& backing : res->dynamic_backings) {
-    for (const auto& r : backing.in_flight_ranges) {
-      consider_range(r);
-    }
-  }
-
-  if (oldest_fence != 0) {
-    (void)wait_for_fence(dev, oldest_fence, /*timeout_ms=*/2000);
-  }
-
-  const uint64_t completed3 = refresh_fence_snapshot(dev->adapter).last_completed;
-  prune_completed_dynamic_ranges(res->dynamic_in_flight_ranges, completed3);
-  for (auto& backing : res->dynamic_backings) {
-    prune_completed_dynamic_ranges(backing.in_flight_ranges, completed3);
-  }
-
-  for (auto& backing : res->dynamic_backings) {
-    if (!backing.in_flight_ranges.empty()) {
-      continue;
-    }
-    swap_dynamic_backing(res, &backing);
-    res->dynamic_in_flight_ranges.clear();
-    return rebind_dynamic_buffer_if_bound_locked(dev, res) ? S_OK : E_OUTOFMEMORY;
-  }
-
-  // Give up: no backing became free. Returning a failure avoids corrupting
-  // in-flight draws, but may surface as a device loss in the app.
-  return E_FAIL;
-}
-
-} // namespace
 HRESULT AEROGPU_D3D9_CALL device_lock(
     D3DDDI_HDEVICE hDevice,
     const D3D9DDIARG_LOCK* pLock,
@@ -12434,38 +11933,10 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
     slice_pitch = sub.slice_pitch_bytes;
   }
 
-  const uint32_t lock_flags = d3d9_lock_flags(*pLock);
-  const bool read_only = (lock_flags & kD3DLOCK_READONLY) != 0;
-  const bool discard = (lock_flags & kD3DLOCK_DISCARD) != 0;
-  const bool no_overwrite = (lock_flags & kD3DLOCK_NOOVERWRITE) != 0;
-
-  // Dynamic buffer semantics:
-  // - DISCARD: rename to a fresh backing so writes cannot corrupt in-flight draws.
-  // - NOOVERWRITE: allow writes iff the written range does not overlap in-flight
-  //   read ranges; otherwise fall back to DISCARD.
-  if (!read_only && is_dynamic_default_pool_buffer(res) && (discard || no_overwrite) && dev->adapter) {
-    const uint64_t completed = refresh_fence_snapshot(dev->adapter).last_completed;
-    prune_completed_dynamic_ranges(res->dynamic_in_flight_ranges, completed);
-
-    bool need_discard = discard;
-    if (!need_discard && no_overwrite) {
-      if (dynamic_buffer_range_overlaps_in_flight_locked(res, offset, size, completed)) {
-        need_discard = true;
-      }
-    }
-
-    if (need_discard) {
-      const HRESULT discard_hr = dynamic_buffer_discard_locked(dev, res);
-      if (FAILED(discard_hr)) {
-        return trace.ret(discard_hr);
-      }
-    }
-  }
-
   res->locked = true;
   res->locked_offset = offset;
   res->locked_size = size;
-  res->locked_flags = lock_flags;
+  res->locked_flags = d3d9_lock_flags(*pLock);
   res->locked_ptr = nullptr;
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
@@ -12632,13 +12103,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     return trace.ret(E_INVALIDARG);
   }
 
-  if (device_is_lost(dev)) {
-    return trace.ret(device_lost_hresult(dev));
-  }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (device_is_lost(dev)) {
-    return trace.ret(device_lost_hresult(dev));
-  }
 
   const uint32_t vertex_count = pProcessVertices->VertexCount;
   if (vertex_count == 0) {
@@ -12977,10 +12442,66 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
   if (dst_res->storage.size() < dst_res->size_bytes) {
     return trace.ret(E_FAIL);
   }
-  const HRESULT upload_hr = emit_upload_resource_range_locked(dev, dst_res, write_offset, write_size);
-  if (FAILED(upload_hr)) {
-    return trace.ret(upload_hr);
+
+  uint32_t upload_offset = write_offset;
+  uint32_t upload_size = write_size;
+  const uint32_t start = upload_offset & ~3u;
+  const uint64_t end_u64 = static_cast<uint64_t>(upload_offset) + static_cast<uint64_t>(upload_size);
+  const uint32_t end = static_cast<uint32_t>((end_u64 + 3ull) & ~3ull);
+  if (end > dst_res->size_bytes || end < start) {
+    return trace.ret(E_INVALIDARG);
   }
+  upload_offset = start;
+  upload_size = end - start;
+
+  const uint8_t* upload_src = dst_res->storage.data() + upload_offset;
+  uint32_t remaining = upload_size;
+  uint32_t cur_offset = upload_offset;
+
+  while (remaining) {
+    const size_t min_payload = 4; // buffer upload requires 4-byte alignment
+    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + min_payload, 4);
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    HRESULT track_hr = track_resource_allocation_locked(dev, dst_res, /*write=*/true);
+    if (FAILED(track_hr)) {
+      return trace.ret(track_hr);
+    }
+
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    const size_t avail = dev->cmd.bytes_remaining();
+    size_t chunk = 0;
+    if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+      chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
+    }
+
+    chunk &= ~static_cast<size_t>(3);
+    if (!chunk) {
+      submit(dev);
+      continue;
+    }
+
+    auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
+        dev, AEROGPU_CMD_UPLOAD_RESOURCE, upload_src, chunk);
+    if (!cmd) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    cmd->resource_handle = dst_res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = cur_offset;
+    cmd->size_bytes = chunk;
+
+    upload_src += chunk;
+    cur_offset += static_cast<uint32_t>(chunk);
+    remaining -= static_cast<uint32_t>(chunk);
+  }
+
   return trace.ret(S_OK);
 }
 
@@ -13086,9 +12607,48 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
         if (dst->storage.size() < dst->size_bytes) {
           return trace.ret(E_FAIL);
         }
-        const HRESULT upload_hr = emit_upload_resource_range_locked(dev, dst, /*offset=*/0, dst->size_bytes);
-        if (FAILED(upload_hr)) {
-          return trace.ret(upload_hr);
+
+        const uint8_t* src_bytes = dst->storage.data();
+        uint32_t remaining = dst->size_bytes;
+        uint32_t cur_offset = 0;
+        while (remaining) {
+          const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+          if (!ensure_cmd_space(dev, min_needed)) {
+            return trace.ret(E_OUTOFMEMORY);
+          }
+
+          // Track allocations so the host can resolve the destination. For
+          // host-allocated surfaces this is a no-op.
+          const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/true);
+          if (FAILED(track_hr)) {
+            return trace.ret(track_hr);
+          }
+
+          const size_t avail = dev->cmd.bytes_remaining();
+          size_t chunk = 0;
+          if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+            chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
+          }
+          while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+            chunk--;
+          }
+          if (!chunk) {
+            submit(dev);
+            continue;
+          }
+
+          auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
+              dev, AEROGPU_CMD_UPLOAD_RESOURCE, src_bytes + cur_offset, chunk);
+          if (!cmd) {
+            return trace.ret(E_OUTOFMEMORY);
+          }
+          cmd->resource_handle = dst->handle;
+          cmd->reserved0 = 0;
+          cmd->offset_bytes = cur_offset;
+          cmd->size_bytes = chunk;
+
+          cur_offset += static_cast<uint32_t>(chunk);
+          remaining -= static_cast<uint32_t>(chunk);
         }
       }
     }
@@ -13857,151 +13417,168 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
   // padding/trailing elements beyond the first D3DDECL_END terminator.
   if (decl && decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 2) {
     const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(decl->blob.data());
-    const size_t count = decl->blob.size() / sizeof(D3DVERTEXELEMENT9_COMPAT);
 
     auto is_end = [](const D3DVERTEXELEMENT9_COMPAT& e) -> bool {
       return (e.Stream == 0xFF) && (e.Type == kD3dDeclTypeUnused);
     };
 
-    auto try_tex0_size_bits = [](uint8_t decl_type, uint32_t* out_bits) -> bool {
-      if (!out_bits) {
-        return false;
-      }
-      // D3DFVF_TEXCOORDSIZE* encoding: 2 bits per texcoord set starting at bit 16.
-      // 0 -> float2 (default), 1 -> float3, 2 -> float4, 3 -> float1.
-      switch (decl_type) {
+    auto texcoord_dim_from_type = [](uint8_t type) -> uint32_t {
+      switch (type) {
         case kD3dDeclTypeFloat1:
-          *out_bits = 3u << 16;
-          return true;
+          return 1u;
         case kD3dDeclTypeFloat2:
-          *out_bits = 0u;
-          return true;
+          return 2u;
         case kD3dDeclTypeFloat3:
-          *out_bits = 1u << 16;
-          return true;
+          return 3u;
         case kD3dDeclTypeFloat4:
-          *out_bits = 2u << 16;
-          return true;
+          return 4u;
         default:
-          return false;
+          return 0u;
       }
+    };
+
+    auto fvf_texcoord_size_bits = [](uint32_t dim, uint32_t tex_index) -> uint32_t {
+      if (tex_index >= kMaxFvfTexCoordSets) {
+        return 0u;
+      }
+      // D3DFVF_TEXCOORDSIZE* uses two bits per texcoord set:
+      //   0 -> float2 (default)
+      //   1 -> float3
+      //   2 -> float4
+      //   3 -> float1
+      uint32_t code = 0;
+      switch (dim) {
+        case 1u:
+          code = 3u;
+          break;
+        case 2u:
+          code = 0u;
+          break;
+        case 3u:
+          code = 1u;
+          break;
+        case 4u:
+          code = 2u;
+          break;
+        default:
+          return 0u;
+      }
+      return code << (16u + tex_index * 2u);
     };
 
     const auto& e0 = elems[0];
     const auto& e1 = elems[1];
 
-    // Common position encodings.
-    const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
-                            (e0.Method == kD3dDeclMethodDefault) &&
-                            (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) &&
-                            (e0.UsageIndex == 0);
-    const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
-                           (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) &&
-                           (e0.UsageIndex == 0);
-
-    // Plain position-only decls (POSITION or POSITIONT with no additional attributes).
+    // Position-only decls:
+    // - XYZRHW: POSITIONT float4 @0 + END
+    // - XYZ: POSITION float3 @0 + END
     if (is_end(e1)) {
+      const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                              (e0.Method == kD3dDeclMethodDefault) &&
+                              (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
       if (e0_xyzw_ok) {
         implied_fvf = kD3dFvfXyzRhw;
       }
+
+      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
+                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
       if (e0_xyz_ok) {
         implied_fvf = kD3dFvfXyz;
       }
     }
 
+    if (decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 3) {
+      const auto& e2 = elems[2];
+
     // XYZRHW | DIFFUSE:
     //   POSITIONT float4 @0
     //   COLOR0    D3DCOLOR @16
     //   END
-    if (count >= 3) {
-      const auto& e2 = elems[2];
-      if (is_end(e2)) {
-        const bool e1_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
-                           (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) &&
-                           (e1.UsageIndex == 0);
+    if (is_end(e2)) {
+      const bool e0_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                         (e0.Method == kD3dDeclMethodDefault) &&
+                         (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                         (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
 
-        if (e0_xyzw_ok && e1_ok) {
-          implied_fvf = kSupportedFvfXyzrhwDiffuse;
-        }
+      if (e0_ok && e1_ok) {
+        implied_fvf = kSupportedFvfXyzrhwDiffuse;
+      }
 
-        // XYZRHW | TEX1:
-        //   POSITIONT float4 @0
-        //   TEXCOORD0 float1/2/3/4 @16
-        //   END
-        uint32_t tex0_bits = 0;
-        const bool e1_xyzw_tex_ok = (e1.Stream == 0) && (e1.Offset == 16) &&
-                                    (e1.Method == kD3dDeclMethodDefault) &&
-                                    (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) &&
-                                    (e1.UsageIndex == 0) &&
-                                    try_tex0_size_bits(e1.Type, &tex0_bits);
-        if (e0_xyzw_ok && e1_xyzw_tex_ok) {
-          implied_fvf = kSupportedFvfXyzrhwTex1 | tex0_bits;
-        }
+      const uint32_t tex_dim_e1 = texcoord_dim_from_type(e1.Type);
 
-        // XYZ | DIFFUSE:
-        //   POSITION float3 @0
-        //   COLOR0    D3DCOLOR @12
-        //   END
-        const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
-                               (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) &&
-                               (e1.UsageIndex == 0);
-        if (e0_xyz_ok && e1_xyz_ok) {
-          implied_fvf = kSupportedFvfXyzDiffuse;
-        }
+      // XYZRHW | TEX1:
+      //   POSITIONT float4 @0
+      //   TEXCOORD0 float{1,2,3,4} @16
+      //   END
+      const bool e1_xyzw_tex_ok =
+          (e1.Stream == 0) && (e1.Offset == 16) && (tex_dim_e1 != 0) && (e1.Method == kD3dDeclMethodDefault) &&
+          (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) && (e1.UsageIndex == 0);
+      if (e0_ok && e1_xyzw_tex_ok) {
+        implied_fvf = kD3dFvfXyzRhw | kD3dFvfTex1 | fvf_texcoord_size_bits(tex_dim_e1, 0);
+      }
 
-        // XYZ | TEX1:
-        //   POSITION float3 @0
-        //   TEXCOORD0 float1/2/3/4 @12
-        //   END
-        tex0_bits = 0;
-        const bool e1_xyz_tex_ok = (e1.Stream == 0) && (e1.Offset == 12) &&
-                                   (e1.Method == kD3dDeclMethodDefault) &&
-                                   (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) &&
-                                   (e1.UsageIndex == 0) &&
-                                   try_tex0_size_bits(e1.Type, &tex0_bits);
-        if (e0_xyz_ok && e1_xyz_tex_ok) {
-          implied_fvf = kSupportedFvfXyzTex1 | tex0_bits;
-        }
+      // XYZ | DIFFUSE:
+      //   POSITION float3 @0
+      //   COLOR0    D3DCOLOR @12
+      //   END
+      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
+                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
+      const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                             (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_ok) {
+        implied_fvf = kSupportedFvfXyzDiffuse;
+      }
+
+      // XYZ | TEX1:
+      //   POSITION float3 @0
+      //   TEXCOORD0 float{1,2,3,4} @12
+      //   END
+      const bool e1_xyz_tex_ok =
+          (e1.Stream == 0) && (e1.Offset == 12) && (tex_dim_e1 != 0) && (e1.Method == kD3dDeclMethodDefault) &&
+          (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) && (e1.UsageIndex == 0);
+      if (e0_xyz_ok && e1_xyz_tex_ok) {
+        implied_fvf = kD3dFvfXyz | kD3dFvfTex1 | fvf_texcoord_size_bits(tex_dim_e1, 0);
       }
     }
 
-    if (count >= 4) {
-      const auto& e2 = elems[2];
+    if (decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 4) {
       const auto& e3 = elems[3];
+      const uint32_t tex_dim_e2 = texcoord_dim_from_type(e2.Type);
       // XYZRHW | DIFFUSE | TEX1:
       //   POSITIONT float4 @0
       //   COLOR0    D3DCOLOR @16
-      //   TEXCOORD0 float1/2/3/4 @20
+      //   TEXCOORD0 float{1,2,3,4} @20
       //   END
+      const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                              (e0.Method == kD3dDeclMethodDefault) &&
+                              (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
       const bool e1_xyzw_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
                               (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
-      uint32_t tex0_bits = 0;
-      const bool e2_xyzw_ok = (e2.Stream == 0) && (e2.Offset == 20) &&
-                              (e2.Method == kD3dDeclMethodDefault) &&
-                              (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) &&
-                              (e2.UsageIndex == 0) &&
-                              try_tex0_size_bits(e2.Type, &tex0_bits);
+      const bool e2_xyzw_ok =
+          (e2.Stream == 0) && (e2.Offset == 20) && (tex_dim_e2 != 0) && (e2.Method == kD3dDeclMethodDefault) &&
+          (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
       if (e0_xyzw_ok && e1_xyzw_ok && e2_xyzw_ok && is_end(e3)) {
-        implied_fvf = kSupportedFvfXyzrhwDiffuseTex1 | tex0_bits;
+        implied_fvf = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1 | fvf_texcoord_size_bits(tex_dim_e2, 0);
       }
 
       // XYZ | DIFFUSE | TEX1:
       //   POSITION float3 @0
       //   COLOR0    D3DCOLOR @12
-      //   TEXCOORD0 float1/2/3/4 @16
+      //   TEXCOORD0 float{1,2,3,4} @16
       //   END
+      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
+                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
       const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
                              (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
-      tex0_bits = 0;
-      const bool e2_xyz_ok = (e2.Stream == 0) && (e2.Offset == 16) &&
-                             (e2.Method == kD3dDeclMethodDefault) &&
-                             (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) &&
-                             (e2.UsageIndex == 0) &&
-                             try_tex0_size_bits(e2.Type, &tex0_bits);
+      const bool e2_xyz_ok =
+          (e2.Stream == 0) && (e2.Offset == 16) && (tex_dim_e2 != 0) && (e2.Method == kD3dDeclMethodDefault) &&
+          (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
       if (e0_xyz_ok && e1_xyz_ok && e2_xyz_ok && is_end(e3)) {
-        implied_fvf = kSupportedFvfXyzDiffuseTex1 | tex0_bits;
+        implied_fvf = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1 | fvf_texcoord_size_bits(tex_dim_e2, 0);
       }
     }
+    } // decl has >=3 elements
   }
   dev->fvf = implied_fvf;
   if (fixedfunc_fvf_needs_matrix(implied_fvf)) {
@@ -15268,9 +14845,8 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       return hr;
     }
     // State blocks can capture and re-apply VS constant registers even when the
-    // app uses fixed-function rendering. If the fixed-function fallback is using
-    // the internal WVP VS (reserved range c240..c243), treat the range as
-    // clobbered and re-upload the matrix after the block is applied.
+    // app uses fixed-function rendering. Since the fixed-function fallback shader
+    // consumes c0-c3 for WVP, re-emit those constants after the block is applied.
     if (fixedfunc_fvf_needs_matrix(dev->fvf)) {
       dev->fixedfunc_matrix_dirty = true;
     }
@@ -15362,16 +14938,19 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     }
   }
 
-  // If fixed-function shaders are active, stage0 texture stage state changes may
-  // require a different internal PS variant. Update the cached selection and
-  // rebind so the change takes effect without waiting for a draw call.
+  // Stage0 texture stage state drives the fixed-function PS selection logic (and
+  // thus shader-stage interop when the app binds only a VS).
+  //
+  // State-block apply bypasses SetTextureStageState, so keep the cached stage0
+  // PS selection in sync and re-bind if the currently bound PS changes.
   if (stage0_tss_dirty && !dev->user_ps) {
     Shader** ps_slot = nullptr;
     if (dev->user_vs) {
-      // VS-only interop: use stage0-selected fixed-function PS as the fallback.
+      // VS-only shader-stage interop uses the stage0 fixed-function PS fallback.
       ps_slot = &dev->fixedfunc_ps_interop;
     } else if (fixedfunc_supported_fvf(dev->fvf)) {
-      switch (dev->fvf) {
+      const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+      switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
           ps_slot = &dev->fixedfunc_ps;
@@ -15387,7 +14966,12 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         default:
           break;
       }
+    } else {
+      // Unsupported fixed-function FVF still uses a non-null shader bind pair.
+      // The fallback PS selection logic is stage0-driven (same as VS-only interop).
+      ps_slot = &dev->fixedfunc_ps_interop;
     }
+
     if (ps_slot) {
       const HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
       if (FAILED(hr)) {
@@ -17008,8 +16592,12 @@ HRESULT device_get_software_vertex_processing_dispatch(Args... args) {
 // -----------------------------------------------------------------------------
 // The D3D9 runtime exposes a device-managed cursor API (distinct from the Win32
 // cursor). Apps/games frequently use it for custom cursors. AeroGPU implements
-// a minimal software cursor by compositing the cursor bitmap over the present
-// source surface just before AEROGPU_CMD_PRESENT_EX is issued.
+// this in two layers:
+//
+// 1) Preferred: program the KMD hardware cursor via driver-private escapes
+//    (requires AEROGPU_FEATURE_CURSOR in the KMD/emulator).
+// 2) Fallback: a minimal software cursor overlay composited over the present
+//    source surface just before AEROGPU_CMD_PRESENT_EX is issued.
 //
 // Cursor coordinates are in client pixels. The hotspot (SetCursorProperties) is
 // subtracted from the position (SetCursorPosition) when building the overlay
@@ -17019,6 +16607,142 @@ namespace {
 constexpr uint32_t kD3d9FmtA8R8G8B8 = 21u;
 constexpr uint32_t kD3d9FmtX8R8G8B8 = 22u;
 constexpr uint32_t kD3d9FmtA8B8G8R8 = 32u;
+constexpr uint32_t kMaxCursorDim = 512u;
+constexpr uint64_t kMaxCursorBytes = 1024ull * 1024ull; // hard cap for safety
+
+inline void init_escape_header(aerogpu_escape_header* hdr, uint32_t op, uint32_t size) {
+  if (!hdr) {
+    return;
+  }
+  hdr->version = AEROGPU_ESCAPE_VERSION;
+  hdr->op = op;
+  hdr->size = size;
+  hdr->reserved0 = 0;
+}
+
+// Builds a driver-private escape packet for SET_CURSOR_SHAPE (including pixels),
+// returning false if cursor bytes are not CPU-readable.
+static bool build_cursor_shape_escape_packet(Device* dev,
+                                             Resource* cursor,
+                                             uint32_t hot_x,
+                                             uint32_t hot_y,
+                                             std::vector<uint8_t>* out_packet) {
+  if (!dev || !dev->adapter || !cursor || !out_packet) {
+    return false;
+  }
+
+  const uint32_t w = cursor->width;
+  const uint32_t h = cursor->height;
+  if (w == 0 || h == 0 || w > kMaxCursorDim || h > kMaxCursorDim) {
+    return false;
+  }
+
+  const uint64_t dst_pitch_u64 = static_cast<uint64_t>(w) * 4ull;
+  if (dst_pitch_u64 == 0 || dst_pitch_u64 > 0xFFFFFFFFull) {
+    return false;
+  }
+  const uint64_t pixel_bytes_u64 = dst_pitch_u64 * static_cast<uint64_t>(h);
+  if (pixel_bytes_u64 == 0 || pixel_bytes_u64 > kMaxCursorBytes || pixel_bytes_u64 > 0xFFFFFFFFull) {
+    return false;
+  }
+
+  const uint32_t dst_pitch = static_cast<uint32_t>(dst_pitch_u64);
+  const uint32_t pixel_bytes = static_cast<uint32_t>(pixel_bytes_u64);
+
+  uint32_t src_pitch = cursor->row_pitch;
+  if (src_pitch == 0) {
+    src_pitch = dst_pitch;
+  }
+  if (src_pitch < dst_pitch) {
+    return false;
+  }
+
+  const uint64_t src_bytes_u64 = static_cast<uint64_t>(src_pitch) * static_cast<uint64_t>(h);
+  if (src_bytes_u64 == 0 || src_bytes_u64 > 0x7FFFFFFFull || src_bytes_u64 > static_cast<uint64_t>(cursor->size_bytes)) {
+    return false;
+  }
+  const uint32_t src_bytes = static_cast<uint32_t>(src_bytes_u64);
+
+  const size_t header_bytes = offsetof(aerogpu_escape_set_cursor_shape_in, pixels);
+  const size_t packet_bytes = header_bytes + static_cast<size_t>(pixel_bytes);
+  if (packet_bytes > static_cast<size_t>(std::numeric_limits<uint32_t>::max())) {
+    return false;
+  }
+
+  try {
+    out_packet->assign(packet_bytes, 0);
+  } catch (...) {
+    return false;
+  }
+
+  auto* pkt = reinterpret_cast<aerogpu_escape_set_cursor_shape_in*>(out_packet->data());
+  init_escape_header(&pkt->hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE, static_cast<uint32_t>(packet_bytes));
+  pkt->width = w;
+  pkt->height = h;
+  pkt->hot_x = hot_x;
+  pkt->hot_y = hot_y;
+  pkt->pitch_bytes = dst_pitch;
+  // Advisory: the KMD also scans alpha bytes to decide between BGRA vs BGRX.
+  pkt->format = AEROGPU_FORMAT_B8G8R8A8_UNORM;
+  pkt->reserved0 = 0;
+  pkt->reserved1 = 0;
+
+  uint8_t* dst_base = pkt->pixels;
+  const uint8_t* src_base = nullptr;
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  void* locked_ptr = nullptr;
+  bool locked = false;
+  if (cursor->storage.size() >= src_bytes) {
+    src_base = cursor->storage.data();
+  } else if (cursor->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+    const HRESULT hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                            dev->wddm_device,
+                                            cursor->wddm_hAllocation,
+                                            /*offset_bytes=*/0,
+                                            /*size_bytes=*/src_bytes,
+                                            kD3DLOCK_READONLY,
+                                            &locked_ptr,
+                                            dev->wddm_context.hContext);
+    if (FAILED(hr) || !locked_ptr) {
+      return false;
+    }
+    locked = true;
+    src_base = reinterpret_cast<const uint8_t*>(locked_ptr);
+  } else {
+    return false;
+  }
+#else
+  if (cursor->storage.size() < src_bytes) {
+    return false;
+  }
+  src_base = cursor->storage.data();
+#endif
+
+  // Copy (and convert when needed) into a tightly-packed BGRA/BGRX payload.
+  const uint32_t fmt = static_cast<uint32_t>(cursor->format);
+  for (uint32_t y = 0; y < h; ++y) {
+    const uint8_t* src_row = src_base + static_cast<size_t>(y) * static_cast<size_t>(src_pitch);
+    uint8_t* dst_row = dst_base + static_cast<size_t>(y) * static_cast<size_t>(dst_pitch);
+    std::memcpy(dst_row, src_row, dst_pitch);
+
+    if (fmt == kD3d9FmtA8B8G8R8) {
+      // Convert RGBA -> BGRA (swap R/B).
+      for (uint32_t x = 0; x < w; ++x) {
+        const size_t i = static_cast<size_t>(x) * 4u;
+        std::swap(dst_row[i + 0], dst_row[i + 2]);
+      }
+    }
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  if (locked) {
+    (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, cursor->wddm_hAllocation, dev->wddm_context.hContext);
+  }
+#endif
+
+  return true;
+}
 } // namespace
 
 template <typename T, typename = void>
@@ -17069,12 +16793,47 @@ HRESULT device_set_cursor_properties_values_impl(D3DDDI_HDEVICE hDevice,
   }
 
   auto* dev = as_device(hDevice);
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->cursor_bitmap = cursor;
-  dev->cursor_hot_x = hot_x;
-  dev->cursor_hot_y = hot_y;
-  dev->cursor_bitmap_serial++;
-  stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
+  Adapter* adapter = dev ? dev->adapter : nullptr;
+
+  std::vector<uint8_t> shape_packet;
+  bool shape_packet_ok = false;
+  bool prev_hw_active = false;
+  uint64_t serial = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cursor_bitmap = cursor;
+    dev->cursor_hot_x = hot_x;
+    dev->cursor_hot_y = hot_y;
+    dev->cursor_bitmap_serial++;
+    serial = dev->cursor_bitmap_serial;
+    prev_hw_active = dev->cursor_hw_active;
+    shape_packet_ok = build_cursor_shape_escape_packet(dev, cursor, hot_x, hot_y, &shape_packet);
+    stateblock_record_cursor_properties_locked(dev, dev->cursor_bitmap, dev->cursor_hot_x, dev->cursor_hot_y);
+  }
+
+  bool hw_ok = false;
+  if (adapter && shape_packet_ok && !shape_packet.empty()) {
+    hw_ok = adapter->kmd_query.SendEscape(shape_packet.data(), static_cast<uint32_t>(shape_packet.size()));
+  }
+
+  // If we previously had an active hardware cursor and failed to update the
+  // shape, attempt to hide the hardware cursor so we can fall back to the
+  // software cursor overlay without double-rendering.
+  if (!hw_ok && prev_hw_active && adapter) {
+    aerogpu_escape_set_cursor_visibility_in vis{};
+    init_escape_header(&vis.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY, sizeof(vis));
+    vis.visible = 0;
+    vis.reserved0 = 0;
+    (void)adapter->kmd_query.SendEscape(&vis, sizeof(vis));
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->cursor_bitmap_serial == serial) {
+      dev->cursor_hw_active = hw_ok;
+    }
+  }
+
   return trace.ret(S_OK);
 }
 
@@ -17147,10 +16906,23 @@ HRESULT device_set_cursor_position_values_impl(D3DDDI_HDEVICE hDevice, X x, Y y,
     return trace.ret(E_INVALIDARG);
   }
   auto* dev = as_device(hDevice);
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->cursor_x = static_cast<int32_t>(x);
-  dev->cursor_y = static_cast<int32_t>(y);
-  stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
+  Adapter* adapter = dev ? dev->adapter : nullptr;
+  int32_t x_i32 = static_cast<int32_t>(x);
+  int32_t y_i32 = static_cast<int32_t>(y);
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cursor_x = x_i32;
+    dev->cursor_y = y_i32;
+    stateblock_record_cursor_position_locked(dev, dev->cursor_x, dev->cursor_y);
+  }
+
+  if (adapter) {
+    aerogpu_escape_set_cursor_position_in pos{};
+    init_escape_header(&pos.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION, sizeof(pos));
+    pos.x = static_cast<uint32_t>(x_i32);
+    pos.y = static_cast<uint32_t>(y_i32);
+    (void)adapter->kmd_query.SendEscape(&pos, sizeof(pos));
+  }
   return trace.ret(S_OK);
 }
 
@@ -17219,9 +16991,21 @@ HRESULT device_show_cursor_impl(D3DDDI_HDEVICE hDevice, ShowT show) {
     return trace.ret(E_INVALIDARG);
   }
   auto* dev = as_device(hDevice);
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->cursor_visible = d3d9_to_u32(show) ? TRUE : FALSE;
-  stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
+  Adapter* adapter = dev ? dev->adapter : nullptr;
+  const BOOL visible = d3d9_to_u32(show) ? TRUE : FALSE;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cursor_visible = visible;
+    stateblock_record_show_cursor_locked(dev, dev->cursor_visible);
+  }
+
+  if (adapter) {
+    aerogpu_escape_set_cursor_visibility_in vis{};
+    init_escape_header(&vis.hdr, AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY, sizeof(vis));
+    vis.visible = visible ? 1u : 0u;
+    vis.reserved0 = 0;
+    (void)adapter->kmd_query.SendEscape(&vis, sizeof(vis));
+  }
   return trace.ret(S_OK);
 }
 
@@ -21796,23 +21580,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   cmd->instance_count = 1;
   cmd->first_vertex = start_vertex;
   cmd->first_instance = 0;
-
-  // Record dynamic buffer usage ranges so DISCARD/NOOVERWRITE locks can avoid
-  // overwriting vertex data that might still be referenced by in-flight draws.
-  for (uint32_t stream = 0; stream < 16; ++stream) {
-    const DeviceStateStream& ss = dev->streams[stream];
-    if (!ss.vb || ss.stride_bytes == 0 || vertex_count == 0) {
-      continue;
-    }
-    const uint64_t start_u64 =
-        static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(start_vertex) * static_cast<uint64_t>(ss.stride_bytes);
-    const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * static_cast<uint64_t>(ss.stride_bytes);
-    if (start_u64 > ss.vb->size_bytes || size_u64 > ss.vb->size_bytes - start_u64) {
-      continue;
-    }
-    record_dynamic_buffer_read_range_locked(dev, ss.vb, static_cast<uint32_t>(start_u64), static_cast<uint32_t>(size_u64));
-  }
-
   hr = restore_draw_shaders_locked(dev, &shader_override);
   if (FAILED(hr)) {
     return trace.ret(hr);
@@ -22376,8 +22143,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,
     int32_t base_vertex,
-    uint32_t min_index,
-    uint32_t num_vertices,
+    uint32_t /*min_index*/,
+    uint32_t /*num_vertices*/,
     uint32_t start_index,
     uint32_t primitive_count) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDrawIndexedPrimitive,
@@ -22747,48 +22514,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
   cmd->first_index = start_index;
   cmd->base_vertex = base_vertex;
   cmd->first_instance = 0;
-
-  if (dev->index_buffer && index_count != 0) {
-    const uint32_t index_size = (dev->index_format == kD3dFmtIndex32) ? 4u : 2u;
-    const uint64_t start_u64 = static_cast<uint64_t>(dev->index_offset_bytes) +
-                               static_cast<uint64_t>(start_index) * static_cast<uint64_t>(index_size);
-    const uint64_t size_u64 = static_cast<uint64_t>(index_count) * static_cast<uint64_t>(index_size);
-    if (start_u64 <= dev->index_buffer->size_bytes && size_u64 <= dev->index_buffer->size_bytes - start_u64) {
-      record_dynamic_buffer_read_range_locked(
-          dev, dev->index_buffer, static_cast<uint32_t>(start_u64), static_cast<uint32_t>(size_u64));
-    }
-  }
-
-  // Record vertex buffer ranges referenced by this indexed draw. Use the
-  // runtime-provided MinIndex/NumVertices bounding range to avoid tracking the
-  // entire buffer and forcing unnecessary renames on NOOVERWRITE locks.
-  const int64_t first_vertex_i64 = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(min_index);
-  if (num_vertices != 0) {
-    for (uint32_t stream = 0; stream < 16; ++stream) {
-      const DeviceStateStream& ss = dev->streams[stream];
-      if (!ss.vb || ss.stride_bytes == 0) {
-        continue;
-      }
-      uint64_t start_u64 = 0;
-      uint64_t size_u64 = 0;
-      if (first_vertex_i64 < 0) {
-        // Out-of-range base/min is invalid, but be conservative: treat the whole
-        // buffer as in-flight so we never allow overlapping writes.
-        start_u64 = 0;
-        size_u64 = ss.vb->size_bytes;
-      } else {
-        start_u64 = static_cast<uint64_t>(ss.offset_bytes) +
-                    static_cast<uint64_t>(first_vertex_i64) * static_cast<uint64_t>(ss.stride_bytes);
-        size_u64 = static_cast<uint64_t>(num_vertices) * static_cast<uint64_t>(ss.stride_bytes);
-      }
-      if (start_u64 > ss.vb->size_bytes || size_u64 > ss.vb->size_bytes - start_u64) {
-        continue;
-      }
-      record_dynamic_buffer_read_range_locked(
-          dev, ss.vb, static_cast<uint32_t>(start_u64), static_cast<uint32_t>(size_u64));
-    }
-  }
-
   hr = restore_draw_shaders_locked(dev, &shader_override);
   if (FAILED(hr)) {
     return trace.ret(hr);
@@ -22802,6 +22527,11 @@ static void overlay_device_cursor_locked(Device* dev, Resource* present_src) {
     return;
   }
   if (!dev->cursor_visible) {
+    return;
+  }
+  // If we successfully programmed the KMD hardware cursor path, avoid also
+  // drawing a software cursor into the present source.
+  if (dev->cursor_hw_active) {
     return;
   }
   Resource* cursor = dev->cursor_bitmap;
@@ -25731,7 +25461,6 @@ auto* const kDeviceDestroyVertexDeclImpl = device_destroy_vertex_decl;
 auto* const kDeviceCreateShaderImpl = device_create_shader;
 auto* const kDeviceSetShaderImpl = device_set_shader;
 auto* const kDeviceDestroyShaderImpl = device_destroy_shader;
-auto* const kDeviceSetTextureStageStateImpl = device_set_texture_stage_state;
 auto* const kDeviceDrawPrimitiveImpl = device_draw_primitive;
 auto* const kDeviceDrawIndexedPrimitiveImpl = device_draw_indexed_primitive;
 auto* const kDeviceDrawPrimitiveUpImpl = device_draw_primitive_up;
@@ -25793,7 +25522,63 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
     uint32_t stage,
     uint32_t state,
     uint32_t value) {
-  return kDeviceSetTextureStageStateImpl(hDevice, stage, state, value);
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  return device_set_texture_stage_state_dispatch(hDevice, stage, state, value);
+#else
+  // Portable host-side tests compile a minimal D3D9DDI_DEVICEFUNCS table which
+  // does not include SetTextureStageState. Provide a small direct-call helper so
+  // tests can still exercise fixed-function stage0 PS selection behavior.
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  if (stage >= 16 || state >= 256) {
+    return kD3DErrInvalidCall;
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->texture_stage_states[stage][state] = value;
+  stateblock_record_texture_stage_state_locked(dev, stage, state, value);
+
+  // Mirror the stage0 fixed-function PS update hook from the DDI paths.
+  if (stage == 0 &&
+      (state == kD3dTssColorOp || state == kD3dTssColorArg1 || state == kD3dTssColorArg2 ||
+       state == kD3dTssAlphaOp || state == kD3dTssAlphaArg1 || state == kD3dTssAlphaArg2) &&
+      !dev->user_ps) {
+    Shader** ps_slot = nullptr;
+    if (dev->user_vs) {
+      ps_slot = &dev->fixedfunc_ps_interop;
+    } else if (fixedfunc_supported_fvf(dev->fvf)) {
+      switch (dev->fvf) {
+        case kSupportedFvfXyzrhwDiffuse:
+        case kSupportedFvfXyzDiffuse:
+          ps_slot = &dev->fixedfunc_ps;
+          break;
+        case kSupportedFvfXyzrhwDiffuseTex1:
+        case kSupportedFvfXyzrhwTex1:
+          ps_slot = &dev->fixedfunc_ps_tex1;
+          break;
+        case kSupportedFvfXyzDiffuseTex1:
+        case kSupportedFvfXyzTex1:
+          ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+          break;
+        default:
+          ps_slot = nullptr;
+          break;
+      }
+      if (!ps_slot) {
+        return kD3DErrInvalidCall;
+      }
+    }
+    if (ps_slot) {
+      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+      if (FAILED(ps_hr)) {
+        return ps_hr;
+      }
+    }
+  }
+  return S_OK;
+#endif
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(

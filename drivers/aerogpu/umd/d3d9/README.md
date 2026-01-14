@@ -23,16 +23,25 @@ The command stream does **not** reference resources by a per-submission “alloc
   - For **shared** allocations, dxgkrnl preserves and replays the private-data blob on `OpenResource`/`OpenAllocation` so all guest processes observe consistent IDs.
   - `backing_alloc_id = 0` means “host allocated” (no guest backing). Portable/non-WDDM builds typically use host-allocated resources and leave `backing_alloc_id = 0`. In Win7/WDDM builds, most default-pool resources are backed by WDDM allocations and use non-zero `alloc_id` values so the KMD can build a per-submit `alloc_id → GPA` table for the emulator.
 
-## D3D9 device cursor (software overlay)
+## D3D9 device cursor (hardware cursor + software fallback)
 
 The Win7 D3D9 runtime exposes a device-managed cursor API (`SetCursorProperties`, `SetCursorPosition`, `ShowCursor`).
-AeroGPU implements this as a **software cursor overlay** composited over the present source surface immediately before emitting
-`AEROGPU_CMD_PRESENT_EX`. Supported cursor bitmap formats: `A8R8G8B8`, `X8R8G8B8` (treated as opaque alpha=1.0), `A8B8G8R8`.
+
+On AeroGPU, cursor support is implemented in two layers:
+
+1. **Hardware cursor (preferred)** — when the Win7 KMD exposes the cursor MMIO feature (`AEROGPU_FEATURE_CURSOR`), the D3D9 UMD
+   programs the KMD cursor state via driver-private escapes (see `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h` ops
+   `AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE/_POSITION/_VISIBILITY`). This is required for Win7 guest validation (`cursor_state_sanity`)
+   which queries cursor MMIO state via `AEROGPU_ESCAPE_OP_QUERY_CURSOR`.
+2. **Software cursor overlay (fallback)** — if the escape path is unavailable or the KMD returns `STATUS_NOT_SUPPORTED`, the UMD
+   composites the cursor bitmap over the present source surface immediately before emitting `AEROGPU_CMD_PRESENT_EX`.
+
+Supported cursor bitmap formats: `A8R8G8B8`, `X8R8G8B8` (treated as opaque alpha=1.0), `A8B8G8R8`.
 
 Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 
 - Cursor state DDIs: `device_set_cursor_properties_dispatch()` / `device_set_cursor_position_dispatch()` / `device_show_cursor_dispatch()`
-- Cursor overlay at present time: `overlay_device_cursor_locked()` (called by `device_present()` / `device_present_ex()`)
+- Cursor overlay at present time (software fallback): `overlay_device_cursor_locked()` (called by `device_present()` / `device_present_ex()`)
 
 ## Win7/WDDM submission callbacks (render vs present)
 

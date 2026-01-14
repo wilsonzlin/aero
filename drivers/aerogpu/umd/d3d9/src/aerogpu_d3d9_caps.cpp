@@ -200,6 +200,12 @@ struct caps_has_blend_op_caps<T, std::void_t<decltype(std::declval<T>().BlendOpC
   #define D3DBLENDOPCAPS_MAX 0x00000010u
 #endif
 
+// D3DCURSORCAPS_COLOR (from d3d9caps.h). Portable builds do not include the SDK,
+// so provide the numeric value here.
+#ifndef D3DCURSORCAPS_COLOR
+  #define D3DCURSORCAPS_COLOR 0x00000001u
+#endif
+
 #ifndef D3DTEXOPCAPS_DISABLE
   #define D3DTEXOPCAPS_DISABLE 0x00000001u
 #endif
@@ -272,6 +278,11 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 #endif
 
   out->PresentationIntervals = D3DPRESENT_INTERVAL_ONE | D3DPRESENT_INTERVAL_IMMEDIATE;
+
+  // Cursor support is required for Aero/DWM on Win7 and for the in-guest cursor
+  // sanity test. The AeroGPU D3D9 UMD wires the cursor DDIs to the KMD's cursor
+  // MMIO feature via driver-private escapes.
+  out->CursorCaps = D3DCURSORCAPS_COLOR;
 
   out->VertexShaderVersion = D3DVS_VERSION(2, 0);
   out->PixelShaderVersion = D3DPS_VERSION(2, 0);

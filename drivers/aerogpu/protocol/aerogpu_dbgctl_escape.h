@@ -44,6 +44,16 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_READ_GPA 13u
 /* Query most recent device error state (MMIO error registers when available). */
 #define AEROGPU_ESCAPE_OP_QUERY_ERROR 14u
+/*
+ * Cursor control ops (used by the D3D9 UMD cursor DDIs).
+ *
+ * These are deliberately simple: they map directly to the AeroGPU cursor MMIO
+ * register block (`AEROGPU_MMIO_REG_CURSOR_*`) and are intended to be called at
+ * interactive rates (cursor move / show/hide / shape change).
+ */
+#define AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE 15u
+#define AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION 16u
+#define AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY 17u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 #define AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS 32u
@@ -647,6 +657,77 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, reserved0) 
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, status) == 32);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, bytes_copied) == 36);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, data) == 40);
+
+/*
+ * Set cursor position (driver-private; used by D3D9 UMD cursor DDIs).
+ *
+ * The position semantics are intentionally tolerant: the device may interpret
+ * `x/y` as either cursor top-left or hot-spot coordinates (the Win7 guest tests
+ * accept either interpretation).
+ */
+typedef struct aerogpu_escape_set_cursor_position_in {
+  aerogpu_escape_header hdr;
+  aerogpu_escape_u32 x; /* signed 32-bit */
+  aerogpu_escape_u32 y; /* signed 32-bit */
+} aerogpu_escape_set_cursor_position_in;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_set_cursor_position_in) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_position_in, x) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_position_in, y) == 20);
+
+/*
+ * Set cursor visibility (driver-private; used by D3D9 UMD cursor DDIs).
+ *
+ * Note: the effective cursor enable is `visible && shape_valid`.
+ */
+typedef struct aerogpu_escape_set_cursor_visibility_in {
+  aerogpu_escape_header hdr;
+  aerogpu_escape_u32 visible; /* 0/1 */
+  aerogpu_escape_u32 reserved0;
+} aerogpu_escape_set_cursor_visibility_in;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_set_cursor_visibility_in) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_visibility_in, visible) == 16);
+
+/*
+ * Set cursor shape (driver-private; used by D3D9 UMD cursor DDIs).
+ *
+ * Payload format:
+ * - `pixels` is a packed pixel array with `pitch_bytes` per row and `height`
+ *   rows.
+ * - Pixels are expected to be 32bpp little-endian BGRA/BGRX (matching the
+ *   `AEROGPU_FORMAT_B8G8R8A8_UNORM` / `_B8G8R8X8_UNORM` formats).
+ *
+ * The total escape packet size must be:
+ *   offsetof(aerogpu_escape_set_cursor_shape_in, pixels) + pitch_bytes * height
+ *
+ * `format` is advisory: the KMD may override it (for example, detecting XRGB vs
+ * ARGB by scanning for any non-zero alpha bytes).
+ */
+typedef struct aerogpu_escape_set_cursor_shape_in {
+  aerogpu_escape_header hdr;
+  aerogpu_escape_u32 width;
+  aerogpu_escape_u32 height;
+  aerogpu_escape_u32 hot_x;
+  aerogpu_escape_u32 hot_y;
+  aerogpu_escape_u32 pitch_bytes;
+  aerogpu_escape_u32 format; /* enum aerogpu_format */
+  aerogpu_escape_u32 reserved0;
+  aerogpu_escape_u32 reserved1;
+  unsigned char pixels[1];
+} aerogpu_escape_set_cursor_shape_in;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_set_cursor_shape_in) == 49);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_shape_in, width) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_shape_in, height) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_shape_in, hot_x) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_shape_in, hot_y) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_shape_in, pitch_bytes) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_shape_in, format) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_shape_in, pixels) == 48);
 
 /*
  * Recent CreateAllocation trace entry (DxgkDdiCreateAllocation inputs/outputs).

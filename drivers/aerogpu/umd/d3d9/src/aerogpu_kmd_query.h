@@ -60,6 +60,16 @@ class AerogpuKmdQuery {
   // open failure, or escape failure).
   bool QueryFence(uint64_t* last_submitted, uint64_t* last_completed);
 
+  // Sends a driver-private Escape packet to the AeroGPU KMD.
+  //
+  // `data` must point to a packed, pointer-free buffer whose first bytes are
+  // `aerogpu_escape_header` (see `drivers/aerogpu/protocol/aerogpu_escape.h`).
+  // The buffer may be in/out depending on the opcode.
+  //
+  // Returns false if the escape path is unavailable (missing exports, adapter
+  // open failure, or escape failure).
+  bool SendEscape(void* data, uint32_t size);
+
   // Returns the D3DKMT adapter handle opened by InitFromLuid/InitFromHdc, or 0
   // if the helper is not initialized. This can be used with other D3DKMT calls
   // like D3DKMTWaitForSynchronizationObject.

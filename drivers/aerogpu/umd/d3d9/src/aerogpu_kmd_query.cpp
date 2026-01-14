@@ -713,6 +713,26 @@ bool AerogpuKmdQuery::QueryFence(uint64_t* last_submitted, uint64_t* last_comple
   return true;
 }
 
+bool AerogpuKmdQuery::SendEscape(void* data, uint32_t size) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!adapter_ || !escape_ || !data || size == 0) {
+    return false;
+  }
+
+  D3DKMT_ESCAPE esc{};
+  std::memset(&esc, 0, sizeof(esc));
+  esc.hAdapter = adapter_;
+  esc.hDevice = 0;
+  esc.hContext = 0;
+  esc.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+  esc.Flags.Value = 0;
+  esc.pPrivateDriverData = data;
+  esc.PrivateDriverDataSize = size;
+
+  const NTSTATUS st = escape_(&esc);
+  return NtSuccess(st);
+}
+
 uint32_t AerogpuKmdQuery::GetKmtAdapterHandle() {
   std::lock_guard<std::mutex> lock(mutex_);
   return adapter_;
@@ -995,6 +1015,10 @@ bool AerogpuKmdQuery::InitFromLuid(LUID) {
 void AerogpuKmdQuery::Shutdown() {}
 
 bool AerogpuKmdQuery::QueryFence(uint64_t*, uint64_t*) {
+  return false;
+}
+
+bool AerogpuKmdQuery::SendEscape(void*, uint32_t) {
   return false;
 }
 

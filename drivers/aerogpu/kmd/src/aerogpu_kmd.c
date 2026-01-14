@@ -13503,6 +13503,103 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         return STATUS_SUCCESS;
     }
 
+    if (hdr->op == AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_set_cursor_position_in)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        const aerogpu_escape_set_cursor_position_in* in =
+            (const aerogpu_escape_set_cursor_position_in*)pEscape->pPrivateDriverData;
+
+        /* Preserve the current visibility bit; SetCursorPosition only updates coordinates. */
+        BOOLEAN visible = FALSE;
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            visible = adapter->CursorVisible;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
+
+        DXGKARG_SETPOINTERPOSITION pos;
+        RtlZeroMemory(&pos, sizeof(pos));
+        pos.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+        pos.Visible = visible;
+        pos.X = (LONG)in->x;
+        pos.Y = (LONG)in->y;
+
+        return AeroGpuDdiSetPointerPosition(hAdapter, &pos);
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_set_cursor_visibility_in)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        const aerogpu_escape_set_cursor_visibility_in* in =
+            (const aerogpu_escape_set_cursor_visibility_in*)pEscape->pPrivateDriverData;
+
+        /* Preserve the current position; ShowCursor only toggles visibility. */
+        LONG x = 0;
+        LONG y = 0;
+        {
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            x = adapter->CursorX;
+            y = adapter->CursorY;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
+        }
+
+        DXGKARG_SETPOINTERPOSITION pos;
+        RtlZeroMemory(&pos, sizeof(pos));
+        pos.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+        pos.Visible = (in->visible != 0) ? TRUE : FALSE;
+        pos.X = x;
+        pos.Y = y;
+
+        return AeroGpuDdiSetPointerPosition(hAdapter, &pos);
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE) {
+        const SIZE_T headerBytes = (SIZE_T)offsetof(aerogpu_escape_set_cursor_shape_in, pixels);
+        if (pEscape->PrivateDriverDataSize < headerBytes) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        const aerogpu_escape_set_cursor_shape_in* in =
+            (const aerogpu_escape_set_cursor_shape_in*)pEscape->pPrivateDriverData;
+
+        /* Validate that the buffer contains `pitch_bytes * height` pixel bytes. */
+        const ULONGLONG pitch = (ULONGLONG)in->pitch_bytes;
+        const ULONGLONG height = (ULONGLONG)in->height;
+        if (pitch == 0 || height == 0) {
+            return STATUS_INVALID_PARAMETER;
+        }
+        if (pitch > (~0ull / height)) {
+            return STATUS_INVALID_PARAMETER;
+        }
+        const ULONGLONG pixelBytes = pitch * height;
+        if (pixelBytes > (~0ull - (ULONGLONG)headerBytes)) {
+            return STATUS_INVALID_PARAMETER;
+        }
+        if ((ULONGLONG)pEscape->PrivateDriverDataSize < (ULONGLONG)headerBytes + pixelBytes) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        DXGKARG_SETPOINTERSHAPE shape;
+        RtlZeroMemory(&shape, sizeof(shape));
+        shape.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+        shape.Width = (ULONG)in->width;
+        shape.Height = (ULONG)in->height;
+        shape.XHot = (ULONG)in->hot_x;
+        shape.YHot = (ULONG)in->hot_y;
+        shape.Pitch = (ULONG)in->pitch_bytes;
+        shape.pPixels = (PVOID)in->pixels;
+        shape.Flags.Value = 0;
+        shape.Flags.Color = 1;
+
+        return AeroGpuDdiSetPointerShape(hAdapter, &shape);
+    }
+
     if (hdr->op == AEROGPU_ESCAPE_OP_READ_GPA) {
         if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
             return STATUS_INVALID_DEVICE_STATE;
