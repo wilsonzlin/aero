@@ -1398,3 +1398,178 @@ impl ChunkedStreamingDiskSync {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_manifest_raw() -> ManifestV1Raw {
+        ManifestV1Raw {
+            schema: MANIFEST_SCHEMA_V1.to_string(),
+            version: "v1".to_string(),
+            mime_type: "application/octet-stream".to_string(),
+            total_size: 1024,
+            chunk_size: 512,
+            chunk_count: 2,
+            chunk_index_width: 1,
+            chunks: None,
+        }
+    }
+
+    #[test]
+    fn parse_hex_sha256_accepts_uppercase_and_trims() {
+        let input = format!("  {}  ", "A".repeat(64));
+        let parsed = parse_hex_sha256(&input).expect("expected hex parsing to succeed");
+        assert_eq!(parsed, [0xaa; 32]);
+    }
+
+    #[test]
+    fn parse_hex_sha256_rejects_invalid_length() {
+        let err = parse_hex_sha256("00").expect_err("expected length validation failure");
+        assert!(
+            matches!(
+                &err,
+                ChunkedStreamingDiskError::Protocol(msg) if msg.contains("64-char")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_v1_accepts_minimal_manifest() {
+        let manifest = parse_manifest_v1(valid_manifest_raw()).expect("expected manifest to parse");
+        assert_eq!(manifest.version, "v1");
+        assert_eq!(manifest.mime_type, "application/octet-stream");
+        assert_eq!(manifest.total_size, 1024);
+        assert_eq!(manifest.chunk_size, 512);
+        assert_eq!(manifest.chunk_count, 2);
+        assert_eq!(manifest.chunk_index_width, 1);
+        assert_eq!(manifest.chunk_sha256.len(), 2);
+        assert!(manifest.chunk_sha256.iter().all(|v| v.is_none()));
+    }
+
+    #[test]
+    fn parse_manifest_v1_parses_optional_chunk_sha256_list() {
+        let mut raw = valid_manifest_raw();
+        raw.chunks = Some(vec![
+            ChunkEntryRaw {
+                size: Some(512),
+                sha256: Some("0".repeat(64)),
+            },
+            ChunkEntryRaw {
+                size: Some(512),
+                sha256: None,
+            },
+        ]);
+        let manifest = parse_manifest_v1(raw).expect("expected manifest to parse");
+        assert_eq!(manifest.chunk_sha256.len(), 2);
+        assert_eq!(manifest.chunk_sha256[0], Some([0u8; 32]));
+        assert_eq!(manifest.chunk_sha256[1], None);
+    }
+
+    #[test]
+    fn parse_manifest_v1_rejects_unknown_schema() {
+        let mut raw = valid_manifest_raw();
+        raw.schema = "not-a-schema".to_string();
+        let err = parse_manifest_v1(raw).expect_err("expected schema mismatch");
+        assert!(
+            matches!(&err, ChunkedStreamingDiskError::UnsupportedManifestSchema(_)),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_v1_rejects_chunk_count_mismatch() {
+        let mut raw = valid_manifest_raw();
+        raw.chunk_count = 3;
+        let err = parse_manifest_v1(raw).expect_err("expected chunkCount mismatch");
+        assert!(
+            matches!(
+                &err,
+                ChunkedStreamingDiskError::Protocol(msg) if msg.contains("chunkCount mismatch")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_v1_rejects_chunk_index_width_too_small() {
+        let mut raw = valid_manifest_raw();
+        raw.total_size = 512 * 100;
+        raw.chunk_count = 100;
+        raw.chunk_index_width = 1;
+        let err = parse_manifest_v1(raw).expect_err("expected chunkIndexWidth too small");
+        assert!(
+            matches!(
+                &err,
+                ChunkedStreamingDiskError::Protocol(msg)
+                    if msg.contains("chunkIndexWidth too small")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_v1_rejects_chunks_length_mismatch() {
+        let mut raw = valid_manifest_raw();
+        raw.chunks = Some(vec![ChunkEntryRaw {
+            size: Some(512),
+            sha256: None,
+        }]);
+        let err = parse_manifest_v1(raw).expect_err("expected chunks length mismatch");
+        assert!(
+            matches!(
+                &err,
+                ChunkedStreamingDiskError::Protocol(msg) if msg.contains("chunks.length mismatch")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_v1_rejects_chunk_size_mismatch_in_chunks_list() {
+        let mut raw = valid_manifest_raw();
+        raw.chunks = Some(vec![
+            ChunkEntryRaw {
+                size: Some(511),
+                sha256: None,
+            },
+            ChunkEntryRaw {
+                size: Some(512),
+                sha256: None,
+            },
+        ]);
+        let err = parse_manifest_v1(raw).expect_err("expected chunk size mismatch");
+        assert!(
+            matches!(
+                &err,
+                ChunkedStreamingDiskError::Protocol(msg)
+                    if msg.contains("chunks[0].size mismatch")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_v1_rejects_invalid_chunk_sha256() {
+        let mut raw = valid_manifest_raw();
+        raw.chunks = Some(vec![
+            ChunkEntryRaw {
+                size: Some(512),
+                sha256: Some("deadbeef".to_string()),
+            },
+            ChunkEntryRaw {
+                size: Some(512),
+                sha256: None,
+            },
+        ]);
+        let err = parse_manifest_v1(raw).expect_err("expected sha256 validation failure");
+        assert!(
+            matches!(
+                &err,
+                ChunkedStreamingDiskError::Protocol(msg) if msg.contains("chunks[0].sha256")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+}
