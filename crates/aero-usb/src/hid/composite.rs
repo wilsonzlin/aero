@@ -37,7 +37,6 @@ const GAMEPAD_INTERRUPT_IN_EP: u8 = 0x83;
 const MAX_PENDING_KEYBOARD_REPORTS: usize = 64;
 const MAX_PENDING_MOUSE_REPORTS: usize = 128;
 const MAX_PENDING_GAMEPAD_REPORTS: usize = 128;
-const KEYBOARD_LED_MASK: u8 = 0x1f;
 
 #[derive(Debug, Clone)]
 struct KeyboardInterface {
@@ -733,7 +732,7 @@ impl IoSnapshot for UsbCompositeHidInput {
                 _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
             };
         }
-        self.keyboard.leds = r.u8(TAG_KBD_LEDS)?.unwrap_or(0) & KEYBOARD_LED_MASK;
+        self.keyboard.leds = r.u8(TAG_KBD_LEDS)?.unwrap_or(0) & super::keyboard::KEYBOARD_LED_MASK;
         self.keyboard.modifiers = r.u8(TAG_KBD_MODIFIERS)?.unwrap_or(0);
         if let Some(buf) = r.bytes(TAG_KBD_PRESSED_KEYS) {
             let mut d = Decoder::new(buf);
@@ -1242,7 +1241,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                                 (2, Some(data)) if !data.is_empty() => {
                                     // HID boot keyboard output report defines 5 LED bits and 3
                                     // constant padding bits; ignore the padding.
-                                    self.keyboard.leds = data[0] & KEYBOARD_LED_MASK;
+                                    self.keyboard.leds = data[0] & super::keyboard::KEYBOARD_LED_MASK;
                                     ControlResponse::Ack
                                 }
                                 _ => ControlResponse::Stall,

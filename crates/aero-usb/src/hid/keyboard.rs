@@ -28,7 +28,24 @@ use super::{
 
 const INTERRUPT_IN_EP: u8 = 0x81;
 const MAX_PENDING_REPORTS: usize = 64;
-const KEYBOARD_LED_MASK: u8 = 0x1f;
+
+/// HID boot keyboard LED bit: Num Lock.
+pub const KEYBOARD_LED_NUM_LOCK: u8 = 1 << 0;
+/// HID boot keyboard LED bit: Caps Lock.
+pub const KEYBOARD_LED_CAPS_LOCK: u8 = 1 << 1;
+/// HID boot keyboard LED bit: Scroll Lock.
+pub const KEYBOARD_LED_SCROLL_LOCK: u8 = 1 << 2;
+/// HID boot keyboard LED bit: Compose.
+pub const KEYBOARD_LED_COMPOSE: u8 = 1 << 3;
+/// HID boot keyboard LED bit: Kana.
+pub const KEYBOARD_LED_KANA: u8 = 1 << 4;
+
+/// Bitmask of all defined HID boot keyboard LED bits (ignores descriptor padding bits).
+pub const KEYBOARD_LED_MASK: u8 = KEYBOARD_LED_NUM_LOCK
+    | KEYBOARD_LED_CAPS_LOCK
+    | KEYBOARD_LED_SCROLL_LOCK
+    | KEYBOARD_LED_COMPOSE
+    | KEYBOARD_LED_KANA;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyboardReport {
