@@ -3873,6 +3873,7 @@ impl Machine {
                     cfg.enable_xhci = v;
                 }
                 let mut enable_vga_set = false;
+                let mut enable_aerogpu_set = false;
                 if let Some(v) = get_bool("enable_synthetic_usb_hid")? {
                     cfg.enable_synthetic_usb_hid = v;
                 }
@@ -3882,11 +3883,18 @@ impl Machine {
                 }
                 if let Some(v) = get_bool("enable_aerogpu")? {
                     cfg.enable_aerogpu = v;
+                    enable_aerogpu_set = true;
                 }
-                // If callers request AeroGPU without explicitly specifying VGA, disable VGA by
-                // default to avoid conflicting scanout/device paths.
-                if cfg.enable_aerogpu && !enable_vga_set {
-                    cfg.enable_vga = false;
+                // Mirror `new_with_config` defaults for the mutually-exclusive VGA/AeroGPU device
+                // selection when callers only specify one side:
+                // - If callers explicitly set `enable_aerogpu` without specifying VGA, VGA defaults
+                //   to `!enable_aerogpu`.
+                // - If callers enable VGA without explicitly specifying `enable_aerogpu`, disable
+                //   AeroGPU to avoid a configuration error.
+                if enable_aerogpu_set && !enable_vga_set {
+                    cfg.enable_vga = !cfg.enable_aerogpu;
+                } else if enable_vga_set && cfg.enable_vga && !enable_aerogpu_set {
+                    cfg.enable_aerogpu = false;
                 }
                 if let Some(v) = get_bool("enable_serial")? {
                     cfg.enable_serial = v;
