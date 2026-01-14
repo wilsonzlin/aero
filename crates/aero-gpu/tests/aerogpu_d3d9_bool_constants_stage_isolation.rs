@@ -393,18 +393,16 @@ fn d3d9_bool_constants_are_isolated_between_vs_and_ps() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            for _ in 0..4 {
-                push_u32(out, 0);
-            }
+            // Payload: u32 per bool register (0 or 1).
+            push_u32(out, 0);
         });
         emit_packet(out, OPC_SET_SHADER_CONSTANTS_B, |out| {
             push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            for _ in 0..4 {
-                push_u32(out, 1);
-            }
+            // Payload: u32 per bool register (0 or 1).
+            push_u32(out, 1);
         });
         emit_packet(out, OPC_DRAW, |out| {
             push_u32(out, 3); // vertex_count
@@ -421,18 +419,16 @@ fn d3d9_bool_constants_are_isolated_between_vs_and_ps() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            for _ in 0..4 {
-                push_u32(out, 1);
-            }
+            // Payload: u32 per bool register (0 or 1).
+            push_u32(out, 1);
         });
         emit_packet(out, OPC_SET_SHADER_CONSTANTS_B, |out| {
             push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            for _ in 0..4 {
-                push_u32(out, 0);
-            }
+            // Payload: u32 per bool register (0 or 1).
+            push_u32(out, 0);
         });
         emit_packet(out, OPC_DRAW, |out| {
             push_u32(out, 3); // vertex_count

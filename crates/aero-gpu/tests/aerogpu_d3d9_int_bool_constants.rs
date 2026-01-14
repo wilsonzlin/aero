@@ -375,15 +375,12 @@ fn d3d9_cmd_stream_int_and_bool_constants_affect_output_color() {
             push_i32(out, 0);
         });
 
-        // b0 = true (pixel stage). Payload is vec4<u32> for each bool register.
+        // b0 = true (pixel stage). Payload is u32 per bool register (0 or 1).
         emit_packet(out, OPC_SET_SHADER_CONSTANTS_B, |out| {
             push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            push_u32(out, 1);
-            push_u32(out, 1);
-            push_u32(out, 1);
             push_u32(out, 1);
         });
 
