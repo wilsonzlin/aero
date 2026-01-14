@@ -84,6 +84,8 @@ drivers/windows7/tests/
  # or:
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
+  # Optional: virtio-snd eventq counters (diagnostic only):
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...
   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
  AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
@@ -167,6 +169,14 @@ affecting streaming.
 
 The harness validates correct render/capture/duplex behavior under QEMU; for eventq-specific debugging, use the
 virtio-snd `DebugLogs` build and capture kernel debug output while running the selftest.
+
+Newer guest selftest binaries also emit an informational marker reporting eventq counters:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...`
+
+The Python host harness mirrors this into a stable host-side marker for log scraping:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|...`
 
 ### virtio-input QEMU compatibility mode (`CompatIdName`)
 

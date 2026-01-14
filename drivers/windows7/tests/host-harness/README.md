@@ -660,6 +660,14 @@ written to tolerate event traffic. For eventq-specific debugging, use the `Debug
 kernel debug output while the harness runs (playback/capture will run via `aero-virtio-selftest.exe` when the device is
 attached).
 
+Newer guest selftest binaries also emit an informational marker reporting eventq counters:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...`
+
+The Python host harness mirrors this into a stable host-side marker for log scraping:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|...`
+
 ### Why `x-pci-revision=0x01`?
 
 The Aero Windows 7 virtio device contract encodes the **contract major version** in the PCI
