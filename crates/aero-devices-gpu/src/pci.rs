@@ -720,7 +720,9 @@ impl MmioHandler for AeroGpuBar1VramMmio {
         let vram = self.vram.borrow();
         let mut out = 0u64;
         for i in 0..size {
-            let addr = offset.wrapping_add(i as u64);
+            let Some(addr) = offset.checked_add(i as u64) else {
+                continue;
+            };
             let b = usize::try_from(addr)
                 .ok()
                 .and_then(|idx| vram.get(idx).copied())
@@ -739,7 +741,9 @@ impl MmioHandler for AeroGpuBar1VramMmio {
 
         let mut vram = self.vram.borrow_mut();
         for i in 0..size {
-            let addr = offset.wrapping_add(i as u64);
+            let Some(addr) = offset.checked_add(i as u64) else {
+                continue;
+            };
             let Some(idx) = usize::try_from(addr).ok() else {
                 continue;
             };
