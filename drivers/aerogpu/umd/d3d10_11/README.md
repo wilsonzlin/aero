@@ -54,7 +54,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 
 ### Not yet supported / requires protocol changes
 
-- **Subresource view selection** (SRV/RTV/DSV mip level + array slice): view descriptors are currently ignored and bindings resolve to the underlying texture handle only. Supporting per-view subresource selection requires protocol representation of “views” (or subresource selectors) rather than just raw texture handles.
+- **Subresource view selection** (SRV/RTV/DSV mip level + array slice): the UMDs currently only support “full-resource” views (no mip/array slicing; view descriptors must select mip 0 and cover the full resource when accepted) and bindings resolve to the underlying texture handle only. Supporting arbitrary per-view subresource selection requires protocol representation of “views” (or subresource selectors) rather than just raw texture handles.
 - **Unordered access views (UAVs) and compute shaders** (FL11+): the D3D11 UMD reports `E_NOTIMPL` for CS/UAV binding. The protocol and host have support for `AEROGPU_CMD_DISPATCH` and buffer UAV bindings (`AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS`), but full D3D11 UAV support still needs texture UAV representation and D3D11 view/subresource selectors.
 - **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. Adding more DXGI formats requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
