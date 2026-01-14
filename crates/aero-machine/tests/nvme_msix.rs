@@ -130,6 +130,156 @@ fn nvme_msix_delivers_to_lapic_in_apic_mode() {
 }
 
 #[test]
+fn nvme_msix_unprogrammed_address_latches_pending_and_delivers_after_programming() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_nvme: true,
+        // Keep the test focused on PCI + NVMe MSI-X pending semantics.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let nvme = m.nvme().expect("nvme enabled");
+    let bdf = profile::NVME_CONTROLLER.bdf;
+
+    // Enable PCI memory decoding + bus mastering (required for MMIO + DMA).
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    // Read BAR0 base (64-bit MMIO BAR).
+    let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;
+    let bar0_hi = cfg_read(&mut m, bdf, 0x14, 4) as u64;
+    let bar0_base = (bar0_hi << 32) | (bar0_lo & !0xFu64);
+    assert_ne!(
+        bar0_base, 0,
+        "expected NVMe BAR0 to be assigned during BIOS POST"
+    );
+
+    // Locate MSI-X capability and validate table/PBA live in BAR0.
+    let msix_cap = find_capability(&mut m, bdf, aero_devices::pci::msix::PCI_CAP_ID_MSIX)
+        .expect("NVMe should expose MSI-X capability");
+    let table = cfg_read(&mut m, bdf, msix_cap + 0x04, 4);
+    let pba = cfg_read(&mut m, bdf, msix_cap + 0x08, 4);
+    assert_eq!(table & 0x7, 0, "MSI-X table must live in BAR0 (BIR=0)");
+    assert_eq!(pba & 0x7, 0, "MSI-X PBA must live in BAR0 (BIR=0)");
+    let table_offset = u64::from(table & !0x7);
+    let pba_offset = u64::from(pba & !0x7);
+
+    // Program MSI-X table entry 0 with a valid vector but an invalid/unprogrammed address.
+    let vector: u8 = 0x6c;
+    let entry0 = bar0_base + table_offset;
+    m.write_physical_u32(entry0, 0);
+    m.write_physical_u32(entry0 + 0x4, 0);
+    m.write_physical_u32(entry0 + 0x8, u32::from(vector));
+    m.write_physical_u32(entry0 + 0xc, 0); // unmasked
+
+    // Enable MSI-X and ensure the function mask bit is cleared.
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from((ctrl & !(1 << 14)) | (1 << 15)),
+    );
+
+    // Issue admin IDENTIFY via BAR0 MMIO to trigger an interrupt.
+    let asq = 0x10000u64;
+    let acq = 0x20000u64;
+    let id_buf = 0x30000u64;
+
+    m.write_physical_u32(bar0_base + 0x0024, 0x000f_000f); // AQA
+    m.write_physical_u64(bar0_base + 0x0028, asq); // ASQ
+    m.write_physical_u64(bar0_base + 0x0030, acq); // ACQ
+    m.write_physical_u32(bar0_base + 0x0014, 1); // CC.EN
+
+    let mut cmd = [0u8; 64];
+    cmd[0] = 0x06; // IDENTIFY
+    cmd[2..4].copy_from_slice(&0x1234u16.to_le_bytes()); // CID
+    cmd[24..32].copy_from_slice(&id_buf.to_le_bytes()); // PRP1
+    cmd[40..44].copy_from_slice(&0x01u32.to_le_bytes()); // CDW10: CNS=1 (controller)
+    m.write_physical(asq, &cmd);
+
+    // Ring SQ0 tail doorbell.
+    m.write_physical_u32(bar0_base + 0x1000, 1);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    m.process_nvme();
+
+    // Delivery is blocked by the invalid table entry address; the vector should be latched as
+    // pending in the MSI-X PBA instead. It must not fall back to legacy INTx.
+    assert!(
+        !nvme.borrow().irq_level(),
+        "NVMe should not assert legacy INTx while MSI-X is enabled"
+    );
+    assert!(
+        nvme.borrow().irq_pending(),
+        "expected NVMe to have an interrupt condition pending (completion posted)"
+    );
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None,
+        "expected no MSI-X delivery while the table entry address is invalid"
+    );
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to be set when the table entry address is invalid"
+    );
+
+    // Clear the underlying NVMe interrupt condition by consuming the completion queue entry.
+    //
+    // Admin CQ0 head doorbell lives at BAR0 + 0x1004 (DSTRD=0, QID=0).
+    m.write_physical_u32(bar0_base + 0x1004, 1);
+    assert!(
+        !nvme.borrow().irq_pending(),
+        "expected NVMe interrupt condition to clear after updating CQ head"
+    );
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit to remain set after clearing the interrupt condition"
+    );
+
+    // Program a valid MSI-X message address; table writes service pending MSI-X vectors, so delivery
+    // should occur without reasserting the NVMe interrupt condition.
+    m.write_physical_u32(entry0, 0xfee0_0000);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+    assert_eq!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to clear after delivery"
+    );
+
+    interrupts.borrow_mut().acknowledge(vector);
+    interrupts.borrow_mut().eoi(vector);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+}
+
+#[test]
 fn nvme_msix_function_mask_defers_delivery_until_unmasked() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
