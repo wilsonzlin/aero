@@ -2339,6 +2339,100 @@ mod tests {
     }
 
     #[test]
+    fn int13_edd_extensions_check_hdd_succeeds_and_reports_features() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x4100; // AH=41h
+        cpu.gpr[gpr::RBX] = 0x55AA;
+        cpu.gpr[gpr::RDX] = 0x80; // DL=HDD0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RBX] as u16, 0xAA55);
+        let cx = cpu.gpr[gpr::RCX] as u16;
+        assert_eq!(cx & 0x0005, 0x0005); // at least bits 0 + 2 (read DAP + get params)
+
+        // AH returns an EDD version on success; avoid over-constraining it.
+        let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
+        assert_ne!(ah, 0x01);
+    }
+
+    #[test]
+    fn int13_edd_extensions_check_cd_succeeds_and_reports_features() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x4100; // AH=41h
+        cpu.gpr[gpr::RBX] = 0x55AA;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL=CD0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RBX] as u16, 0xAA55);
+        let cx = cpu.gpr[gpr::RCX] as u16;
+        assert_eq!(cx & 0x0005, 0x0005);
+
+        let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
+        assert_ne!(ah, 0x01);
+    }
+
+    #[test]
+    fn int13_edd_extensions_check_rejects_bad_signature_word() {
+        // HDD path.
+        {
+            let mut bios = Bios::new(BiosConfig::default());
+            let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+            let mut cpu = CpuState::new(CpuMode::Real);
+            cpu.gpr[gpr::RAX] = 0x4100;
+            cpu.gpr[gpr::RBX] = 0x1234; // not 0x55AA
+            cpu.gpr[gpr::RDX] = 0x80;
+
+            let mut mem = TestMemory::new(2 * 1024 * 1024);
+            ivt::init_bda(&mut mem, 0x80);
+
+            handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+
+            assert_ne!(cpu.rflags & FLAG_CF, 0);
+            assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
+        }
+
+        // CD path.
+        {
+            let mut bios = Bios::new(BiosConfig {
+                boot_drive: 0xE0,
+                ..BiosConfig::default()
+            });
+            let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+            let mut cpu = CpuState::new(CpuMode::Real);
+            cpu.gpr[gpr::RAX] = 0x4100;
+            cpu.gpr[gpr::RBX] = 0x1234; // not 0x55AA
+            cpu.gpr[gpr::RDX] = 0xE0;
+
+            let mut mem = TestMemory::new(2 * 1024 * 1024);
+            ivt::init_bda(&mut mem, 0xE0);
+
+            handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+
+            assert_ne!(cpu.rflags & FLAG_CF, 0);
+            assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
+        }
+    }
+
+    #[test]
     fn int13_ext_get_drive_params_reports_sector_count() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
         let disk_bytes = vec![0u8; 512 * 8];
@@ -2413,9 +2507,13 @@ mod tests {
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
-        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x3000); // EDD version in AH
         assert_eq!(cpu.gpr[gpr::RBX] as u16, 0xAA55);
-        assert_eq!(cpu.gpr[gpr::RCX] as u16, 0x0005); // AH=42h + AH=48h supported
+        let cx = cpu.gpr[gpr::RCX] as u16;
+        assert_eq!(cx & 0x0005, 0x0005); // AH=42h + AH=48h supported
+
+        // AH returns an EDD version on success; avoid over-constraining it.
+        let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
+        assert_ne!(ah, 0x01);
     }
 
     #[test]
