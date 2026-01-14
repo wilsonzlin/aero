@@ -5303,6 +5303,10 @@ function renderAudioPanel(): HTMLElement {
             const res = snapshotAudioOutputWav(item.out, { maxSeconds: captureSeconds });
             if (!res.ok) {
               summaryLines.push(`audio-output-${item.name}: ${res.error}`);
+              entries.push({
+                path: `${dir}/audio-output-${item.name}-error.txt`,
+                data: encoder.encode(res.error + "\n"),
+              });
               continue;
             }
             capturedAny = true;
@@ -5328,6 +5332,7 @@ function renderAudioPanel(): HTMLElement {
             );
           } else {
             summaryLines.push(`microphone-buffered: ${micRes.error}`);
+            entries.push({ path: `${dir}/microphone-buffered-error.txt`, data: encoder.encode(micRes.error + "\n") });
           }
 
           if (!capturedAny && !micRes.ok) {
