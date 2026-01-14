@@ -104,12 +104,14 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     });
     const views = createSharedMemoryViews(segments);
 
-    // Case 1: B5G6R5 2x2.
+    // Case 1: B5G6R5 2x2, placed at the end of guest RAM so the unused pitch padding after the
+    // last row would be out of bounds if the worker incorrectly required `pitchBytes * height`.
     const rgb565Width = 2;
     const rgb565Height = 2;
     const rgb565PitchBytes = 8; // padded (rowBytes=4)
-    const rgb565BasePaddr = 0x1000;
-    const rgb565RequiredBytes = rgb565PitchBytes * rgb565Height;
+    const rgb565RowBytes = rgb565Width * 2;
+    const rgb565RequiredBytes = rgb565PitchBytes * (rgb565Height - 1) + rgb565RowBytes;
+    const rgb565BasePaddr = views.guestU8.byteLength - rgb565RequiredBytes;
 
     views.guestU8.fill(0);
     writeRgb5652x2(views.guestU8.subarray(rgb565BasePaddr, rgb565BasePaddr + rgb565RequiredBytes), rgb565PitchBytes);
