@@ -1,6 +1,6 @@
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, BufferKind, DxbcFile, FourCC, ShaderModel,
-    ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, BufferKind, Builtin, DxbcFile, FourCC,
+    ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -269,6 +269,39 @@ fn translates_compute_builtin_operand_types_to_wgsl_builtins() {
     assert!(translated.wgsl.contains("@builtin(local_invocation_id)"));
     assert!(translated.wgsl.contains("@builtin(workgroup_id)"));
     assert!(translated.wgsl.contains("@builtin(local_invocation_index)"));
+
+    // Reflection should also surface these builtins even though the shader does not declare them
+    // via `dcl_input_siv` / `RegFile::Input`.
+    const SYNTH_BASE: u32 = 0xffff_ff00;
+    assert_eq!(translated.reflection.inputs.len(), 4);
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "SV_DispatchThreadID"
+            && p.builtin == Some(Builtin::GlobalInvocationId)
+            && p.location.is_none()
+            && p.register >= SYNTH_BASE
+            && p.mask == 0b0111
+    }));
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "SV_GroupThreadID"
+            && p.builtin == Some(Builtin::LocalInvocationId)
+            && p.location.is_none()
+            && p.register >= SYNTH_BASE
+            && p.mask == 0b0111
+    }));
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "SV_GroupID"
+            && p.builtin == Some(Builtin::WorkgroupId)
+            && p.location.is_none()
+            && p.register >= SYNTH_BASE
+            && p.mask == 0b0111
+    }));
+    assert!(translated.reflection.inputs.iter().any(|p| {
+        p.semantic_name == "SV_GroupIndex"
+            && p.builtin == Some(Builtin::LocalInvocationIndex)
+            && p.location.is_none()
+            && p.register >= SYNTH_BASE
+            && p.mask == 0b0001
+    }));
 }
 
 #[test]

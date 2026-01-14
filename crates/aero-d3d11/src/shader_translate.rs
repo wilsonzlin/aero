@@ -558,11 +558,14 @@ fn translate_cs(
     }
 
     let used_regs = scan_used_input_registers(module);
+    let used_sivs = scan_used_compute_sivs(module, &io);
     let mut reflected_inputs = Vec::<IoParam>::new();
+    let mut reflected_sivs = BTreeSet::<ComputeSysValue>::new();
     for reg in &used_regs {
         let Some(siv) = io.cs_inputs.get(reg) else {
             continue;
         };
+        reflected_sivs.insert(*siv);
 
         let mask = module
             .decls
@@ -579,10 +582,7 @@ fn translate_cs(
                 }
                 _ => None,
             })
-            .unwrap_or(match siv {
-                ComputeSysValue::GroupIndex => 0b0001,
-                _ => 0b0111,
-            });
+            .unwrap_or(siv.default_mask());
 
         reflected_inputs.push(IoParam {
             semantic_name: siv.d3d_semantic_name().to_owned(),
@@ -595,14 +595,32 @@ fn translate_cs(
         });
     }
 
+    // Reflect compute builtins referenced via dedicated SM5 operand types.
+    //
+    // These do not come from the `v#` input register file and therefore won't show up in
+    // `used_regs`/`io.cs_inputs`. Still, they are part of the WGSL entry point interface, so expose
+    // them via reflection.
+    for siv in &used_sivs {
+        if reflected_sivs.contains(siv) {
+            continue;
+        }
+        reflected_inputs.push(IoParam {
+            semantic_name: siv.d3d_semantic_name().to_owned(),
+            semantic_index: 0,
+            register: siv.synthetic_register(),
+            location: None,
+            builtin: Some(siv.builtin()),
+            mask: siv.default_mask(),
+            stream: 0,
+        });
+    }
+
     let reflection = ShaderReflection {
         inputs: reflected_inputs,
         outputs: Vec::new(),
         bindings: resources.bindings(ShaderStage::Compute),
         rdef,
     };
-
-    let used_sivs = scan_used_compute_sivs(module, &io);
 
     let mut w = WgslWriter::new();
     // Bindings follow the shared AeroGPU D3D11 binding model (see `binding_model.rs`):
@@ -1610,6 +1628,28 @@ impl ComputeSysValue {
             | ComputeSysValue::GroupThreadId
             | ComputeSysValue::GroupId => "vec3<u32>",
             ComputeSysValue::GroupIndex => "u32",
+        }
+    }
+
+    fn default_mask(self) -> u8 {
+        match self {
+            ComputeSysValue::GroupIndex => 0b0001,
+            _ => 0b0111,
+        }
+    }
+
+    fn synthetic_register(self) -> u32 {
+        // Compute system values referenced via dedicated SM5 operand types do not have an explicit
+        // `v#` register index like `dcl_input_siv` declarations do.
+        //
+        // For reflection, assign them stable synthetic register indices in a reserved range so
+        // callers can still differentiate them.
+        const BASE: u32 = 0xffff_ff00;
+        match self {
+            ComputeSysValue::DispatchThreadId => BASE + 0,
+            ComputeSysValue::GroupThreadId => BASE + 1,
+            ComputeSysValue::GroupId => BASE + 2,
+            ComputeSysValue::GroupIndex => BASE + 3,
         }
     }
 
