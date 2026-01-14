@@ -202,7 +202,10 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
             0,
             "expected name to be null-terminated for {bdf:?}"
         );
-        let nul = payload.iter().position(|&b| b == 0).unwrap_or(payload.len());
+        let nul = payload
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(payload.len());
         let name = std::str::from_utf8(&payload[..nul]).expect("valid UTF-8 name");
         assert_eq!(name, expected_name, "{bdf:?} name mismatch");
 
