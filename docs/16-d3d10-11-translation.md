@@ -926,45 +926,53 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 **Passthrough VS strategy (concrete)**
 
-To avoid WebGPU vertex-attribute limits and to preserve D3D varying bit patterns, the passthrough
-VS does **not** use WebGPU vertex buffers/attributes. Instead, it reads the expansion output as a
-storage buffer:
+The current executor implements the final render stage by drawing a **host-generated vertex
+buffer** (the final expansion output) with a small **passthrough vertex shader** plus the original
+pixel shader.
+
+The passthrough VS uses normal WebGPU vertex inputs (not storage-buffer vertex pulling). It
+expects:
+
+- A dedicated clip-space position attribute stored as `vec4<f32>`.
+- One `vec4<f32>` attribute for each varying location required by the pixel shader, which the
+  passthrough VS forwards unchanged to the fragment stage.
+
+The D3D11 command executor generates this passthrough WGSL on demand (see
+`wgsl_gs_passthrough_vertex_shader` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+Conceptually:
 
 ```wgsl
-// Example binding for the final vertex stream. This is whichever expansion stage is last:
-// - `tess_out_vertices` (no GS): `@binding(267)`
-// - `gs_out_vertices`   (with GS): `@binding(269)`
-//
-// Implementations may also choose to *always* bind the final vertex stream at one canonical binding
-// (e.g. 269) to simplify passthrough shader variants.
-@group(3) @binding(FINAL_VERTEX_BINDING) var<storage, read> final_vertices: array<ExpandedVertex>;
+struct VsIn {
+  // P is chosen to not collide with varying locations.
+  @location(P) pos: vec4<f32>,
+  // One attribute per varying required by the PS.
+  @location(N) vN: vec4<f32>,
+};
 
 struct VsOut {
   @builtin(position) pos: vec4<f32>,
-  // plus `@location(N)` varyings matching the translated PS input signature.
+  @location(N) vN: vec4<f32>,
 };
 
 @vertex
-fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
-  let v = final_vertices[vi];
+fn vs_main(input: VsIn) -> VsOut {
   var out: VsOut;
-  out.pos = bitcast<vec4<f32>>(v.pos_bits);
-  // For each linked varying location N:
-  //   out.locN = bitcast<vec4<f32>>(v.varyings[N]);
+  out.pos = input.pos;
+  // For each varying location N:
+  //   out.vN = input.vN;
   return out;
 }
 ```
 
 Notes:
 
-- For non-indexed draws (`drawIndirect`), `vertex_index` runs `0..vertex_count-1` and directly
-  indexes the packed list vertices.
-- For indexed draws (`drawIndexedIndirect`), the index buffer selects which `ExpandedVertex` is
-  used. The expansion path should always set `base_vertex = 0` in the indirect args so `vertex_index`
-  equals the raw index.
-- The pipeline layout for this render pass typically uses:
-  - `@group(1)` for PS resources (existing stage-scoped PS group), and
-  - `@group(3)` for the expansion output buffer (and any other internal bindings).
+- The executor chooses `P` as the lowest `@location` not used by varyings, to avoid colliding with
+  the pixel shader’s input interface.
+- This path is limited by WebGPU’s vertex input limits (`max_vertex_attributes` and the highest used
+  `@location`). When exceeded, the executor fails with a clear “GS passthrough” error.
+- The passthrough VS has no bindings; the render pipeline layout still uses the normal stage-scoped
+  bind groups for the application’s VS/PS resources (even though the passthrough VS itself does not
+  read from them).
 
 #### 2.5) Render-pass splitting constraints
 
