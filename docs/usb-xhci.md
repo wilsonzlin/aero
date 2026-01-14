@@ -293,6 +293,7 @@ Dedicated EP0 unit tests also exist:
 - `crates/aero-usb/tests/xhci_control_set_configuration.rs`
 - `crates/aero-usb/tests/xhci_control_in_nak_retry.rs`
 - `crates/aero-usb/tests/xhci_control_immediate_data.rs`
+- `crates/aero-usb/tests/xhci_controller_immediate_data.rs`
 
 ### Still MVP-relevant but not implemented yet
 

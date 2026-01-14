@@ -74,6 +74,7 @@ const COMPLETION_CODE_SUCCESS: u8 = 1;
 const MAX_TRBS_PER_TICK: usize = 256;
 const RING_STEP_BUDGET: usize = 64;
 const MAX_CONTROL_DATA_LEN: usize = 64 * 1024;
+const TRB_CTRL_IDT: u32 = 1 << 6;
 
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
 pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
@@ -1885,8 +1886,26 @@ impl XhciController {
                             break;
                         }
 
-                        let buf_ptr = trb.pointer();
                         let dir_in = (trb.control & Trb::CONTROL_DIR) != 0;
+                        let idt = (trb.control & TRB_CTRL_IDT) != 0;
+                        if idt && requested_len > 8 {
+                            let completion = CompletionCode::TrbError;
+                            if ring.consume().is_err() {
+                                keep_active = false;
+                                break;
+                            }
+                            trbs_consumed += 1;
+                            events.push(make_transfer_event_trb(
+                                slot_id,
+                                endpoint_id,
+                                trb_paddr,
+                                completion,
+                                0,
+                            ));
+                            control_td = ControlTdState::default();
+                            keep_active = true;
+                            break;
+                        }
 
                         let (completion, transferred) = if dir_in {
                             match device.handle_in(0, requested_len) {
@@ -1894,8 +1913,19 @@ impl XhciController {
                                     if data.len() > requested_len {
                                         data.truncate(requested_len);
                                     }
-                                    mem.write_physical(buf_ptr, &data);
                                     let transferred = data.len();
+                                    if idt {
+                                        // Immediate data (IDT=1): write the response bytes into the
+                                        // DataStage TRB parameter field in guest memory.
+                                        let mut imm = [0u8; 8];
+                                        imm[..transferred].copy_from_slice(&data);
+                                        let mut updated = trb;
+                                        updated.parameter = u64::from_le_bytes(imm);
+                                        updated.write_to(mem, trb_paddr);
+                                    } else {
+                                        let buf_ptr = trb.pointer();
+                                        mem.write_physical(buf_ptr, &data);
+                                    }
                                     let completion = if transferred < requested_len {
                                         CompletionCode::ShortPacket
                                     } else {
@@ -1911,16 +1941,30 @@ impl XhciController {
                                 UsbInResult::Timeout => (CompletionCode::UsbTransactionError, 0),
                             }
                         } else {
-                            let mut buf = vec![0u8; requested_len];
-                            mem.read_physical(buf_ptr, &mut buf);
-                            match device.handle_out(0, &buf) {
-                                UsbOutResult::Ack => (CompletionCode::Success, requested_len),
-                                UsbOutResult::Nak => {
-                                    keep_active = true;
-                                    break;
+                            if idt {
+                                let imm = trb.parameter.to_le_bytes();
+                                match device.handle_out(0, &imm[..requested_len]) {
+                                    UsbOutResult::Ack => (CompletionCode::Success, requested_len),
+                                    UsbOutResult::Nak => {
+                                        keep_active = true;
+                                        break;
+                                    }
+                                    UsbOutResult::Stall => (CompletionCode::StallError, 0),
+                                    UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
                                 }
-                                UsbOutResult::Stall => (CompletionCode::StallError, 0),
-                                UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
+                            } else {
+                                let buf_ptr = trb.pointer();
+                                let mut buf = vec![0u8; requested_len];
+                                mem.read_physical(buf_ptr, &mut buf);
+                                match device.handle_out(0, &buf) {
+                                    UsbOutResult::Ack => (CompletionCode::Success, requested_len),
+                                    UsbOutResult::Nak => {
+                                        keep_active = true;
+                                        break;
+                                    }
+                                    UsbOutResult::Stall => (CompletionCode::StallError, 0),
+                                    UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
+                                }
                             }
                         };
 
