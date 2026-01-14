@@ -515,6 +515,79 @@ fn xhci_msix_function_mask_sets_pba_and_delivers_on_unmask() {
 }
 
 #[test]
+fn xhci_msix_function_mask_pending_delivers_on_unmask_even_after_interrupt_cleared() {
+    let chipset = ChipsetState::new(true);
+    let filter = AddressFilter::new(chipset.a20());
+    let mut mem = PlatformMemoryBus::new(filter, 0x1000);
+
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, false);
+
+    // Enable MSI-X and set the MSI-X function mask bit (bit 14).
+    let cap_offset = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSIX)
+        .expect("MSI-X capability") as u16;
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut().write(
+        cap_offset + 0x02,
+        2,
+        u32::from(ctrl | (1 << 15) | (1 << 14)),
+    );
+
+    let pba_base = u64::from(
+        dev.config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability")
+            .pba_offset(),
+    );
+
+    // Trigger: function mask should prevent delivery but set PBA[0].
+    dev.raise_event_interrupt();
+    assert_eq!(interrupts.borrow_mut().get_pending(), None);
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        1,
+        "function-masked trigger should set PBA pending bit"
+    );
+
+    // Clear the interrupt condition before unmasking. Pending delivery should still occur once the
+    // function mask is cleared, even though the interrupt condition has deasserted.
+    dev.clear_event_interrupt();
+
+    let ctrl_after = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, u32::from(ctrl_after & !(1 << 14)));
+
+    // Drive `service_interrupts()` via the 1ms tick loop.
+    dev.tick_1ms(&mut mem);
+
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(
+        ints.get_pending(),
+        Some(0x45),
+        "pending MSI-X should deliver after function unmask even when interrupt condition is low"
+    );
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
+
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        0,
+        "PBA pending bit should clear after delivery"
+    );
+}
+
+#[test]
 fn xhci_snapshot_roundtrip_preserves_msix_table_and_pba() {
     let mut dev = XhciPciDevice::default();
     dev.config_mut().set_command(1 << 1);
