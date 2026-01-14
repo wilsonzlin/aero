@@ -190,6 +190,13 @@ export async function reattachMachineSnapshotDisks(opts: {
     // Prefer restore-aware helpers when available; they preserve guest-visible ATAPI media state.
     (machine as unknown as { attach_install_media_iso_opfs_for_restore?: unknown }).attach_install_media_iso_opfs_for_restore ??
     (machine as unknown as { attachInstallMediaIsoOpfsForRestore?: unknown }).attachInstallMediaIsoOpfsForRestore ??
+    // Some builds expose only the explicit IDE secondary master naming (same physical slot as install media, `disk_id=1`).
+    (machine as unknown as { attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref?: unknown })
+      .attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref ??
+    (machine as unknown as { attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef?: unknown })
+      .attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef ??
+    (machine as unknown as { attach_ide_secondary_master_iso_opfs_existing?: unknown }).attach_ide_secondary_master_iso_opfs_existing ??
+    (machine as unknown as { attachIdeSecondaryMasterIsoOpfsExisting?: unknown }).attachIdeSecondaryMasterIsoOpfsExisting ??
     // Back-compat: some builds expose a dedicated `_existing` helper for the same restore-aware ISO attachment path.
     (machine as unknown as { attach_install_media_iso_opfs_existing?: unknown }).attach_install_media_iso_opfs_existing ??
     (machine as unknown as { attachInstallMediaIsoOpfsExisting?: unknown }).attachInstallMediaIsoOpfsExisting ??

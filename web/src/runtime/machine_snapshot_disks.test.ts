@@ -135,6 +135,32 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(events).toEqual(["restore", "take", "iso", "set-ref"]);
   });
 
+  it("supports IDE secondary master ISO attach helpers when install-media naming is unavailable", async () => {
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {});
+    const take_restored_disk_overlays = vi.fn(() => [{ disk_id: 2, base_image: "aero/isos/win7.iso", overlay_image: "" }]);
+    const attach_ide_secondary_master_iso_opfs_existing = vi.fn(async (_path: string) => {});
+    const set_ide_secondary_master_atapi_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      attach_ide_secondary_master_iso_opfs_existing,
+      set_ide_secondary_master_atapi_overlay_ref,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(attach_ide_secondary_master_iso_opfs_existing).toHaveBeenCalledWith("aero/isos/win7.iso");
+    expect(set_ide_secondary_master_atapi_overlay_ref).toHaveBeenCalledWith("aero/isos/win7.iso", "");
+  });
+
   it("reattaches a base-only primary disk via set_primary_hdd_opfs_existing when available", async () => {
     const events: string[] = [];
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
