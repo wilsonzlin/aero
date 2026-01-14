@@ -96,6 +96,17 @@ async function waitForRelayEventCounterAtLeast(port, event, atLeast, { timeoutMs
   }
 }
 
+async function waitForRelayEventCounterEquals(port, event, want, { timeoutMs = 5_000 } = {}) {
+  const started = Date.now();
+  let counters = {};
+  while (true) {
+    counters = await getRelayEventCounters(port);
+    if (getCounter(counters, event) === want) return counters;
+    if (Date.now() - started > timeoutMs) return counters;
+    await sleep(100);
+  }
+}
+
 function waitForChildClose(child) {
   if (child.exitCode !== null) return Promise.resolve();
   return new Promise((resolve) => {
@@ -1073,7 +1084,7 @@ test("accepts UDP replies from unexpected source ports over WebRTC when UDP_INBO
     expect(res.echoedText).toBe("hello from chromium any inbound filter");
     expect(res.echoedRemotePort).toBe(echo.replyPort);
 
-    const counters = await getRelayEventCounters(relay.port);
+    const counters = await waitForRelayEventCounterEquals(relay.port, allowlistDropMetric, 0);
     expect(getCounter(counters, allowlistDropMetric)).toBe(0);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo?.close()]);
@@ -3080,7 +3091,7 @@ test("accepts UDP replies from unexpected source ports when UDP_INBOUND_FILTER_M
     expect(res.echoedText).toBe("hello from websocket any inbound filter");
     expect(res.remotePort).toBe(echo.replyPort);
 
-    const counters = await getRelayEventCounters(relay.port);
+    const counters = await waitForRelayEventCounterEquals(relay.port, allowlistDropMetric, 0);
     expect(getCounter(counters, allowlistDropMetric)).toBe(0);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo?.close()]);
@@ -3487,7 +3498,7 @@ test("treats MAX_ALLOWED_REMOTES_PER_BINDING as a per-guest-port limit (not per-
     expect(res.lateGuestPort).toBe(10_000);
     expect(res.lateRemotePort).toBe(echoA.port);
 
-    const counters = await getRelayEventCounters(relay.port);
+    const counters = await waitForRelayEventCounterEquals(relay.port, allowlistEvictMetric, 0);
     expect(getCounter(counters, allowlistEvictMetric)).toBe(0);
     expect(getCounter(counters, allowlistDropMetric)).toBe(0);
   } finally {
