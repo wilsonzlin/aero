@@ -21,9 +21,9 @@ This document describes the chosen HS/DS emulation approach so future contributo
 > - The D3D11 executor already routes draws through a compute prepass when GS/HS/DS emulation is
 >   required (see `gs_hs_ds_emulation_required()` in
 >   `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-> - Patchlist topology and/or HS/DS bindings currently run a **placeholder** compute prepass that
->   expands a synthetic triangle (to validate render-pass splitting + indirect draw plumbing), not
->   real tessellation semantics.
+> - Patchlist topology and/or HS/DS bindings currently run the built-in **synthetic expansion**
+>   compute prepass that expands a deterministic triangle (to validate render-pass splitting +
+>   indirect draw plumbing), not real tessellation semantics.
 > - The in-progress tessellation runtime lives under
 >   `crates/aero-d3d11/src/runtime/tessellation/` and contains real building blocks (layout pass,
 >   tri-domain integer index generation, DS evaluation templates, sizing/guardrails), but is not yet
@@ -56,7 +56,7 @@ compute-expansion path for **all** “missing WebGPU stages / topologies” case
 - patchlists.
 
 Patchlists and HS/DS bindings additionally set `tessellation_placeholder = true` inside
-`exec_draw_with_compute_prepass`, which selects the synthetic-triangle placeholder compute shader.
+`exec_draw_with_compute_prepass`, which selects the synthetic-triangle expansion compute shader.
 
 ---
 
@@ -129,13 +129,13 @@ Compute shaders cannot consume WebGPU’s vertex input interface. For any draw t
 compute expansion (GS/HS/DS), Aero runs the D3D VS as a compute kernel using **vertex pulling**:
 
 - Manually load vertex attributes from the bound IA vertex buffers / index buffer.
-- Execute the translated VS logic (or a placeholder during bring-up).
+- Execute the translated VS logic (or a stub during bring-up).
 - Write VS outputs into a storage buffer (`vs_out`).
 
 Implementation references:
 
 - shared vertex pulling ABI: `crates/aero-d3d11/src/runtime/vertex_pulling.rs`
-- tessellation VS-as-compute placeholder: `crates/aero-d3d11/src/runtime/tessellation/vs_as_compute.rs`
+- tessellation VS-as-compute bring-up stub: `crates/aero-d3d11/src/runtime/tessellation/vs_as_compute.rs`
 
 ### 2) HS control-point phase (HS CP)
 
@@ -458,9 +458,9 @@ Tessellation emulation has two orthogonal correctness surfaces:
 ### Executor tests (command-stream integration)
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_smoke.rs`: patchlist+HS/DS routes through the
-  compute prepass (currently placeholder expansion).
+  compute prepass (currently synthetic expansion).
 - `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`: despite the
-  name, this currently documents that HS/DS-bound draws run the placeholder prepass.
+  name, this currently documents that HS/DS-bound draws run the synthetic expansion prepass.
 - `crates/aero-d3d11/tests/aerogpu_cmd_stage_ex_bindings_hs_ds.rs`: validates `stage_ex` routing for
   HS/DS resource binding packets.
 
