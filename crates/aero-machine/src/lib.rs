@@ -3690,7 +3690,8 @@ Track progress: docs/21-smp.md\n\
         (self.display_width, self.display_height)
     }
 
-    /// Return the BIOS-reported VBE linear framebuffer (LFB) base address.
+    /// Return the physical base address of the VBE linear framebuffer (LFB) as reported by the
+    /// machine's firmware (VBE mode info `PhysBasePtr`).
     ///
     /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`) and is
     /// the canonical way for host-side tests/glue code to discover where the firmware expects the
