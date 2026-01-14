@@ -384,6 +384,13 @@ The canonical Rust disk image formats live in `crates/aero-storage/` and current
 - **Copy-on-write overlays** (`aero_storage::AeroCowDisk`) - writable overlay on top of a base disk.
 - **Write-back block caching** (`aero_storage::BlockCachedDisk`) - performance wrapper for small random I/O.
 
+For container formats that can reference a base layer (QCOW2 backing files, VHD differencing disks),
+`DiskImage::open_auto` intentionally rejects the image unless you explicitly supply a parent disk.
+To open these, use:
+
+- `aero_storage::DiskImage::open_with_parent` / `aero_storage::DiskImage::open_auto_with_parent`, or
+- format-specific helpers like `aero_storage::{Qcow2Disk, VhdDisk}::open_with_parent`.
+
 ### Block cache (`aero_storage::BlockCachedDisk`)
 
 For synchronous controller paths, it is common to place a block cache in front of the “real” disk
