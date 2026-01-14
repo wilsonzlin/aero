@@ -108,7 +108,7 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     assert_eq!(m.display_resolution(), (w, h));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
-    // Explicit disable should release the WDDM scanout claim and fall back to legacy output.
+    // Explicit disable releases WDDM ownership so legacy scanout becomes visible again.
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
         0,
@@ -117,4 +117,5 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     assert_eq!(m.display_resolution(), legacy_res);
+    assert!(!m.display_framebuffer().is_empty());
 }

@@ -211,7 +211,8 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     assert_eq!(m.display_resolution(), (w, h));
     assert_eq!(m.display_framebuffer(), expected.as_slice());
 
-    // Explicit scanout disable should release WDDM scanout ownership and return us to legacy.
+    // Explicit scanout disable releases WDDM ownership and returns presentation to the legacy
+    // text/VBE paths.
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
         0,
@@ -219,6 +220,7 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     m.process_aerogpu();
     m.display_present();
     assert_eq!(m.display_resolution(), legacy_res);
+    assert!(!m.display_framebuffer().is_empty());
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
@@ -282,7 +284,9 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
         cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
 
-    // Claim WDDM scanout, then explicitly disable it.
+    // Claim WDDM scanout, then explicitly disable it. Even though a legacy VBE scanout is
+    // configured (including non-default stride/panning), disabling scanout releases WDDM ownership
+    // and presentation falls back to legacy.
     let w = 64u32;
     let h = 64u32;
     let pitch = w * 4;
