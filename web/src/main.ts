@@ -4184,6 +4184,48 @@ function renderAudioPanel(): HTMLElement {
           },
         ];
 
+        // Include the currently effective runtime config (redacting sensitive fields). This is
+        // useful when QA runs are executed with URL overrides / deployment configs and we need to
+        // reproduce the exact worker/runtime setup.
+        try {
+          const cfg = configManager.getState();
+          const effective = { ...cfg.effective } as Record<string, unknown>;
+          if (typeof effective.l2TunnelToken === "string" && effective.l2TunnelToken.length) {
+            effective.l2TunnelToken = "<redacted>";
+          }
+          entries.push({
+            path: `${dir}/aero-config.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                {
+                  timeIso,
+                  effective,
+                  lockedKeys: Array.from(cfg.lockedKeys),
+                  issues: cfg.issues,
+                  capabilities: cfg.capabilities,
+                },
+                null,
+                2,
+              ),
+            ),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/aero-config-error.txt`, data: encoder.encode(message) });
+        }
+
+        // Include the build info endpoint, when available (more complete than the subset embedded
+        // in `__AERO_BUILD_INFO__`).
+        try {
+          const res = await fetch("/aero.version.json", { cache: "no-store" });
+          if (!res.ok) throw new Error(`Failed to fetch /aero.version.json (HTTP ${res.status})`);
+          const text = await res.text();
+          entries.push({ path: `${dir}/aero.version.json`, data: encoder.encode(text) });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/aero.version-error.txt`, data: encoder.encode(message) });
+        }
+
         // HDA codec debug state (best-effort).
         try {
           const ioWorker = workerCoordinator.getIoWorker();

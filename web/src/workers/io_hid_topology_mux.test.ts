@@ -11,6 +11,7 @@ import { createXhciTopologyBridgeShim, IoWorkerHidTopologyMux } from "./io_hid_t
 describe("workers/io_hid_topology_mux (xhci_hid_topology)", () => {
   it("routes hid.attach/hid.detach to xHCI when the bridge exposes topology APIs", () => {
     const xhci = {
+      free: vi.fn(),
       attach_hub: vi.fn(),
       detach_at_path: vi.fn(),
       attach_webhid_device: vi.fn(),

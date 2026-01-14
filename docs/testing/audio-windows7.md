@@ -273,6 +273,8 @@ Alternative (if the web UI exposes it):
 - Use **Audio → “Export audio metrics (json)”** to download a JSON blob containing `getMetrics()` + ring indices + IO-worker producer counters.
 - Or use **Audio → “Export audio QA bundle (tar)”** to download a single archive containing:
   - `audio-metrics.json`
+  - `aero-config.json` (best-effort; effective config snapshot with sensitive fields redacted)
+  - `aero.version.json` (best-effort; build/version endpoint, when served)
   - `hda-codec-state.json` (best-effort; requires the I/O worker)
   - `screenshot-*.png` (best-effort; requires the GPU worker)
   - `trace.json` (best-effort; Chrome trace export; includes worker thread metadata and any recorded spans/counters if tracing was enabled)
