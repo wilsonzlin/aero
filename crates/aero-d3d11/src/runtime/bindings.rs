@@ -40,18 +40,16 @@ impl ShaderStage {
     /// Legacy command streams may also encode GS/HS/DS directly as `shader_stage = 3/4/5`. We
     /// accept those values for forwards/backwards compatibility and ignore `stage_ex` in that case.
     ///
-    /// The `stage_ex` value uses DXBC program-type numbering (SM4/5 version token `program_type`).
-    /// In practice, we accept a superset to keep bindings/state updates robust across host versions:
-    /// - 1 = vertex shader (VS, accepted as an alias for legacy `shader_stage = Vertex`)
+    /// The `stage_ex` value uses DXBC program-type numbering (SM4/5 version token `program_type`)
+    /// for non-legacy stages:
     /// - 2 = geometry shader (GS)
     /// - 3 = hull shader (HS)
     /// - 4 = domain shader (DS)
     /// - 5 = compute shader (CS, optional alias for legacy/default compute)
     ///
     /// Note: `stage_ex == 0` is reserved for "no override" (legacy/default Compute), so stage-ex
-    /// packets cannot encode DXBC program type 0 (Pixel). Vertex shaders should still be encoded
-    /// via the legacy `shader_stage = Vertex` value, but some host-side encoders always use the
-    /// stage_ex path; accept `stage_ex == 1` for robustness.
+    /// packets cannot encode DXBC program type 0 (Pixel). Vertex shaders must be encoded via the
+    /// legacy `shader_stage = Vertex` value (and `stage_ex == 1` is intentionally invalid).
     pub const fn from_aerogpu_u32_with_stage_ex(stage: u32, stage_ex: u32) -> Option<Self> {
         match stage {
             0 => Some(Self::Vertex),
@@ -64,7 +62,6 @@ impl ShaderStage {
                 // command writers that incorrectly used the DXBC value instead of the reserved 0
                 // sentinel in binding packets.
                 0 | 5 => Some(Self::Compute),
-                1 => Some(Self::Vertex),
                 2 => Some(Self::Geometry),
                 3 => Some(Self::Hull),
                 4 => Some(Self::Domain),
@@ -428,13 +425,11 @@ mod tests {
     }
 
     #[test]
-    fn stage_ex_vertex_is_accepted_as_alias_for_legacy_vertex() {
-        // `stage_ex == 1` is the DXBC program type for Vertex. Some command writers always use the
-        // stage_ex encoding path (even for VS), so accept it for robustness.
-        assert_eq!(
-            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1),
-            Some(ShaderStage::Vertex)
-        );
+    fn stage_ex_vertex_is_rejected() {
+        // `stage_ex == 1` is the DXBC program type for Vertex, but it is intentionally invalid for
+        // AeroGPU's stage_ex encoding (0 is reserved for legacy/default Compute; Vertex must use
+        // the legacy stage field).
+        assert_eq!(ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1), None);
         assert_eq!(
             ShaderStage::from_aerogpu_u32_with_stage_ex(2, 0),
             Some(ShaderStage::Compute)
