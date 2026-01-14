@@ -6599,7 +6599,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     inputStatusLine.textContent =
       `input: click canvas to focus + request pointer lock. ` +
       `pointerLock=${inputCapture?.pointerLocked ? "yes" : "no"}  ` +
-      `ioWorker=${ioWorker ? "ready" : "stopped"}  ` +
+      `ioWorker=${statuses.io.state}  ` +
       `ioBatches=${workerCoordinator.getIoInputBatchCounter()}  ` +
       `ioEvents=${workerCoordinator.getIoInputEventCounter()}`;
 
