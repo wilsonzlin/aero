@@ -2261,4 +2261,105 @@ mod tests {
             assert_eq!(out, expected, "format={:?}", format);
         }
     }
+
+    #[test]
+    fn scanout_read_rgba8888_converts_16bpp_formats_and_pitch() {
+        fn pack_565(r: u16, g: u16, b: u16) -> u16 {
+            ((r & 0x1f) << 11) | ((g & 0x3f) << 5) | (b & 0x1f)
+        }
+
+        fn pack_5551(r: u16, g: u16, b: u16, a: bool) -> u16 {
+            ((r & 0x1f) << 10) | ((g & 0x1f) << 5) | (b & 0x1f) | ((a as u16) << 15)
+        }
+
+        let width = 2u32;
+        let height = 2u32;
+        let bytes_per_pixel = 2u32;
+        let row_bytes = width * bytes_per_pixel;
+        let pitch = row_bytes + 2; // include padding to ensure pitch is respected
+
+        let fb_gpa = 0x1000u64;
+
+        let write_row = |mem: &mut TestMem, y: u32, pixels: [u16; 2]| {
+            let row_gpa = fb_gpa + u64::from(y) * u64::from(pitch);
+            let mut row = Vec::with_capacity(pitch as usize);
+            for p in pixels {
+                row.extend_from_slice(&p.to_le_bytes());
+            }
+            // Fill padding bytes with a non-zero sentinel; the reader should skip them.
+            row.resize(pitch as usize, 0xEE);
+            mem.write_physical(row_gpa, &row);
+        };
+
+        // -----------------------------------------------------------------
+        // B5G6R5 (opaque)
+        // -----------------------------------------------------------------
+        let mut mem = TestMem::default();
+        write_row(
+            &mut mem,
+            0,
+            [
+                pack_565(31, 0, 0),  // red
+                pack_565(0, 63, 0),  // green
+            ],
+        );
+        write_row(
+            &mut mem,
+            1,
+            [
+                pack_565(0, 0, 31),   // blue
+                pack_565(31, 63, 31), // white
+            ],
+        );
+
+        let state = AeroGpuScanout0State {
+            wddm_scanout_active: true,
+            enable: true,
+            width,
+            height,
+            format: pci::AerogpuFormat::B5G6R5Unorm as u32,
+            pitch_bytes: pitch,
+            fb_gpa,
+        };
+
+        let out = state.read_rgba8888(&mut mem).unwrap();
+        assert_eq!(
+            out,
+            vec![0xFF00_00FF, 0xFF00_FF00, 0xFFFF_0000, 0xFFFF_FFFF]
+        );
+
+        // -----------------------------------------------------------------
+        // B5G5R5A1 (alpha bit)
+        // -----------------------------------------------------------------
+        let mut mem = TestMem::default();
+        write_row(
+            &mut mem,
+            0,
+            [
+                pack_5551(31, 0, 0, false), // red, alpha=0
+                pack_5551(0, 31, 0, true),  // green, alpha=1
+            ],
+        );
+        write_row(
+            &mut mem,
+            1,
+            [
+                pack_5551(0, 0, 31, true),    // blue, alpha=1
+                pack_5551(31, 31, 31, true),  // white, alpha=1
+            ],
+        );
+
+        let state = AeroGpuScanout0State {
+            wddm_scanout_active: true,
+            enable: true,
+            width,
+            height,
+            format: pci::AerogpuFormat::B5G5R5A1Unorm as u32,
+            pitch_bytes: pitch,
+            fb_gpa,
+        };
+
+        let out = state.read_rgba8888(&mut mem).unwrap();
+        assert_eq!(out, vec![0x0000_00FF, 0xFF00_FF00, 0xFFFF_0000, 0xFFFF_FFFF]);
+    }
 }
