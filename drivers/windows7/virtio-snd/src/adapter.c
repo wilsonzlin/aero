@@ -108,18 +108,59 @@ static BOOLEAN VirtIoSndQueryDwordValue(_In_ HANDLE Key, _In_ PCWSTR ValueNameW,
     return FALSE;
 }
 
-static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
+static BOOLEAN VirtIoSndTryReadRegistryDword(_In_ PDEVICE_OBJECT DeviceObject,
+                                             _In_ ULONG RootKeyType,
+                                             _In_ PCWSTR ValueNameW,
+                                             _Out_ ULONG* ValueOut)
 {
     HANDLE rootKey;
     HANDLE paramsKey;
     UNICODE_STRING paramsSubkeyName;
     OBJECT_ATTRIBUTES oa;
     ULONG value;
-    BOOLEAN forceNullBackend;
 
-    forceNullBackend = FALSE;
     rootKey = NULL;
     paramsKey = NULL;
+    value = 0;
+
+    if (ValueOut != NULL) {
+        *ValueOut = 0;
+    }
+
+    if (DeviceObject == NULL || ValueNameW == NULL || ValueOut == NULL) {
+        return FALSE;
+    }
+
+    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, RootKeyType, KEY_READ, &rootKey)) || rootKey == NULL) {
+        return FALSE;
+    }
+
+    RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
+    InitializeObjectAttributes(&oa, &paramsSubkeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, rootKey, NULL);
+    if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
+        if (VirtIoSndQueryDwordValue(paramsKey, ValueNameW, &value)) {
+            *ValueOut = value;
+            ZwClose(paramsKey);
+            ZwClose(rootKey);
+            return TRUE;
+        }
+        ZwClose(paramsKey);
+    }
+
+    if (VirtIoSndQueryDwordValue(rootKey, ValueNameW, &value)) {
+        *ValueOut = value;
+        ZwClose(rootKey);
+        return TRUE;
+    }
+
+    ZwClose(rootKey);
+    return FALSE;
+}
+
+static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
+{
+    ULONG value;
+
     value = 0;
 
     if (DeviceObject == NULL) {
@@ -132,46 +173,21 @@ static BOOLEAN VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
      * Preferred location (INF creates this by default):
      *   HKR\Parameters\ForceNullBackend (REG_DWORD)
      *
-     * Fallback: some environments may place the value at the root key returned
-     * by IoOpenDeviceRegistryKey, so check the root if the Parameters subkey is
-     * missing or does not contain the value.
+     * Fallback: also accept the value in the driver key (PLUGPLAY_REGKEY_DRIVER)
+     * for backwards compatibility with older installs.
      */
-    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
-        return FALSE;
+    if (VirtIoSndTryReadRegistryDword(DeviceObject, PLUGPLAY_REGKEY_DEVICE, L"ForceNullBackend", &value) ||
+        VirtIoSndTryReadRegistryDword(DeviceObject, PLUGPLAY_REGKEY_DRIVER, L"ForceNullBackend", &value)) {
+        return value ? TRUE : FALSE;
     }
 
-    RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
-    InitializeObjectAttributes(&oa, &paramsSubkeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, rootKey, NULL);
-    if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
-        if (VirtIoSndQueryDwordValue(paramsKey, L"ForceNullBackend", &value)) {
-            forceNullBackend = value ? TRUE : FALSE;
-            ZwClose(paramsKey);
-            ZwClose(rootKey);
-            return forceNullBackend;
-        }
-        ZwClose(paramsKey);
-    }
-
-    if (VirtIoSndQueryDwordValue(rootKey, L"ForceNullBackend", &value)) {
-        forceNullBackend = value ? TRUE : FALSE;
-    }
-
-    ZwClose(rootKey);
-    return forceNullBackend;
+    return FALSE;
 }
 
 static BOOLEAN VirtIoSndReadAllowPollingOnly(_In_ PDEVICE_OBJECT DeviceObject)
 {
-    HANDLE rootKey;
-    HANDLE paramsKey;
-    UNICODE_STRING paramsSubkeyName;
-    OBJECT_ATTRIBUTES oa;
     ULONG value;
-    BOOLEAN allowPollingOnly;
 
-    allowPollingOnly = FALSE;
-    rootKey = NULL;
-    paramsKey = NULL;
     value = 0;
 
     if (DeviceObject == NULL) {
@@ -184,32 +200,15 @@ static BOOLEAN VirtIoSndReadAllowPollingOnly(_In_ PDEVICE_OBJECT DeviceObject)
      * Preferred location (INF creates this by default):
      *   HKR\Parameters\AllowPollingOnly (REG_DWORD)
      *
-     * Fallback: some environments may place the value at the root key returned
-     * by IoOpenDeviceRegistryKey, so check the root if the Parameters subkey is
-     * missing or does not contain the value.
+     * Fallback: also accept the value in the driver key (PLUGPLAY_REGKEY_DRIVER)
+     * for backwards compatibility with older installs.
      */
-    if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject, PLUGPLAY_REGKEY_DEVICE, KEY_READ, &rootKey)) || rootKey == NULL) {
-        return FALSE;
+    if (VirtIoSndTryReadRegistryDword(DeviceObject, PLUGPLAY_REGKEY_DEVICE, L"AllowPollingOnly", &value) ||
+        VirtIoSndTryReadRegistryDword(DeviceObject, PLUGPLAY_REGKEY_DRIVER, L"AllowPollingOnly", &value)) {
+        return value ? TRUE : FALSE;
     }
 
-    RtlInitUnicodeString(&paramsSubkeyName, L"Parameters");
-    InitializeObjectAttributes(&oa, &paramsSubkeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, rootKey, NULL);
-    if (NT_SUCCESS(ZwOpenKey(&paramsKey, KEY_READ, &oa)) && paramsKey != NULL) {
-        if (VirtIoSndQueryDwordValue(paramsKey, L"AllowPollingOnly", &value)) {
-            allowPollingOnly = value ? TRUE : FALSE;
-            ZwClose(paramsKey);
-            ZwClose(rootKey);
-            return allowPollingOnly;
-        }
-        ZwClose(paramsKey);
-    }
-
-    if (VirtIoSndQueryDwordValue(rootKey, L"AllowPollingOnly", &value)) {
-        allowPollingOnly = value ? TRUE : FALSE;
-    }
-
-    ZwClose(rootKey);
-    return allowPollingOnly;
+    return FALSE;
 }
 
 static NTSTATUS

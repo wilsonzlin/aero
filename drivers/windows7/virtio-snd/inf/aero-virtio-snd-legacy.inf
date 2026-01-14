@@ -42,7 +42,7 @@ CopyFiles = AeroVirtioSndLegacy.CopyFiles
 AddReg    = AeroVirtioSndLegacy.AddReg
 
 [AeroVirtioSndLegacy_Install.NT.HW]
-AddReg = AeroVirtioSndLegacy_InterruptManagement_AddReg
+AddReg = AeroVirtioSndLegacy_InterruptManagement_AddReg, AeroVirtioSndLegacy_Parameters_AddReg
 
 ; Register the KS device interfaces that the Windows audio stack enumerates.
 ; Reference strings match the PortCls subdevice names ("Wave" / "Topology").
@@ -115,6 +115,13 @@ virtiosnd_legacy.sys
 HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+
+; Per-device bring-up toggles (defaults). These are stored under the device
+; instance key's "Device Parameters" hive (IoOpenDeviceRegistryKey(PLUGPLAY_REGKEY_DEVICE)).
+[AeroVirtioSndLegacy_Parameters_AddReg]
+HKR,Parameters,,0x00000010
+HKR,Parameters,ForceNullBackend,0x00010001,0
+HKR,Parameters,AllowPollingOnly,0x00010001,0
 
 [AeroVirtioSndLegacy_Install.NT.Services]
 AddService = aeroviosnd_legacy, 0x00000002, AeroVirtioSndLegacy_Service_Inst

@@ -110,7 +110,7 @@ If you are testing against an early/buggy virtio-snd device model where interrup
 
 Set the per-device registry value:
 
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` = `1` (`REG_DWORD`)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly` = `1` (`REG_DWORD`)
 
 Then disable/enable the device (or reboot) so Windows re-runs `START_DEVICE`.
 
@@ -450,10 +450,10 @@ Then review:
 The virtio-snd driver exposes a couple of per-device bring-up toggles that can be flipped for diagnostics.
 They live under the device instance’s `Parameters` subkey:
 
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` (`REG_DWORD`)
   - Default: `0`
   - Set to `1` to force the silent null backend. This also allows `START_DEVICE` to succeed even if virtio transport bring-up fails, which is useful when debugging QEMU/device-model issues while still exercising the PortCls/WaveRT integration.
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly` (`REG_DWORD`)
   - Default: `0`
   - Set to `1` to allow polling-only mode when *no usable interrupt* (neither MSI/MSI-X nor INTx) can be wired up. (Modern virtio-pci transport packages only.)
 
@@ -465,10 +465,10 @@ Example (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
 
 ```cmd
 REM Force the silent Null backend:
-reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
 
 REM Allow polling-only mode when no usable interrupt can be wired up (modern virtio-pci transport packages only):
-reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
 ```
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound

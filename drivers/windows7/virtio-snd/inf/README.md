@@ -41,10 +41,10 @@ In a finished package, this directory contains the driver package payload:
 
 The **contract v1** and **transitional/QEMU** virtio-snd INFs create per-device registry values with safe defaults (`0`):
 
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` (`REG_DWORD`)
   - `0` (default): use virtio backend
   - `1`: force the silent null backend (also allows bring-up without a working virtio transport)
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly` (`REG_DWORD`)
   - `0` (default): interrupt-driven (fail `START_DEVICE` if no usable interrupt resource can be discovered/connected — neither MSI/MSI-X nor INTx)
   - `1`: allow polling-only mode when no usable interrupt can be discovered/connected
 

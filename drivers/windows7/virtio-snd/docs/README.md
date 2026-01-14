@@ -97,7 +97,7 @@ The in-tree virtio-snd driver supports both interrupt delivery modes:
 
 If neither MSI/MSI-X nor INTx resources are available, the driver will fail `START_DEVICE` by default. If `AllowPollingOnly=1` is set under:
 
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly`
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
   - Find `<DeviceInstancePath>` via Device Manager → device → Details → “Device instance path”.
 
 the driver may start in polling-only mode (reduced interrupt-driven behavior).
@@ -243,13 +243,13 @@ Backend layer (WaveRT ↔ virtio-snd):
 - Default backend: `src/backend_virtio.c` (submits one period of PCM to `txq` each tick).
 - Fallback backend: `src/backend_null.c` (silent; used for debugging and when virtio bring-up fails).
 - To force the Null backend even when virtio is available, set `ForceNullBackend` (`REG_DWORD`) = `1` under the device's per-instance **Parameters** key:
-  - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend`
+  - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
     - You can find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
     - The shipped INFs create `ForceNullBackend` with a default value of `0` (normal virtio backend).
   - When `ForceNullBackend=1`, the adapter will also tolerate virtio transport start failures (no Code 10) so PortCls/WaveRT behavior can be tested even if the virtio-snd device/emulator is unavailable.
   - With the Null backend, both render and capture endpoints remain functional from the Windows audio stack’s perspective, but record/play silence.
 - Optional bring-up flag: `AllowPollingOnly` (`REG_DWORD`) under the same per-instance **Parameters** key:
-  - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly`
+  - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
   - Default: `0` (created by the INF)
   - When `AllowPollingOnly=1`, the driver may start even if no usable interrupt resource can be discovered/connected (neither MSI/MSI-X nor INTx).
   - In that case it relies on polling used rings (driven by the WaveRT period timer DPC) instead of ISR/DPC delivery, and disables per-queue virtqueue interrupts best-effort to reduce interrupt storm risk.

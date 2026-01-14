@@ -385,10 +385,10 @@ is disabled by default to avoid accidentally installing **two** INFs that match 
 
 For diagnostics / bring-up, the driver exposes per-device registry toggles (**debug/dev only**):
 
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend` (`REG_DWORD`)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` (`REG_DWORD`)
   - Default: `0` (use virtio backend; bring-up failures surface as Code 10)
   - Set to `1` to force the silent “null” backend, allowing the PortCls/WaveRT stack to start even if virtio transport bring-up fails.
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly` (`REG_DWORD`)
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly` (`REG_DWORD`)
   - Default: `0` (interrupt-driven; requires at least one usable interrupt resource — MSI/MSI-X preferred with INTx fallback; fails `START_DEVICE` if neither MSI/MSI-X nor INTx can be connected)
   - Set to `1` to allow the driver to start even when no usable interrupt can be discovered/connected. In this mode the driver relies on periodic used-ring polling (driven by the WaveRT period timer DPC).
   - Applies to the modern virtio-pci transport packages (`aero_virtio_snd.sys` and `virtiosnd_legacy.sys`); the legacy I/O-port bring-up package does not use this toggle.
@@ -400,13 +400,13 @@ After changing a toggle value, reboot the guest or disable/enable the device so 
 Example (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
 
 ```cmd
-reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v ForceNullBackend /t REG_DWORD /d 1 /f
 ```
 
 To enable polling-only mode (modern virtio-pci transport packages only):
 
 ```cmd
-reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
+reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
 ```
 
 ## Offline / slipstream installation (optional)

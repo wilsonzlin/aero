@@ -110,7 +110,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     (under the device instance’s `Parameters` subkey) that disables the virtio transport and routes
     the endpoint through the null backend. This makes host-side wav capture silent; the selftest will
     emit `...|FAIL|force_null_backend` if the flag is enabled.
-    - Registry path: `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\ForceNullBackend`
+    - Registry path: `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
     - Changing this value requires a reboot or disable/enable cycle so Windows re-runs `START_DEVICE`.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
   - By default, if a supported virtio-snd PCI function is detected, the selftest exercises playback automatically.

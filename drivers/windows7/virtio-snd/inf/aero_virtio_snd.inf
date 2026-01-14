@@ -67,12 +67,19 @@ AddReg    = AeroVirtioSnd.AddReg
 ;   vector 1..4: queues 0..3 (control/event/tx/rx)
 ; Use a small future-proof limit.
 [AeroVirtioSnd_Install.NT.HW]
-AddReg = AeroVirtioSnd_InterruptManagement_AddReg
+AddReg = AeroVirtioSnd_InterruptManagement_AddReg, AeroVirtioSnd_Parameters_AddReg
 
 [AeroVirtioSnd_InterruptManagement_AddReg]
 HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+
+; Per-device bring-up toggles (defaults). These are stored under the device
+; instance key's "Device Parameters" hive (IoOpenDeviceRegistryKey(PLUGPLAY_REGKEY_DEVICE)).
+[AeroVirtioSnd_Parameters_AddReg]
+HKR,Parameters,,0x00000010
+HKR,Parameters,ForceNullBackend,0x00010001,0
+HKR,Parameters,AllowPollingOnly,0x00010001,0
 
 ; Register the KS device interfaces that the Windows audio stack enumerates.
 ; Reference strings match the PortCls subdevice names ("Wave" / "Topology").

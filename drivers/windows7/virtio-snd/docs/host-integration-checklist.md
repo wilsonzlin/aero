@@ -72,7 +72,7 @@ If any required item is missing/mismatched, the driver will typically fail `STAR
 
 The driver needs **at least one usable interrupt mechanism** (unless you explicitly opt into bring-up mode with `AllowPollingOnly=1` under the device instance registry key):
 
-- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Parameters\AllowPollingOnly`
+- `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
   - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
 `AERO-W7-VIRTIO` v1 still requires **INTx** compatibility as a baseline, but the driver also supports (and prefers) **MSI/MSI-X** when Windows provides message interrupts.
 

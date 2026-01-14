@@ -43,6 +43,14 @@ Needs    = KS.Registration, WDMAUDIO.Registration
 CopyFiles = AeroVirtioSndIoPort.CopyFiles
 AddReg    = AeroVirtioSndIoPort.AddReg
 
+; Per-device bring-up toggle defaults (hardware key).
+[AeroVirtioSndIoPort_Install.NT.HW]
+AddReg = AeroVirtioSndIoPort_Parameters_AddReg
+
+[AeroVirtioSndIoPort_Parameters_AddReg]
+HKR,Parameters,,0x00000010
+HKR,Parameters,ForceNullBackend,0x00010001,0
+
 [AeroVirtioSndIoPort_Install.NT.Interfaces]
 AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     AeroVirtioSndIoPort.Wave.Interface
 AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%,     AeroVirtioSndIoPort.Wave.Interface
