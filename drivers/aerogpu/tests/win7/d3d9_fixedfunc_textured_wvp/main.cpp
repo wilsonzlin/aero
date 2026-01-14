@@ -240,10 +240,27 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetPixelShader(NULL)", hr);
   }
 
-  dev->SetRenderState(D3DRS_LIGHTING, FALSE);
-  dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-  dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-  dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+  hr = dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetRenderState(LIGHTING=FALSE)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetRenderState(CULLMODE=NONE)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetRenderState(ALPHABLENDENABLE=FALSE)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetRenderState(ZENABLE=FALSE)", hr);
+  }
+  // Ensure gamma conversion is off so expected colors are deterministic.
+  hr = dev->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetRenderState(SRGBWRITEENABLE=FALSE)", hr);
+  }
 
   // Create a 2x2 texture with distinct colors.
   //
@@ -313,6 +330,10 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(ADDRESSV)", hr);
   }
+  hr = dev->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(SRGBTEXTURE=FALSE)", hr);
+  }
 
   hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
   if (FAILED(hr)) {
@@ -325,6 +346,18 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   hr = dev->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetTextureStageState(COLORARG2)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTextureStageState(ALPHAOP)", hr);
+  }
+  hr = dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTextureStageState(stage1 COLOROP)", hr);
+  }
+  hr = dev->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetTextureStageState(stage1 ALPHAOP)", hr);
   }
 
   // Place a quad around NDC origin via WORLD/VIEW/PROJECTION transforms.
