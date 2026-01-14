@@ -694,3 +694,32 @@ fn virtio_input_keyboard_statusq_updates_leds_mask() {
         "Machine::virtio_input_keyboard_leds should reflect device state"
     );
 }
+
+#[test]
+fn virtio_input_keyboard_leds_can_be_read_while_device_is_borrowed() {
+    let m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let kbd = m
+        .virtio_input_keyboard()
+        .expect("virtio-input keyboard should be present when enabled");
+
+    // Hold an immutable borrow to the virtio-pci device and ensure the LED getter remains usable
+    // (it should only need a shared borrow of the underlying VirtioInput device).
+    let _held = kbd.borrow();
+    assert_eq!(
+        m.virtio_input_keyboard_leds(),
+        0,
+        "expected virtio_input_keyboard_leds to succeed under an existing device borrow"
+    );
+}

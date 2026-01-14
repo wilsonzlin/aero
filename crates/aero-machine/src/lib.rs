@@ -8618,7 +8618,7 @@ impl Machine {
             return 0;
         };
         // PS/2 bit layout (Set LEDs payload): bit0=Scroll, bit1=Num, bit2=Caps.
-        let raw = ctrl.borrow_mut().keyboard_mut().leds() & 0x07;
+        let raw = ctrl.borrow().keyboard().leds() & 0x07;
         let scroll = raw & 0x01;
         let num = (raw >> 1) & 0x01;
         let caps = (raw >> 2) & 0x01;
@@ -8935,8 +8935,8 @@ impl Machine {
         let Some(kbd) = &self.virtio_input_keyboard else {
             return 0;
         };
-        let mut dev = kbd.borrow_mut();
-        let Some(input) = dev.device_mut::<VirtioInput>() else {
+        let dev = kbd.borrow();
+        let Some(input) = dev.device::<VirtioInput>() else {
             return 0;
         };
         input.leds_mask()
@@ -16661,6 +16661,28 @@ mod tests {
         m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0xED);
         m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0x01);
         assert_eq!(m.ps2_keyboard_leds(), 0x04);
+    }
+
+    #[test]
+    fn ps2_keyboard_leds_can_be_read_while_i8042_is_borrowed() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(m.i8042.is_some(), "sanity: default config enables i8042");
+
+        // Set NumLock on via the PS/2 Set LEDs command.
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0xED);
+        m.io_write(aero_devices::i8042::I8042_DATA_PORT, 1, 0x02);
+
+        let ctrl = m.i8042.as_ref().unwrap().borrow();
+        assert_eq!(
+            m.ps2_keyboard_leds(),
+            0x01,
+            "expected ps2_keyboard_leds to succeed under an existing i8042 borrow"
+        );
+        drop(ctrl);
     }
 
     #[test]

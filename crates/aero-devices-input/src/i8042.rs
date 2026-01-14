@@ -327,8 +327,16 @@ impl I8042Controller {
         }
     }
 
+    pub fn keyboard(&self) -> &Ps2Keyboard {
+        &self.keyboard
+    }
+
     pub fn keyboard_mut(&mut self) -> &mut Ps2Keyboard {
         &mut self.keyboard
+    }
+
+    pub fn mouse(&self) -> &Ps2Mouse {
+        &self.mouse
     }
 
     pub fn mouse_mut(&mut self) -> &mut Ps2Mouse {

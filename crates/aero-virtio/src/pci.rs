@@ -439,8 +439,16 @@ impl VirtioPciDevice {
         self.sync_legacy_irq_line();
     }
 
+    pub fn device_as_any(&self) -> &dyn Any {
+        self.device.as_any()
+    }
+
     pub fn device_as_any_mut(&mut self) -> &mut dyn Any {
         self.device.as_any_mut()
+    }
+
+    pub fn device<T: VirtioDevice + 'static>(&self) -> Option<&T> {
+        self.device.as_any().downcast_ref::<T>()
     }
 
     pub fn device_mut<T: VirtioDevice + 'static>(&mut self) -> Option<&mut T> {
