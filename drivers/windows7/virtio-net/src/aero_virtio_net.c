@@ -3558,7 +3558,7 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
 
   // Checksum offload (TX only).
   Offload->Checksum.IPv4Transmit.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
-  Offload->Checksum.IPv4Transmit.IpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.IpOptionsSupported = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.TcpOptionsSupported = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.TcpChecksum = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.UdpChecksum = UdpCsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
@@ -3588,7 +3588,7 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
   Offload->LsoV2.IPv4.MaxOffLoadSize = TsoV4 ? Adapter->TxTsoMaxOffloadSize : 0;
   Offload->LsoV2.IPv4.MinSegmentCount = TsoV4 ? 2 : 0;
   Offload->LsoV2.IPv4.TcpOptionsSupported = TsoV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->LsoV2.IPv4.IpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->LsoV2.IPv4.IpOptionsSupported = TsoV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 
   Offload->LsoV2.IPv6.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
   Offload->LsoV2.IPv6.MaxOffLoadSize = TsoV6 ? Adapter->TxTsoMaxOffloadSize : 0;
