@@ -423,3 +423,81 @@ fn doorbell_is_ignored_until_ring_is_enabled_and_requires_a_new_kick() {
     );
     assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 7);
 }
+
+#[test]
+fn scanout_and_cursor_fb_gpa_mmio_64bit_write_roundtrips() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command(1 << 1);
+
+    let scanout_fb_gpa = 0x1122_3344_5566_7788u64;
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 8, scanout_fb_gpa);
+    assert_eq!(dev.regs.scanout0.fb_gpa, scanout_fb_gpa);
+    assert_eq!(dev.read(mmio::SCANOUT0_FB_GPA_LO, 8), scanout_fb_gpa);
+    assert_eq!(dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32, scanout_fb_gpa as u32);
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FB_GPA_HI, 4) as u32,
+        (scanout_fb_gpa >> 32) as u32
+    );
+
+    let cursor_fb_gpa = 0x8877_6655_4433_2211u64;
+    dev.write(mmio::CURSOR_FB_GPA_LO, 8, cursor_fb_gpa);
+    assert_eq!(dev.regs.cursor.fb_gpa, cursor_fb_gpa);
+    assert_eq!(dev.read(mmio::CURSOR_FB_GPA_LO, 8), cursor_fb_gpa);
+    assert_eq!(dev.read(mmio::CURSOR_FB_GPA_LO, 4) as u32, cursor_fb_gpa as u32);
+    assert_eq!(
+        dev.read(mmio::CURSOR_FB_GPA_HI, 4) as u32,
+        (cursor_fb_gpa >> 32) as u32
+    );
+}
+
+#[test]
+fn cursor_xy_mmio_roundtrips_preserve_signed_values() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command(1 << 1);
+
+    dev.write(mmio::CURSOR_X, 4, 123);
+    dev.write(mmio::CURSOR_Y, 4, 456);
+    assert_eq!(dev.regs.cursor.x, 123);
+    assert_eq!(dev.regs.cursor.y, 456);
+    assert_eq!(dev.read(mmio::CURSOR_X, 4) as u32, 123);
+    assert_eq!(dev.read(mmio::CURSOR_Y, 4) as u32, 456);
+
+    // Signed MMIO semantics: interpret written bits as i32.
+    dev.write(mmio::CURSOR_X, 4, 0xFFFF_FFFF);
+    dev.write(mmio::CURSOR_Y, 4, 0x8000_0000);
+    assert_eq!(dev.regs.cursor.x, -1);
+    assert_eq!(dev.regs.cursor.y, i32::MIN);
+    assert_eq!(dev.read(mmio::CURSOR_X, 4) as u32, 0xFFFF_FFFF);
+    assert_eq!(dev.read(mmio::CURSOR_Y, 4) as u32, 0x8000_0000);
+}
+
+#[test]
+fn disabling_vblank_irq_clears_pending_status_bit() {
+    let mut mem = memory::Bus::new(0x1000);
+
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig::default(),
+        vblank_hz: Some(10),
+    });
+    // Enable PCI MMIO decode but keep DMA disabled (no bus mastering) for this test.
+    dev.config_mut().set_command(1 << 1);
+
+    dev.write(mmio::SCANOUT0_ENABLE, 4, 1);
+    dev.tick(&mut mem, 0);
+    let period_ns = u64::from(dev.regs.scanout0_vblank_period_ns);
+    assert_ne!(period_ns, 0);
+
+    // Enable vblank IRQs. Semantics: the enable transition suppresses latching for one tick.
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::SCANOUT_VBLANK as u64);
+    dev.tick(&mut mem, period_ns);
+    assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+
+    dev.tick(&mut mem, period_ns * 2);
+    assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(dev.irq_level());
+
+    // Disabling the vblank IRQ line should clear any pending status bit.
+    dev.write(mmio::IRQ_ENABLE, 4, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+    assert!(!dev.irq_level());
+}
