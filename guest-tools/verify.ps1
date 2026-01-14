@@ -1316,9 +1316,9 @@ try {
             $unsupportedSchema = $false
             $schemaStr = $null
             if ($schema -ne $null) { $schemaStr = ("" + $schema).Trim() }
-            if ($schemaStr -and -not (@("2") -contains $schemaStr)) {
+            if ($schemaStr -and -not (@("2", "3") -contains $schemaStr)) {
                 $unsupportedSchema = $true
-                $mDetails += ("WARN: Unsupported manifest schema_version=" + $schemaStr + " (supported: 2). Integrity checks will continue, but newer manifest fields may be ignored.")
+                $mDetails += ("WARN: Unsupported manifest schema_version=" + $schemaStr + " (supported: 2, 3). Integrity checks will continue, but newer manifest fields may be ignored.")
             }
 
             $pkg = $null
