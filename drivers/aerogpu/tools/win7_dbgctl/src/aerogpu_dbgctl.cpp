@@ -10319,11 +10319,17 @@ int wmain(int argc, wchar_t **argv) {
         return 1;
       }
       if (readGpaOutPath || dumpLastCmdOutExplicit) {
-        fwprintf(stderr, L"--out specified multiple times\n");
+        if (dumpLastCmdOutExplicit) {
+          fwprintf(stderr, L"--out conflicts with --cmd-out\n");
+        } else {
+          fwprintf(stderr, L"--out specified multiple times\n");
+        }
         PrintUsage();
         if (g_json_output) {
           std::string json;
-          JsonWriteTopLevelError(&json, "parse-args", NULL, "--out specified multiple times", STATUS_INVALID_PARAMETER);
+          JsonWriteTopLevelError(&json, "parse-args", NULL,
+                                 dumpLastCmdOutExplicit ? "--out conflicts with --cmd-out" : "--out specified multiple times",
+                                 STATUS_INVALID_PARAMETER);
           WriteJsonToDestination(json);
         }
         return 1;
