@@ -208,8 +208,9 @@ export function cmdPacketHasVsyncPresent(packet: AerogpuCmdPacket): boolean {
       `PRESENT packet too small to contain flags (need 8 bytes, have ${packet.payload.byteLength})`,
     );
   }
-  const payloadView = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
-  const flags = payloadView.getUint32(4, true);
+  const payload = packet.payload;
+  // Read flags (little-endian) without constructing a DataView (hot path in some runtimes).
+  const flags = (payload[4]! | (payload[5]! << 8) | (payload[6]! << 16) | (payload[7]! << 24)) >>> 0;
   return (flags & AEROGPU_PRESENT_FLAG_VSYNC) !== 0;
 }
 
