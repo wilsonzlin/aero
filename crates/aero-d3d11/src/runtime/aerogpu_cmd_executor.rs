@@ -39,9 +39,10 @@ use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::binding_model::{
-    BIND_GROUP_INTERNAL_EMULATION, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    BINDING_INTERNAL_EXPANDED_VERTICES, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
-    EXPANDED_VERTEX_MAX_VARYINGS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
+    BINDING_INTERNAL_EXPANDED_VERTICES, BIND_GROUP_INTERNAL_EMULATION,
+    D3D11_MAX_CONSTANT_BUFFER_SLOTS, EXPANDED_VERTEX_MAX_VARYINGS, MAX_SAMPLER_SLOTS,
+    MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
@@ -3568,7 +3569,9 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
+                    min_binding_size: wgpu::BufferSize::new(
+                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+                    ),
                 },
                 count: None,
             },
@@ -4841,9 +4844,12 @@ impl AerogpuD3d11Executor {
                 )
             })?;
 
-            let first_index_offset = indirect_args_alloc.offset.checked_add(8).ok_or_else(|| {
-                anyhow!("geometry prepass indirect args offset overflows when patching first_index")
-            })?;
+            let first_index_offset =
+                indirect_args_alloc.offset.checked_add(8).ok_or_else(|| {
+                    anyhow!(
+                        "geometry prepass indirect args offset overflows when patching first_index"
+                    )
+                })?;
 
             let patch_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd geometry prepass first_index patch"),
@@ -4871,10 +4877,12 @@ impl AerogpuD3d11Executor {
         if internal_index < render_bind_groups.len() {
             let size = wgpu::BufferSize::new(expanded_vertex_alloc.size)
                 .expect("expanded vertex allocation must be non-empty");
-            render_bind_groups[internal_index] =
-                Arc::new(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            render_bind_groups[internal_index] = Arc::new(
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("aerogpu_cmd expanded draw emulation bind group"),
-                    layout: pipeline_bindings.group_layouts[internal_index].layout.as_ref(),
+                    layout: pipeline_bindings.group_layouts[internal_index]
+                        .layout
+                        .as_ref(),
                     entries: &[wgpu::BindGroupEntry {
                         binding: BINDING_INTERNAL_EXPANDED_VERTICES,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -4883,7 +4891,8 @@ impl AerogpuD3d11Executor {
                             size: Some(size),
                         }),
                     }],
-                }));
+                }),
+            );
         }
 
         // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
@@ -5079,9 +5088,7 @@ impl AerogpuD3d11Executor {
                             anyhow!("geometry prepass expanded index slice overflows u64")
                         })?;
                     pass.set_index_buffer(
-                        expanded_index_alloc
-                            .buffer
-                            .slice(0..ib_end),
+                        expanded_index_alloc.buffer.slice(0..ib_end),
                         wgpu::IndexFormat::Uint32,
                     );
                     pass.draw_indexed_indirect(
