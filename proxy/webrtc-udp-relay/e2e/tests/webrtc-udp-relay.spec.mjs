@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import * as crypto from "node:crypto";
 import dgram from "node:dgram";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -401,12 +402,14 @@ async function waitForRelayReady(port, child, timeoutMs) {
 }
 
 let relayBinPromise;
+let relayBinTmpDir;
 
 async function getRelayBinaryPath() {
   if (!relayBinPromise) {
     relayBinPromise = (async () => {
       const moduleDir = path.join(__dirname, "..", "..");
       const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "aero-webrtc-udp-relay-e2e-"));
+      relayBinTmpDir = tmpDir;
       const binName = process.platform === "win32" ? "aero-webrtc-udp-relay.exe" : "aero-webrtc-udp-relay";
       const binPath = path.join(tmpDir, binName);
 
@@ -415,11 +418,27 @@ async function getRelayBinaryPath() {
         stdio: "inherit",
       });
       if (build.status !== 0) {
+        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
         throw new Error(`failed to build aero-webrtc-udp-relay (exit ${build.status ?? "unknown"})`);
       }
 
       return binPath;
-    })();
+    })().catch((err) => {
+      // Allow retries if the initial build failed.
+      relayBinPromise = null;
+      throw err;
+    });
+
+    // Clean up the relay build dir at process exit. This is best-effort; use a
+    // synchronous removal so it actually runs during the `exit` event.
+    process.once("exit", () => {
+      if (!relayBinTmpDir) return;
+      try {
+        fsSync.rmSync(relayBinTmpDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    });
   }
   return relayBinPromise;
 }
