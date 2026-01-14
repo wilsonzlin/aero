@@ -259,6 +259,7 @@ fn malformed_chunk_offset_points_into_header_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk 0"));
     assert!(err.context().contains("points into DXBC header"));
 }
 
@@ -272,6 +273,7 @@ fn malformed_chunk_offset_points_into_header_tail_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk 0"));
     assert!(err.context().contains("points into DXBC header"));
 }
 
@@ -286,6 +288,7 @@ fn malformed_chunk_offset_points_into_offset_table_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk 0"));
     assert!(err.context().contains("points into chunk offset table"));
 }
 
@@ -299,6 +302,7 @@ fn malformed_chunk_offset_points_to_offset_table_start_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk 0"));
     assert!(err.context().contains("points into chunk offset table"));
 }
 
