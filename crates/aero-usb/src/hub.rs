@@ -2214,6 +2214,49 @@ mod tests {
     }
 
     #[test]
+    fn hub_attach_sets_device_suspended_state_when_upstream_suspended() {
+        #[derive(Default)]
+        struct State {
+            suspended: bool,
+        }
+
+        #[derive(Clone)]
+        struct Device(Rc<RefCell<State>>);
+
+        impl UsbDeviceModel for Device {
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+
+            fn set_suspended(&mut self, suspended: bool) {
+                self.0.borrow_mut().suspended = suspended;
+            }
+        }
+
+        let mut hub = UsbHubDevice::new_with_ports(1);
+        hub.configuration = 1;
+        hub.set_suspended(true);
+
+        let dev = Device(Rc::new(RefCell::new(State::default())));
+        hub.attach(1, Box::new(dev.clone()));
+
+        assert!(
+            dev.0.borrow().suspended,
+            "expected newly attached device to observe upstream suspended state"
+        );
+
+        hub.set_suspended(false);
+        assert!(
+            !dev.0.borrow().suspended,
+            "expected device to resume when upstream resumes"
+        );
+    }
+
+    #[test]
     fn root_hub_portsc_lsda_is_set_only_for_low_speed() {
         const LSDA: u16 = 1 << 8;
 
