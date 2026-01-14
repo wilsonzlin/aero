@@ -751,11 +751,11 @@ fn snapshot_restore_preserves_msix_table_and_pba_state() {
     let mut restored = NvmePciDevice::new(Box::new(AeroStorageDiskAdapter::new(Box::new(
         disk.clone(),
     ))));
+    restored.load_state(&snap).unwrap();
     let msix_cap_off2 = restored
         .config_mut()
         .find_capability(PCI_CAP_ID_MSIX)
         .expect("restored device should have MSI-X capability") as u16;
-    restored.load_state(&snap).unwrap();
 
     // MSI-X enable bit should be preserved via PCI config-space snapshot.
     let ctrl2 = restored.config_mut().read(msix_cap_off2 + 0x02, 2) as u16;
