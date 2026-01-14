@@ -1620,6 +1620,12 @@ and binds it via `VertexFormat::Float32x4` at fixed locations 0/1 (see
 `GEOMETRY_PREPASS_CS_WGSL` and `EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` in
 `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
 
+The in-tree repo also contains an emulation-only passthrough VS generator that does **storage-buffer
+vertex pulling** from an `ExpandedVertex` record (`pos: vec4<f32>` + `varyings: array<vec4<f32>, 32>`)
+at `@group(3) @binding(BINDING_INTERNAL_EXPANDED_VERTICES)` (see
+`generate_passthrough_vs_wgsl` in `crates/aero-d3d11/src/runtime/wgsl_link.rs`). When changing
+expanded-vertex layout conventions, keep both variants consistent or delete the unused one.
+
 #### 2.3) Indirect draw argument formats
 
 The indirect args buffer stores one of the WebGPU-defined structs at offset 0:
