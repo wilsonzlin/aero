@@ -91,10 +91,27 @@ impl MemoryBus for LinearGuestMemory {
                         buf[off..].fill(0);
                         return;
                     };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes` and the
-                    // guest region is bounds-checked against the wasm linear memory size in
-                    // `E1000Bridge::new`.
+
+                    // Shared-memory (`+atomics`) builds: use atomic byte reads to avoid Rust
+                    // data-race UB when the guest RAM lives in a shared `WebAssembly.Memory`.
+                    #[cfg(target_feature = "atomics")]
+                    {
+                        use core::sync::atomic::{AtomicU8, Ordering};
+                        let src = ptr as *const AtomicU8;
+                        for (i, slot) in buf[off..off + len].iter_mut().enumerate() {
+                            // Safety: `translate_guest_paddr_chunk` bounds-checks against
+                            // `ram_bytes` and `AtomicU8` has alignment 1.
+                            *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+                        }
+                    }
+
+                    // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy
+                    // is fine.
+                    #[cfg(not(target_feature = "atomics"))]
                     unsafe {
+                        // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes`
+                        // and the guest region is bounds-checked against the wasm linear memory
+                        // size in `E1000Bridge::new`.
                         core::ptr::copy_nonoverlapping(ptr, buf[off..].as_mut_ptr(), len);
                     }
                     len
@@ -144,10 +161,27 @@ impl MemoryBus for LinearGuestMemory {
                     let Some(ptr) = self.linear_ptr_mut(ram_offset, len) else {
                         return;
                     };
-                    // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes` and the
-                    // guest region is bounds-checked against the wasm linear memory size in
-                    // `E1000Bridge::new`.
+
+                    // Shared-memory (`+atomics`) builds: use atomic byte writes to avoid Rust
+                    // data-race UB when the guest RAM lives in a shared `WebAssembly.Memory`.
+                    #[cfg(target_feature = "atomics")]
+                    {
+                        use core::sync::atomic::{AtomicU8, Ordering};
+                        let dst = ptr as *const AtomicU8;
+                        for (i, byte) in buf[off..off + len].iter().copied().enumerate() {
+                            // Safety: `translate_guest_paddr_chunk` bounds-checks against
+                            // `ram_bytes` and `AtomicU8` has alignment 1.
+                            unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+                        }
+                    }
+
+                    // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy
+                    // is fine.
+                    #[cfg(not(target_feature = "atomics"))]
                     unsafe {
+                        // Safety: `translate_guest_paddr_chunk` bounds-checks against `ram_bytes`
+                        // and the guest region is bounds-checked against the wasm linear memory
+                        // size in `E1000Bridge::new`.
                         core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), ptr, len);
                     }
                     len
