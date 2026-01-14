@@ -53,6 +53,10 @@ typedef LONG NTSTATUS;
 #define STATUS_INSUFFICIENT_RESOURCES ((NTSTATUS)0xC000009AL)
 #endif
 
+#ifndef STATUS_UNSUCCESSFUL
+#define STATUS_UNSUCCESSFUL ((NTSTATUS)0xC0000001L)
+#endif
+
 #ifndef STATUS_BUFFER_TOO_SMALL
 #define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023L)
 #endif
@@ -6741,7 +6745,7 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
         JsonWriteTopLevelError(out, "read-gpa", f, "Failed to open --out file to read prefix", STATUS_UNSUCCESSFUL);
         return 2;
       }
-      const size_t n = fread(prefix.data(), 1, jsonPrefixBytes, fp);
+      const size_t n = fread(&prefix[0], 1, jsonPrefixBytes, fp);
       fclose(fp);
       if (n != jsonPrefixBytes) {
         JsonWriteTopLevelError(out, "read-gpa", f, "Failed to read prefix bytes from --out file", STATUS_UNSUCCESSFUL);
@@ -6786,7 +6790,7 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     w.Key("out_written");
     w.Bool(true);
     w.Key("data_hex");
-    w.String(BytesToHex(prefix.data(), jsonPrefixBytes));
+    w.String(BytesToHex(jsonPrefixBytes ? &prefix[0] : NULL, jsonPrefixBytes));
     w.EndObject();
 
     w.EndObject();
