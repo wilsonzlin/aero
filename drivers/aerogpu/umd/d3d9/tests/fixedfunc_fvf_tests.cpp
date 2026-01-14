@@ -12177,6 +12177,132 @@ bool TestFvfXyzNormalDiffuseNormalizesDirectionalLightDirection() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseNormalizesDirectionalLightDirectionAfterViewTransform() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  // Use a VIEW matrix with non-unit scale so direction normalization must occur
+  // after the view transform (not just on the input direction).
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX view = identity;
+  view.m[0][0] = 2.0f; // scale X
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0 identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &view);
+  if (!Check(hr == S_OK, "SetTransform(VIEW scaled)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {1.0f, 0.0f, 0.0f};
+  light0.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(view-scaled direction normalization)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(view-scaled direction normalization)")) {
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "view-scaled normalization: lighting payload present")) {
+    return false;
+  }
+
+  constexpr uint32_t kLight0DirRel = (211u - kFixedfuncLightingStartRegister);
+  const float x = payload[kLight0DirRel * 4 + 0];
+  const float y = payload[kLight0DirRel * 4 + 1];
+  const float z = payload[kLight0DirRel * 4 + 2];
+  const float w = payload[kLight0DirRel * 4 + 3];
+
+  // With VIEW scaling X by 2, the unnormalized view-space direction is (-2,0,0),
+  // but the driver should renormalize it to unit length (-1,0,0).
+  if (!Check(std::fabs(x - (-1.0f)) < 1e-6f &&
+                 std::fabs(y - 0.0f) < 1e-6f &&
+                 std::fabs(z - 0.0f) < 1e-6f &&
+                 std::fabs(w - 0.0f) < 1e-6f,
+             "view-scaled normalization: packed dir is renormalized after view transform")) {
+    return false;
+  }
+  const float len2 = x * x + y * y + z * z;
+  if (!Check(std::fabs(len2 - 1.0f) < 1e-5f, "view-scaled normalization: packed direction is unit length")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffuseGlobalAmbientPreservesAlphaChannel() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -12241,6 +12367,74 @@ bool TestFvfXyzNormalDiffuseGlobalAmbientPreservesAlphaChannel() {
                  payload[kFixedfuncLightingGlobalAmbientRel * 4 + 2] == 0.0f &&
                  payload[kFixedfuncLightingGlobalAmbientRel * 4 + 3] == 0.0f,
              "global ambient alpha: ARGB->RGBA conversion preserves alpha channel")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffuseLightingOffDoesNotUploadLightingConstants() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use an FVF that carries normals and would otherwise use the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+
+  // Lighting disabled: must not upload the fixed-function lighting constant range.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=FALSE)")) {
+    return false;
+  }
+  // Still set AMBIENT to ensure the lighting block would differ if it were uploaded.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF0000FFu);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=blue)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(lighting disabled)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "VS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosNormalDiffuse),
+               "lighting off: selected unlit VS variant")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(lighting disabled)")) {
+    return false;
+  }
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count) == 0,
+             "lighting off: does not upload fixed-function lighting constants")) {
     return false;
   }
 
@@ -15302,7 +15496,13 @@ int main() {
   if (!aerogpu::TestFvfXyzNormalDiffuseNormalizesDirectionalLightDirection()) {
     return 1;
   }
+  if (!aerogpu::TestFvfXyzNormalDiffuseNormalizesDirectionalLightDirectionAfterViewTransform()) {
+    return 1;
+  }
   if (!aerogpu::TestFvfXyzNormalDiffuseGlobalAmbientPreservesAlphaChannel()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseLightingOffDoesNotUploadLightingConstants()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseDisablingLight0ShiftsPackedLights()) {
