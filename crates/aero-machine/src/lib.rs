@@ -1993,7 +1993,6 @@ impl MmioHandler for VgaLfbMmio {
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
-
 /// Size of the legacy VGA memory window (`0xA0000..0xC0000`) in bytes.
 ///
 /// This is aliased to `VRAM[0..LEGACY_VGA_WINDOW_SIZE]` when AeroGPU is enabled.

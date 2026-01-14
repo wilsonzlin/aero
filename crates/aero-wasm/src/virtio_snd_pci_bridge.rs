@@ -31,7 +31,7 @@ use aero_platform::audio::mic_bridge::MicBridge;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 use aero_platform::interrupts::msi::MsiMessage;
 
-use aero_virtio::devices::snd::{JACK_ID_MICROPHONE, VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
+use aero_virtio::devices::snd::{JACK_ID_MICROPHONE, JACK_ID_SPEAKER, VIRTIO_SND_QUEUE_EVENT, VirtioSnd};
 use aero_virtio::memory::{GuestMemory, GuestMemoryError};
 use aero_virtio::pci::{InterruptSink, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VirtioPciDevice};
 
@@ -632,26 +632,32 @@ impl VirtioSndPciBridge {
 
         {
             let snd = self.snd_mut();
-            let output = snd.output_mut();
-            output.attach(ring_sab, capacity_frames, channel_count)?;
+            {
+                let output = snd.output_mut();
+                output.attach(ring_sab, capacity_frames, channel_count)?;
 
-            // Apply a deferred ring restore if `load_state` was called before the host reattached
-            // the AudioWorklet ring.
-            if let Some(mut state) = pending_state.take() {
-                if let Some(ring) = output.worklet_ring() {
-                    // Snapshot state stores the ring capacity for determinism/debugging, but
-                    // restores must be best-effort. If the host allocates a different capacity than
-                    // what was captured in the snapshot, clear the field so
-                    // `WorkletBridge::restore_state` bypasses its debug-only capacity assertion.
-                    if state.capacity_frames != 0 && state.capacity_frames != ring.capacity_frames()
-                    {
-                        state.capacity_frames = 0;
+                // Apply a deferred ring restore if `load_state` was called before the host reattached
+                // the AudioWorklet ring.
+                if let Some(mut state) = pending_state.take() {
+                    if let Some(ring) = output.worklet_ring() {
+                        // Snapshot state stores the ring capacity for determinism/debugging, but
+                        // restores must be best-effort. If the host allocates a different capacity than
+                        // what was captured in the snapshot, clear the field so
+                        // `WorkletBridge::restore_state` bypasses its debug-only capacity assertion.
+                        if state.capacity_frames != 0 && state.capacity_frames != ring.capacity_frames()
+                        {
+                            state.capacity_frames = 0;
+                        }
+                        ring.restore_state(&state);
+                    } else {
+                        pending_state = Some(state);
                     }
-                    ring.restore_state(&state);
-                } else {
-                    pending_state = Some(state);
                 }
             }
+
+            // Reflect whether the host has attached an output ring buffer: this maps to the
+            // speaker jack in the Win7 topology miniport.
+            snd.queue_jack_event(JACK_ID_SPEAKER, true);
         }
 
         self.pending_audio_ring_state = pending_state;
@@ -659,7 +665,9 @@ impl VirtioSndPciBridge {
     }
 
     pub fn detach_audio_ring(&mut self) {
-        self.snd_mut().output_mut().detach();
+        let snd = self.snd_mut();
+        snd.output_mut().detach();
+        snd.queue_jack_event(JACK_ID_SPEAKER, false);
     }
 
     /// Convenience helper: attach/detach the audio ring buffer using an `Option`.
