@@ -167,6 +167,19 @@ export function present_rgba8888(frame: Uint8Array, strideBytes: number): void {
   mod.present_rgba8888(frame, strideBytes);
 }
 
+export function has_present_rgba8888_with_result(): boolean {
+  const mod = requireLoaded();
+  return typeof mod.present_rgba8888_with_result === "function";
+}
+
+export function present_rgba8888_with_result(frame: Uint8Array, strideBytes: number): boolean {
+  const mod = requireLoaded();
+  if (typeof mod.present_rgba8888_with_result !== "function") {
+    throw new Error("aero-gpu wasm export present_rgba8888_with_result is missing (outdated bundle?)");
+  }
+  return mod.present_rgba8888_with_result(frame, strideBytes) as boolean;
+}
+
 export function upload_rgba8888(frame: Uint8Array, strideBytes: number): void {
   const mod = requireLoaded();
   if (typeof mod.upload_rgba8888 !== "function") {
@@ -180,12 +193,29 @@ export function has_present_rgba8888_dirty_rects(): boolean {
   return typeof mod.present_rgba8888_dirty_rects === "function";
 }
 
+export function has_present_rgba8888_dirty_rects_with_result(): boolean {
+  const mod = requireLoaded();
+  return typeof mod.present_rgba8888_dirty_rects_with_result === "function";
+}
+
 export function present_rgba8888_dirty_rects(frame: Uint8Array, strideBytes: number, rects: Uint32Array): void {
   const mod = requireLoaded();
   if (typeof mod.present_rgba8888_dirty_rects !== "function") {
     throw new Error("aero-gpu wasm export present_rgba8888_dirty_rects is missing (outdated bundle?)");
   }
   mod.present_rgba8888_dirty_rects(frame, strideBytes, rects);
+}
+
+export function present_rgba8888_dirty_rects_with_result(
+  frame: Uint8Array,
+  strideBytes: number,
+  rects: Uint32Array,
+): boolean {
+  const mod = requireLoaded();
+  if (typeof mod.present_rgba8888_dirty_rects_with_result !== "function") {
+    throw new Error("aero-gpu wasm export present_rgba8888_dirty_rects_with_result is missing (outdated bundle?)");
+  }
+  return mod.present_rgba8888_dirty_rects_with_result(frame, strideBytes, rects) as boolean;
 }
 
 export function upload_rgba8888_dirty_rects(frame: Uint8Array, strideBytes: number, rects: Uint32Array): void {

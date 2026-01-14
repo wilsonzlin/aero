@@ -121,6 +121,7 @@ import {
 import type { Presenter, PresenterBackendKind, PresenterInitOptions } from "../gpu/presenter";
 import { PresenterError } from "../gpu/presenter";
 import { RawWebGl2Presenter } from "../gpu/raw-webgl2-presenter-backend";
+import { didPresenterPresent } from "./present-outcome.ts";
 import {
   createAerogpuCpuExecutorState,
   decodeAerogpuAllocTable,
@@ -2028,7 +2029,7 @@ const presentOnce = async (): Promise<boolean> => {
         chosenDirtyRects && chosenDirtyRects.length > 0 ? "dirty_rects" : "full";
       const predictedDirtyCount = chosenDirtyRects ? chosenDirtyRects.length : 0;
       const result = await presentFn(chosenDirtyRects);
-      const didPresent = typeof result === "boolean" ? result : true;
+      const didPresent = didPresenterPresent(result);
       if (didPresent) {
         lastPresentUploadKind = predictedKind;
         lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
@@ -2073,10 +2074,20 @@ const presentOnce = async (): Promise<boolean> => {
             }
 
             if (presenterNeedsFullUpload || aerogpuLastOutputSource !== "aerogpu") {
-              presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+              const result = presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
               presenterNeedsFullUpload = false;
-              lastPresentUploadKind = "full";
-              lastPresentUploadDirtyRectCount = 0;
+              const didPresent = didPresenterPresent(result);
+              if (didPresent) {
+                lastPresentUploadKind = "full";
+                lastPresentUploadDirtyRectCount = 0;
+                aerogpuLastOutputSource = "aerogpu";
+              }
+              // Even when a frame is intentionally dropped (e.g. surface timeout/outdated),
+              // clear the shared framebuffer dirty flag: the frame was consumed by the worker
+              // and retrying immediately can cause tick storms / stall producers. Drop vs
+              // presented is reflected in the returned boolean.
+              clearSharedFramebufferDirty();
+              return didPresent;
             }
             aerogpuLastOutputSource = "aerogpu";
             clearSharedFramebufferDirty();
@@ -2095,37 +2106,59 @@ const presentOnce = async (): Promise<boolean> => {
         presenterNeedsFullUpload = true;
       }
 
-      const dirtyPresenter = presenter as Presenter & {
-        presentDirtyRects?: (frame: number | ArrayBuffer | ArrayBufferView, stride: number, dirtyRects: DirtyRect[]) => void;
-      };
+      const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
+      const framebufferOutputSource: GpuRuntimeOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
+
       const needsFullUpload = presenterNeedsFullUpload || aerogpuLastOutputSource !== "framebuffer";
       if (needsFullUpload) {
-        presenter.present(frame.pixels, frame.strideBytes);
+        const result = presenter.present(frame.pixels, frame.strideBytes);
         presenterNeedsFullUpload = false;
-        lastPresentUploadKind = "full";
-      } else if (typeof dirtyPresenter.presentDirtyRects === "function") {
+        const didPresent = didPresenterPresent(result);
+        if (didPresent) {
+          lastPresentUploadKind = "full";
+          aerogpuLastOutputSource = framebufferOutputSource;
+        }
+        // See comment above: clearing dirty on drop avoids tick storms / producer stalls.
+        clearSharedFramebufferDirty();
+        return didPresent;
+      } else if (typeof presenter.presentDirtyRects === "function") {
         const bytesPerRowAlignment = bytesPerRowAlignmentForPresenterBackend(presenter.backend);
         const chosenDirtyRects =
           frame.sharedLayout === undefined
             ? dirtyRects
             : chooseDirtyRectsForUpload(frame.sharedLayout, dirtyRects, bytesPerRowAlignment);
         if (chosenDirtyRects && chosenDirtyRects.length > 0) {
-          dirtyPresenter.presentDirtyRects(frame.pixels, frame.strideBytes, chosenDirtyRects);
           lastUploadDirtyRects = chosenDirtyRects;
-          lastPresentUploadKind = "dirty_rects";
-          lastPresentUploadDirtyRectCount = chosenDirtyRects.length;
+          const result = presenter.presentDirtyRects(frame.pixels, frame.strideBytes, chosenDirtyRects);
+          const didPresent = didPresenterPresent(result);
+          if (didPresent) {
+            lastPresentUploadKind = "dirty_rects";
+            lastPresentUploadDirtyRectCount = chosenDirtyRects.length;
+            aerogpuLastOutputSource = framebufferOutputSource;
+          }
+          clearSharedFramebufferDirty();
+          return didPresent;
         } else {
-          presenter.present(frame.pixels, frame.strideBytes);
-          lastPresentUploadKind = "full";
+          const result = presenter.present(frame.pixels, frame.strideBytes);
+          const didPresent = didPresenterPresent(result);
+          if (didPresent) {
+            lastPresentUploadKind = "full";
+            aerogpuLastOutputSource = framebufferOutputSource;
+          }
+          clearSharedFramebufferDirty();
+          return didPresent;
         }
       } else {
-        presenter.present(frame.pixels, frame.strideBytes);
-        lastPresentUploadKind = "full";
+        const result = presenter.present(frame.pixels, frame.strideBytes);
+        const didPresent = didPresenterPresent(result);
+        if (didPresent) {
+          lastPresentUploadKind = "full";
+          aerogpuLastOutputSource = framebufferOutputSource;
+        }
+        clearSharedFramebufferDirty();
+        return didPresent;
       }
-      const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
-      aerogpuLastOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
-      clearSharedFramebufferDirty();
-      return true;
+      // Unreachable: all branches return above.
     }
 
     // Headless: treat as successfully presented so the shared frame state can

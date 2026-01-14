@@ -1596,11 +1596,7 @@ mod wasm {
                         wgpu::ImageCopyTexture {
                             texture: &self.framebuffer_texture,
                             mip_level: 0,
-                            origin: wgpu::Origin3d {
-                                x: x0,
-                                y: y0,
-                                z: 0,
-                            },
+                            origin: wgpu::Origin3d { x: x0, y: y0, z: 0 },
                             aspect: wgpu::TextureAspect::All,
                         },
                         data,
@@ -1631,11 +1627,7 @@ mod wasm {
                         wgpu::ImageCopyTexture {
                             texture: &self.framebuffer_texture,
                             mip_level: 0,
-                            origin: wgpu::Origin3d {
-                                x: x0,
-                                y: y0,
-                                z: 0,
-                            },
+                            origin: wgpu::Origin3d { x: x0, y: y0, z: 0 },
                             aspect: wgpu::TextureAspect::All,
                         },
                         data,
@@ -1682,11 +1674,7 @@ mod wasm {
                         wgpu::ImageCopyTexture {
                             texture: &self.framebuffer_texture,
                             mip_level: 0,
-                            origin: wgpu::Origin3d {
-                                x: x0,
-                                y: y0,
-                                z: 0,
-                            },
+                            origin: wgpu::Origin3d { x: x0, y: y0, z: 0 },
                             aspect: wgpu::TextureAspect::All,
                         },
                         &self.upload_scratch[..required_len],
@@ -1703,9 +1691,7 @@ mod wasm {
                     );
                 }
 
-                let bytes = u64::from(w)
-                    .saturating_mul(4)
-                    .saturating_mul(u64::from(h));
+                let bytes = u64::from(w).saturating_mul(4).saturating_mul(u64::from(h));
                 RGBA8_UPLOAD_BYTES_DIRTY.fetch_add(bytes, Ordering::Relaxed);
                 RGBA8_UPLOAD_DIRTY_RECTS.fetch_add(1, Ordering::Relaxed);
 
@@ -1721,7 +1707,7 @@ mod wasm {
             Ok(())
         }
 
-        fn present(&mut self) -> Result<(), JsValue> {
+        fn present_with_result(&mut self) -> Result<bool, JsValue> {
             gpu_stats().inc_presents_attempted();
             self.ensure_surface_matches_canvas();
 
@@ -1731,7 +1717,7 @@ mod wasm {
             else {
                 // docs/04-graphics-subsystem.md: SurfaceError::Timeout drops the frame (warn) and
                 // continues without throwing.
-                return Ok(());
+                return Ok(false);
             };
 
             // Start profiler tracking only after we know we're actually going to submit work for
@@ -1772,6 +1758,11 @@ mod wasm {
             self.profiler.submit(&self.queue, command_buffer);
             frame.present();
             gpu_stats().inc_presents_succeeded();
+            Ok(true)
+        }
+
+        fn present(&mut self) -> Result<(), JsValue> {
+            let _ = self.present_with_result()?;
             Ok(())
         }
 
@@ -3385,6 +3376,18 @@ mod wasm {
         })
     }
 
+    /// Present an RGBA8888 frame and return whether it was actually presented.
+    ///
+    /// Returns `false` when the frame is intentionally dropped due to surface acquire failures
+    /// (e.g. timeout, lost/outdated after reconfigure), matching docs/04.
+    #[wasm_bindgen]
+    pub fn present_rgba8888_with_result(frame: &[u8], stride_bytes: u32) -> Result<bool, JsValue> {
+        with_state_mut(|state| {
+            state.presenter.upload_rgba8_strided(frame, stride_bytes)?;
+            state.presenter.present_with_result()
+        })
+    }
+
     /// Upload an RGBA8888 frame into the internal framebuffer texture without presenting it.
     ///
     /// This is primarily useful for tests/benchmarks that validate upload behavior independent
@@ -3401,9 +3404,27 @@ mod wasm {
         rects: &[u32],
     ) -> Result<(), JsValue> {
         with_state_mut(|state| {
-            state.presenter
+            state
+                .presenter
                 .upload_rgba8_strided_dirty_rects(frame, stride_bytes, rects)?;
             state.presenter.present()
+        })
+    }
+
+    /// Dirty-rect present variant that returns whether it was actually presented.
+    ///
+    /// See `present_rgba8888_with_result` for drop semantics.
+    #[wasm_bindgen]
+    pub fn present_rgba8888_dirty_rects_with_result(
+        frame: &[u8],
+        stride_bytes: u32,
+        rects: &[u32],
+    ) -> Result<bool, JsValue> {
+        with_state_mut(|state| {
+            state
+                .presenter
+                .upload_rgba8_strided_dirty_rects(frame, stride_bytes, rects)?;
+            state.presenter.present_with_result()
         })
     }
 
@@ -3415,7 +3436,8 @@ mod wasm {
         rects: &[u32],
     ) -> Result<(), JsValue> {
         with_state_mut(|state| {
-            state.presenter
+            state
+                .presenter
                 .upload_rgba8_strided_dirty_rects(frame, stride_bytes, rects)
         })
     }

@@ -3,9 +3,14 @@ import { PresenterError } from './presenter';
 
 import initAeroGpuWasm, {
   destroy_gpu,
+  get_gpu_stats,
+  has_present_rgba8888_dirty_rects_with_result,
+  has_present_rgba8888_with_result,
   has_present_rgba8888_dirty_rects,
   init_gpu,
   present_rgba8888,
+  present_rgba8888_dirty_rects_with_result,
+  present_rgba8888_with_result,
   present_rgba8888_dirty_rects,
   request_screenshot,
   resize as resize_gpu,
@@ -25,6 +30,8 @@ export class WgpuWebGl2Presenter implements Presenter {
   private initialized = false;
   private dirtyRectScratch: Uint32Array | null = null;
   private hasDirtyRectPresent = false;
+  private hasPresentWithResult = false;
+  private hasDirtyRectPresentWithResult = false;
 
   public async init(canvas: OffscreenCanvas, width: number, height: number, dpr: number, opts?: PresenterInitOptions): Promise<void> {
     this.opts = opts ?? {};
@@ -35,7 +42,9 @@ export class WgpuWebGl2Presenter implements Presenter {
     this.gl = null;
 
     await initAeroGpuWasm();
+    this.hasPresentWithResult = has_present_rgba8888_with_result();
     this.hasDirtyRectPresent = has_present_rgba8888_dirty_rects();
+    this.hasDirtyRectPresentWithResult = has_present_rgba8888_dirty_rects_with_result();
 
     // Ensure stale state from a previous init is cleared before creating the new surface.
     try {
@@ -89,7 +98,7 @@ export class WgpuWebGl2Presenter implements Presenter {
     }
   }
 
-  public present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): void {
+  public present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): boolean {
     if (!this.initialized) {
       throw new PresenterError('not_initialized', 'WgpuWebGl2Presenter.present() called before init()');
     }
@@ -107,20 +116,35 @@ export class WgpuWebGl2Presenter implements Presenter {
     const data = this.resolveFrameData(frame, expectedBytes);
 
     try {
+      if (this.hasPresentWithResult) {
+        return present_rgba8888_with_result(data, stride);
+      }
+
+      // Back-compat fallback: older wasm bundles always returned `Ok(())` even when a frame
+      // was intentionally dropped due to surface acquire failures. When the structured stats
+      // export is available, detect the drop by observing whether `presents_succeeded`
+      // advanced.
+      const before = tryReadWasmPresentsSucceeded();
       present_rgba8888(data, stride);
+      const after = tryReadWasmPresentsSucceeded();
+      if (before !== null && after !== null) return after > before;
+      return true;
     } catch (err) {
       throw new PresenterError('wgpu_present_failed', 'Failed to present frame via wgpu WebGL2 presenter', err);
     }
   }
 
-  public presentDirtyRects(frame: number | ArrayBuffer | ArrayBufferView, stride: number, dirtyRects: DirtyRect[]): void {
+  public presentDirtyRects(
+    frame: number | ArrayBuffer | ArrayBufferView,
+    stride: number,
+    dirtyRects: DirtyRect[],
+  ): boolean {
     if (!this.initialized) {
       throw new PresenterError('not_initialized', 'WgpuWebGl2Presenter.presentDirtyRects() called before init()');
     }
 
     if (!this.hasDirtyRectPresent) {
-      this.present(frame, stride);
-      return;
+      return this.present(frame, stride);
     }
 
     if (stride <= 0) {
@@ -133,8 +157,7 @@ export class WgpuWebGl2Presenter implements Presenter {
     }
 
     if (!dirtyRects || dirtyRects.length === 0) {
-      this.present(frame, stride);
-      return;
+      return this.present(frame, stride);
     }
 
     const expectedBytes = stride * this.srcHeight;
@@ -156,7 +179,15 @@ export class WgpuWebGl2Presenter implements Presenter {
     }
 
     try {
+      if (this.hasDirtyRectPresentWithResult) {
+        return present_rgba8888_dirty_rects_with_result(data, stride, rectWords);
+      }
+
+      const before = tryReadWasmPresentsSucceeded();
       present_rgba8888_dirty_rects(data, stride, rectWords);
+      const after = tryReadWasmPresentsSucceeded();
+      if (before !== null && after !== null) return after > before;
+      return true;
     } catch (err) {
       throw new PresenterError('wgpu_present_failed', 'Failed to present dirty rects via wgpu WebGL2 presenter', err);
     }
@@ -324,5 +355,19 @@ export class WgpuWebGl2Presenter implements Presenter {
       );
     }
     return new Uint8Array(view.buffer, view.byteOffset, byteLength);
+  }
+}
+
+function tryReadWasmPresentsSucceeded(): number | null {
+  try {
+    const stats = get_gpu_stats();
+    // Some telemetry exports are async/promises in older bundles. If we can't read the stats
+    // synchronously, fall back to treating the present as successful.
+    if (stats && typeof (stats as { then?: unknown }).then === "function") return null;
+    if (!stats || typeof stats !== "object") return null;
+    const raw = (stats as Record<string, unknown>)["presents_succeeded"] ?? (stats as Record<string, unknown>)["presentsSucceeded"];
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+  } catch {
+    return null;
   }
 }

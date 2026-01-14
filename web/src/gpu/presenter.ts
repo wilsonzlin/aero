@@ -1,3 +1,5 @@
+import type { DirtyRect } from '../ipc/shared-layout';
+
 export type PresenterBackendKind = 'webgpu' | 'webgl2_wgpu' | 'webgl2_raw';
 export type PresenterScaleMode = 'stretch' | 'fit' | 'integer';
 
@@ -84,7 +86,29 @@ export interface Presenter {
     opts?: PresenterInitOptions,
   ): Promise<void> | void;
   resize(width: number, height: number, dpr: number): void;
-  present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): void;
+  /**
+   * Present the provided framebuffer bytes to the output surface.
+   *
+   * ## Return value (drop vs presented)
+   *
+   * Backends may intentionally *drop* a frame (e.g. surface acquire timeout, or
+   * recoverable surface loss/outdated handling). In these cases they should
+   * return `false` to indicate the frame was not actually presented.
+   *
+   * Returning `undefined` (the historical behavior) is treated as success.
+   */
+  present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): void | boolean;
+  /**
+   * Optional dirty-rect optimized present path.
+   *
+   * When implemented, should follow the same return-value semantics as `present()`:
+   * `false` indicates the frame was dropped (not presented).
+   */
+  presentDirtyRects?(
+    frame: number | ArrayBuffer | ArrayBufferView,
+    stride: number,
+    dirtyRects: DirtyRect[],
+  ): void | boolean;
   /**
    * Capture a screenshot of the current frame.
    *

@@ -184,7 +184,7 @@ export class WebGpuPresenterBackend implements Presenter {
     this.createFrameResources(width, height);
   }
 
-  public present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): void {
+  public present(frame: number | ArrayBuffer | ArrayBufferView, stride: number): boolean {
     if (!this.canvas || !this.device || !this.queue || !this.ctx || !this.pipeline || !this.bindGroup || !this.frameTexture) {
       throw new PresenterError('not_initialized', 'WebGpuPresenterBackend.present() called before init()');
     }
@@ -214,14 +214,14 @@ export class WebGpuPresenterBackend implements Presenter {
       { width: this.srcWidth, height: this.srcHeight, depthOrArrayLayers: 1 },
     );
 
-    this.renderToCanvas();
+    return this.renderToCanvas();
   }
 
   public presentDirtyRects(
     frame: number | ArrayBuffer | ArrayBufferView,
     stride: number,
     dirtyRects: DirtyRect[],
-  ): void {
+  ): boolean {
     if (!this.canvas || !this.device || !this.queue || !this.ctx || !this.pipeline || !this.bindGroup || !this.frameTexture) {
       throw new PresenterError('not_initialized', 'WebGpuPresenterBackend.presentDirtyRects() called before init()');
     }
@@ -238,10 +238,7 @@ export class WebGpuPresenterBackend implements Presenter {
       );
     }
 
-    if (!dirtyRects || dirtyRects.length === 0) {
-      this.present(frame, stride);
-      return;
-    }
+    if (!dirtyRects || dirtyRects.length === 0) return this.present(frame, stride);
 
     const expectedBytes = stride * this.srcHeight;
     const data = this.resolveFrameData(frame, expectedBytes);
@@ -284,11 +281,10 @@ export class WebGpuPresenterBackend implements Presenter {
     if (!anyUploaded) {
       // Defensive fallback: if all rects were invalid after clamping, do a full upload so the
       // consumer does not keep presenting a stale frame.
-      this.present(frame, stride);
-      return;
+      return this.present(frame, stride);
     }
 
-    this.renderToCanvas();
+    return this.renderToCanvas();
   }
 
   public setCursorImageRgba8(rgba: Uint8Array, width: number, height: number): void {
@@ -868,7 +864,7 @@ export class WebGpuPresenterBackend implements Presenter {
     this.rebuildBindGroup();
   }
 
-  private renderToCanvas(): void {
+  private renderToCanvas(): boolean {
     if (
       !this.canvas ||
       !this.device ||
@@ -878,7 +874,7 @@ export class WebGpuPresenterBackend implements Presenter {
       !this.bindGroup ||
       !this.cursorUniformBuffer
     ) {
-      return;
+      return false;
     }
 
     const cursorEnable =
@@ -945,7 +941,7 @@ export class WebGpuPresenterBackend implements Presenter {
       this.opts.onError?.(
         new PresenterError('webgpu_surface_error', `WebGPU getCurrentTexture() failed: ${message}`, currentTextureError),
       );
-      return;
+      return false;
     }
 
     let view: any = null;
@@ -984,7 +980,7 @@ export class WebGpuPresenterBackend implements Presenter {
       this.opts.onError?.(
         new PresenterError('webgpu_surface_error', `WebGPU currentTexture.createView() failed: ${message}`, viewError),
       );
-      return;
+      return false;
     }
 
     const flags =
@@ -1018,6 +1014,7 @@ export class WebGpuPresenterBackend implements Presenter {
     pass.end();
 
     this.queue.submit([encoder.finish()]);
+    return true;
   }
 
   private ensureCursorResources(): void {
