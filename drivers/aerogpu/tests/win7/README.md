@@ -109,10 +109,12 @@ drivers/aerogpu/tests/win7/
   d3d10_triangle/
   d3d10_rs_om_state_sanity/
   d3d10_map_do_not_wait/
+  d3d10_update_subresource_texture_sanity/
   d3d10_shared_surface_ipc/
   d3d10_1_triangle/
   d3d10_1_rs_om_state_sanity/
   d3d10_1_map_do_not_wait/
+  d3d10_1_update_subresource_texture_sanity/
   d3d10_1_shared_surface_ipc/
   d3d10_caps_smoke/
   d3d11_triangle/
@@ -535,11 +537,13 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d10_triangle` uses `D3D10CreateDeviceAndSwapChain` (hardware), verifies the D3D10 runtime path (`d3d10.dll`) and the AeroGPU `OpenAdapter10` export, and confirms **corner red + center green** via readback
 * `d3d10_rs_om_state_sanity` validates D3D10 rasterizer + output-merger state correctness (scissor enable, cull mode/front-face, depth clip, depth comparisons, alpha blending + write mask + blend factor + sample mask, plus ClearState reset behavior) via offscreen readback
 * `d3d10_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
+* `d3d10_update_subresource_texture_sanity` validates `UpdateSubresource` on a DEFAULT texture (full + boxed update, padded RowPitch) via staging readback (exercises `pfnUpdateSubresourceUP` on Win7)
 * `d3d10_shared_surface_ipc` creates a shareable D3D10 render-target texture in one process, duplicates the shared `HANDLE` into a second process, opens it via `OpenSharedResource`, and validates the consumer can read back the producer’s clear color (catches bugs where the driver treats the numeric handle value as a stable cross-process token)
   * When supported, it also uses `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to confirm both process-local handles map to the same stable **debug token** (separate from the protocol `share_token`).
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d10_1_rs_om_state_sanity` validates D3D10.1 rasterizer + output-merger state correctness (scissor enable, cull mode/front-face, depth clip, depth comparisons, alpha blending + write mask + blend factor + sample mask) via offscreen readback
 * `d3d10_1_map_do_not_wait` is the D3D10.1 variant of the above `Map(READ, DO_NOT_WAIT)` non-blocking poll test
+* `d3d10_1_update_subresource_texture_sanity` is the D3D10.1 variant of `d3d10_update_subresource_texture_sanity` (exercises `pfnUpdateSubresourceUP` boxed updates via staging readback)
 * `d3d10_1_shared_surface_ipc` is the D3D10.1 variant of `d3d10_shared_surface_ipc` (shared texture cross-process `HANDLE` duplication + `OpenSharedResource` + readback). It additionally validates that the AeroGPU UMD exports the D3D10.1 entrypoint `OpenAdapter10_2`.
   * When supported, it also uses `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to confirm both process-local handles map to the same stable **debug token** (separate from the protocol `share_token`).
 * `d3d10_caps_smoke` validates `ID3D10Device::CheckFormatSupport` bits for a few core RT/DS + index/vertex formats used by common apps
