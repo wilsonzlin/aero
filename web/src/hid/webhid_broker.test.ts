@@ -160,6 +160,33 @@ describe("hid/WebHidBroker", () => {
     expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
   });
 
+  it("rejects attachDevice when detachDevice is called before hid.attachResult", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager, attachResultTimeoutMs: 60_000 });
+    const port = new FakePort();
+    port.autoAttachResult = false;
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
+
+    // Wait for the attach message so we know the broker is blocked on the result.
+    let attach: HidAttachMessage | undefined;
+    for (let i = 0; i < 10 && !attach; i += 1) {
+      attach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage | undefined;
+      if (!attach) await new Promise((r) => setTimeout(r, 0));
+    }
+    expect(attach).toBeTruthy();
+
+    await broker.detachDevice(device as unknown as HIDDevice);
+    await expect(attachPromise).rejects.toThrow(/detached while waiting for hid\.attachResult/);
+
+    // Even if the worker responds later, it should not resurrect the attach.
+    port.emit({ type: "hid.attachResult", deviceId: attach!.deviceId, ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(broker.getState().attachedDeviceIds).not.toContain(attach!.deviceId);
+  });
+
   it("clamps oversized inputreport payloads to the expected report size before forwarding", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

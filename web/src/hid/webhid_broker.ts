@@ -958,6 +958,14 @@ export class WebHidBroker {
     this.#inputReportListeners.delete(deviceId);
     this.#lastInputReportInfo.delete(deviceId);
     this.#inputReportExpectedPayloadBytes.delete(deviceId);
+    const pendingAttach = this.#pendingAttachResults.get(deviceId);
+    if (pendingAttach) {
+      this.#pendingAttachResults.delete(deviceId);
+      if (pendingAttach.timeout) {
+        clearTimeout(pendingAttach.timeout);
+      }
+      pendingAttach.reject(new Error(`[webhid] HID deviceId=${deviceId} detached while waiting for hid.attachResult`));
+    }
     // Allow future attaches to re-log size mismatches for this device ID.
     for (const key of this.#inputReportSizeWarned) {
       if (key.startsWith(`${deviceId}:`)) {
