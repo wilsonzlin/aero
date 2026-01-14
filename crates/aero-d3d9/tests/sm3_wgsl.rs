@@ -3618,6 +3618,9 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     // Coarse integration test that SM3 WGSL bindings match the existing AeroGPU D3D9 executor
     // pipeline layout contract:
     // - group(0): constants (VERTEX+FRAGMENT)
+    //   - binding(0): float4 constants (`c#`)
+    //   - binding(1): int4 constants (`i#`)
+    //   - binding(2): bool constants (`b#`, stored as `vec4<u32>` per register)
     // - group(1): VS samplers (VERTEX only)
     // - group(2): PS samplers (FRAGMENT only)
     // - group(3): optional half-pixel-center adjustment uniform (VERTEX only)
@@ -3693,19 +3696,48 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
         source: wgpu::ShaderSource::Wgsl(Cow::Owned(ps_out.wgsl.clone())),
     });
 
+    // Must match the executor's constants bind group layout: 3 slices into a single constants
+    // buffer, one for each register file type.
+    const CONSTANTS_REGION_SIZE_BYTES: u64 = 512 * 16;
+    const CONSTANTS_FLOATS_OFFSET_BYTES: u64 = 0;
+    const CONSTANTS_INTS_OFFSET_BYTES: u64 = CONSTANTS_REGION_SIZE_BYTES;
+    const CONSTANTS_BOOLS_OFFSET_BYTES: u64 = CONSTANTS_REGION_SIZE_BYTES * 2;
+    const CONSTANTS_BUFFER_SIZE_BYTES: u64 = CONSTANTS_REGION_SIZE_BYTES * 3;
+
     let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sm3-wgsl-test.constants_bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                // 512 vec4<f32>.
-                min_binding_size: wgpu::BufferSize::new(512 * 16),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                },
+                count: None,
+            },
+        ],
     });
     let samplers_vs_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sm3-wgsl-test.samplers_vs_bgl"),
@@ -3813,24 +3845,45 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
 
     // Also run a tiny draw that binds all expected bind groups. This catches cases where wgpu
     // defers certain binding/layout validation until draw/submit.
-    const CONSTANTS_SIZE_BYTES: u64 = 512 * 16;
     let constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sm3-wgsl-test.constants"),
-        size: CONSTANTS_SIZE_BYTES,
+        size: CONSTANTS_BUFFER_SIZE_BYTES,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     // Keep shader execution deterministic (avoid uninitialized uniform buffer contents during the
     // draw below).
-    let constants_init = vec![0u8; CONSTANTS_SIZE_BYTES as usize];
+    let constants_init = vec![0u8; CONSTANTS_BUFFER_SIZE_BYTES as usize];
     queue.write_buffer(&constants_buffer, 0, &constants_init);
     let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("sm3-wgsl-test.constants_bg"),
         layout: &constants_bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: constants_buffer.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &constants_buffer,
+                    offset: CONSTANTS_FLOATS_OFFSET_BYTES,
+                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &constants_buffer,
+                    offset: CONSTANTS_INTS_OFFSET_BYTES,
+                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &constants_buffer,
+                    offset: CONSTANTS_BOOLS_OFFSET_BYTES,
+                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
+                }),
+            },
+        ],
     });
 
     // 1x1 RGBA8 texture containing vec4(0,0,0,1) so the vertex shader writes a valid position.
