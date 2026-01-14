@@ -466,7 +466,11 @@ inline bool build_texture2d_subresource_layouts(uint32_t aerogpu_format,
   if (subresource_count == 0 || subresource_count > static_cast<uint64_t>(SIZE_MAX)) {
     return false;
   }
-  out_layouts->reserve(static_cast<size_t>(subresource_count));
+  try {
+    out_layouts->reserve(static_cast<size_t>(subresource_count));
+  } catch (...) {
+    return false;
+  }
 
   uint64_t offset = 0;
   for (uint32_t layer = 0; layer < array_layers; ++layer) {
@@ -498,7 +502,11 @@ inline bool build_texture2d_subresource_layouts(uint32_t aerogpu_format,
       layout.row_pitch_bytes = row_pitch;
       layout.rows_in_layout = rows;
       layout.size_bytes = size_bytes;
-      out_layouts->push_back(layout);
+      try {
+        out_layouts->push_back(layout);
+      } catch (...) {
+        return false;
+      }
 
       const uint64_t next = offset + size_bytes;
       if (next < offset) {
