@@ -205,6 +205,10 @@ const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 = DrawIndexedIndirectArgs::
 // Counter block for compute-based GS/HS/DS emulation. Sized to match
 // `runtime::gs_translate::GsPrepassCounters` (4x u32 / 16 bytes).
 const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 16;
+// Translated GS prepasses pack indirect args and counters into a single storage buffer to stay
+// within WebGPU's minimum `max_storage_buffers_per_shader_stage` (4).
+const GEOMETRY_PREPASS_GS_STATE_SIZE_BYTES: u64 =
+    GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES + GEOMETRY_PREPASS_COUNTER_SIZE_BYTES;
 // `vec4<f32>` color + `vec4<u32>` counts.
 const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 32;
 // Placeholder prepass storage buffer containing:
@@ -4027,7 +4031,7 @@ impl AerogpuD3d11Executor {
         let state_alloc = self
             .expansion_indirect_scratch
             .alloc_gs_prepass_state_draw_indexed(&self.device)
-            .map_err(|e| anyhow!("GS prepass: alloc indirect+counter state buffer: {e}"))?;
+            .map_err(|e| anyhow!("GS prepass: alloc indirect args + counters buffer: {e}"))?;
         let indirect_args_alloc = ExpansionScratchAlloc {
             buffer: state_alloc.buffer.clone(),
             offset: state_alloc.offset,
@@ -4089,10 +4093,7 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(
-                        GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES
-                            + GEOMETRY_PREPASS_COUNTER_SIZE_BYTES,
-                    ),
+                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_GS_STATE_SIZE_BYTES),
                 },
                 count: None,
             },
@@ -6825,7 +6826,9 @@ impl AerogpuD3d11Executor {
                             anyhow!("geometry prepass expanded index slice overflows u64")
                         })?;
                     pass.set_index_buffer(
-                        expanded_index_alloc.buffer.slice(0..ib_end),
+                        expanded_index_alloc
+                            .buffer
+                            .slice(expanded_index_alloc.offset..ib_end),
                         wgpu::IndexFormat::Uint32,
                     );
                     pass.draw_indexed_indirect(
@@ -12717,29 +12720,28 @@ impl AerogpuD3d11Executor {
                 // back to an empty compute shader so the handle can still be created/bound; draws
                 // with that GS bound will later return a clear "geometry shader not supported"
                 // error.
-                let translation = match crate::sm4::decode_program(&program)
-                    .context("decode SM4/5 token stream")
-                {
-                    Ok(module) => {
-                        bindings = crate::shader_translate::reflect_resource_bindings(&module)
-                            .ok()
-                            .unwrap_or_default();
-                        match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
-                            &module,
-                            entry_point,
-                        ) {
-                            Ok(t) => Some(t),
-                            Err(e) => {
-                                gs_prepass_error = Some(e.to_string());
-                                None
+                let translation: Option<super::gs_translate::GsPrepassTranslation> =
+                    match crate::sm4::decode_program(&program).context("decode SM4/5 token stream") {
+                        Ok(module) => {
+                            bindings = crate::shader_translate::reflect_resource_bindings(&module)
+                                .ok()
+                                .unwrap_or_default();
+                            match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
+                                &module,
+                                entry_point,
+                            ) {
+                                Ok(t) => Some(t),
+                                Err(e) => {
+                                    gs_prepass_error = Some(e.to_string());
+                                    None
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        gs_prepass_error = Some(e.to_string());
-                        None
-                    }
-                };
+                        Err(e) => {
+                            gs_prepass_error = Some(e.to_string());
+                            None
+                        }
+                    };
                 if let Some(t) = translation {
                     gs_prepass = Some(GsPrepassMetadata {
                         verts_per_primitive: t.info.input_verts_per_primitive,

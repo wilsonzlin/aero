@@ -461,11 +461,11 @@ impl ExpansionScratchAllocator {
         self.alloc_inner(device, size, align)
     }
 
-    /// Allocate a combined "indirect args + counters" block for translated GS compute prepasses.
+    /// Allocate a combined storage buffer used by the translated GS prepass:
+    /// `DrawIndexedIndirectArgs` followed by the small counter block.
     ///
-    /// Layout matches `runtime::gs_translate::GsPrepassState`:
-    /// - `DrawIndexedIndirectArgs` at offset 0 (consumed by `draw_indexed_indirect`)
-    /// - `GsPrepassCounters` immediately following it
+    /// Packing these together keeps the generated compute shader within WebGPU's minimum
+    /// `max_storage_buffers_per_shader_stage` limit (4 storage buffers).
     pub fn alloc_gs_prepass_state_draw_indexed(
         &mut self,
         device: &wgpu::Device,
@@ -475,10 +475,14 @@ impl ExpansionScratchAllocator {
                 "scratch buffer usage must include INDIRECT for indirect draw arguments",
             ));
         }
-        let (args_size, args_align) = DrawIndexedIndirectArgs::layout();
+        let (args_size, align) = DrawIndexedIndirectArgs::layout();
         // Sized to match `runtime::gs_translate::GsPrepassCounters` (4 x u32 / 16 bytes).
-        let size = args_size + 16;
-        self.alloc_inner(device, size, args_align)
+        let size = args_size.checked_add(16).ok_or_else(|| {
+            ExpansionScratchError::InvalidDescriptor(
+                "indirect args allocation overflows when adding GS prepass counters",
+            )
+        })?;
+        self.alloc_inner(device, size, align)
     }
 
     pub fn alloc_counter_u32(

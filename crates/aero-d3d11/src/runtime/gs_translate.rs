@@ -88,6 +88,9 @@ pub enum GsTranslateError {
     UnsupportedOutputTopology {
         topology: u32,
     },
+    UnsupportedOutputRegister {
+        reg: u32,
+    },
     UnsupportedStream {
         inst_index: usize,
         opcode: &'static str,
@@ -135,6 +138,11 @@ impl fmt::Display for GsTranslateError {
             GsTranslateError::UnsupportedOutputTopology { topology } => write!(
                 f,
                 "GS translate: unsupported output topology {topology} (dcl_outputtopology)"
+            ),
+            GsTranslateError::UnsupportedOutputRegister { reg } => write!(
+                f,
+                "GS translate: unsupported output register o{reg} (expanded-vertex format supports o0..o{})",
+                EXPANDED_VERTEX_MAX_VARYINGS.saturating_sub(1)
             ),
             GsTranslateError::UnsupportedStream {
                 inst_index,
@@ -326,6 +334,25 @@ fn decode_output_topology(
             _ => Err(GsTranslateError::UnsupportedOutputTopology { topology: other }),
         },
     }
+}
+
+#[cfg(test)]
+fn module_output_topology_kind(module: &Sm4Module) -> Result<GsOutputTopologyKind, GsTranslateError> {
+    let mut input_primitive: Option<GsInputPrimitive> = None;
+    let mut output_topology: Option<GsOutputTopology> = None;
+    for decl in &module.decls {
+        match decl {
+            Sm4Decl::GsInputPrimitive { primitive } => input_primitive = Some(*primitive),
+            Sm4Decl::GsOutputTopology { topology } => output_topology = Some(*topology),
+            _ => {}
+        }
+    }
+
+    let input_primitive =
+        input_primitive.ok_or(GsTranslateError::MissingDecl("dcl_inputprimitive"))?;
+    let output_topology =
+        output_topology.ok_or(GsTranslateError::MissingDecl("dcl_outputtopology"))?;
+    decode_output_topology(output_topology, input_primitive)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1414,6 +1441,11 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     let output_reg_count = (max_output_reg + 1).max(0) as u32;
     let gs_input_reg_count = (max_gs_input_reg + 1).max(1) as u32;
     let pred_reg_count = (max_pred_reg + 1).max(0) as u32;
+    if output_reg_count > EXPANDED_VERTEX_MAX_VARYINGS {
+        return Err(GsTranslateError::UnsupportedOutputRegister {
+            reg: output_reg_count.saturating_sub(1),
+        });
+    }
 
     let mut w = WgslWriter::new();
 
@@ -1466,7 +1498,9 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.dedent();
     w.line("};");
     w.line("");
-
+    // Pack indirect args and atomic counters into a single storage buffer so the generated WGSL
+    // stays within WebGPU's minimum `max_storage_buffers_per_shader_stage` limit (4).
+    //
     // Keep the `DrawIndexedIndirectArgs` layout at offset 0 so the executor can feed this buffer
     // directly into `draw_indexed_indirect`.
     //
@@ -1477,7 +1511,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     //   - gs_inputs.
     w.line("struct GsPrepassState {");
     w.indent();
-    w.line("out_indirect: DrawIndexedIndirectArgs,");
+    w.line("indirect: DrawIndexedIndirectArgs,");
     w.line("counters: GsPrepassCounters,");
     w.dedent();
     w.line("};");
@@ -3131,20 +3165,20 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("let overflow: bool = atomicLoad(&out_state.counters.overflow) != 0u;");
     w.line("if (overflow) {");
     w.indent();
-    w.line("out_state.out_indirect.index_count = 0u;");
-    w.line("out_state.out_indirect.instance_count = 0u;");
-    w.line("out_state.out_indirect.first_index = 0u;");
-    w.line("out_state.out_indirect.base_vertex = 0;");
-    w.line("out_state.out_indirect.first_instance = 0u;");
+    w.line("out_state.indirect.index_count = 0u;");
+    w.line("out_state.indirect.instance_count = 0u;");
+    w.line("out_state.indirect.first_index = 0u;");
+    w.line("out_state.indirect.base_vertex = 0;");
+    w.line("out_state.indirect.first_instance = 0u;");
     w.dedent();
     w.line("} else {");
     w.indent();
     w.line("let out_index_count: u32 = atomicLoad(&out_state.counters.index_count);");
-    w.line("out_state.out_indirect.index_count = out_index_count;");
-    w.line("out_state.out_indirect.instance_count = params.instance_count;");
-    w.line("out_state.out_indirect.first_index = 0u;");
-    w.line("out_state.out_indirect.base_vertex = 0;");
-    w.line("out_state.out_indirect.first_instance = params.first_instance;");
+    w.line("out_state.indirect.index_count = out_index_count;");
+    w.line("out_state.indirect.instance_count = params.instance_count;");
+    w.line("out_state.indirect.first_index = 0u;");
+    w.line("out_state.indirect.base_vertex = 0;");
+    w.line("out_state.indirect.first_instance = params.first_instance;");
     w.dedent();
     w.line("}");
     w.dedent();
@@ -3982,6 +4016,56 @@ mod tests {
         assert!(
             wgsl.contains("bitcast<f32>(1u)"),
             "expected integer default-fill (w=1) to preserve raw bits in WGSL:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn gs_translate_disambiguates_output_topology_token_3() {
+        // `dcl_outputtopology` token value 3 is ambiguous:
+        // - Tokenized shader format: triangle strip = 3
+        // - D3D primitive topology enum: line strip = 3
+        //
+        // Disambiguate based on the input primitive encoding: when the input primitive looks like
+        // it used D3D topology constants (e.g. triangle list = 4), treat output value 3 as line
+        // strip instead of triangle strip.
+        let tokenized = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![Sm4Inst::Ret],
+        };
+        assert_eq!(
+            module_output_topology_kind(&tokenized).expect("decode output topology"),
+            GsOutputTopologyKind::TriangleStrip
+        );
+
+        let d3d_encoded = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                // D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST = 4 (strong signal that the toolchain is
+                // using D3D topology constants for GS decls).
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Triangle(4),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![Sm4Inst::Ret],
+        };
+        assert_eq!(
+            module_output_topology_kind(&d3d_encoded).expect("decode output topology"),
+            GsOutputTopologyKind::LineStrip
         );
     }
 
