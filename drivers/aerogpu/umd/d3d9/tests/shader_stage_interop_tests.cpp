@@ -8,17 +8,12 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
+#include "fixedfunc_test_constants.h"
 
 namespace aerogpu {
 
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
-
-// Fixed-function WVP constant block used by the D3D9 UMD. Keep local numeric
-// constants so these tests remain portable (they build without the Windows
-// SDK/WDK).
-constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
-constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
 
 // Host-test helper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side test
 // entrypoints") used to simulate a user-visible shader state without requiring

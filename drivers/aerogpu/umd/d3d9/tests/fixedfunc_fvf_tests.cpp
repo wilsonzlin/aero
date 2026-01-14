@@ -10,6 +10,7 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
+#include "fixedfunc_test_constants.h"
 
 namespace aerogpu {
 
@@ -102,23 +103,6 @@ constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
 constexpr uint32_t kD3dTransformView = 2u;
 constexpr uint32_t kD3dTransformProjection = 3u;
 constexpr uint32_t kD3dTransformWorld0 = 256u;
-
-// Fixed-function WVP constant block used by the D3D9 UMD
-// (`kFixedfuncMatrixStartRegister`/`kFixedfuncMatrixVec4Count` in
-// `src/aerogpu_d3d9_driver.cpp`). Keep local numeric constants so these tests
-// remain portable (they build without the Windows SDK/WDK).
-constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
-constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
-
-// Fixed-function lighting constant block used by the D3D9 UMD
-// (`kFixedfuncLightingStartRegister`/`kFixedfuncLightingVec4Count` in
-// `src/aerogpu_d3d9_driver.cpp`). Keep local numeric constants so these tests
-// remain portable (they build without the Windows SDK/WDK).
-constexpr uint32_t kFixedfuncLightingStartRegister = 208u;
-constexpr uint32_t kFixedfuncLightingVec4Count = 29u;
-constexpr uint32_t kFixedfuncLightingGlobalAmbientRegister = 236u;
-constexpr uint32_t kFixedfuncLightingGlobalAmbientRel =
-    kFixedfuncLightingGlobalAmbientRegister - kFixedfuncLightingStartRegister;
 
 // Pixel shader instruction tokens (ps_2_0).
 constexpr uint32_t kPsOpAdd = 0x04000002u;

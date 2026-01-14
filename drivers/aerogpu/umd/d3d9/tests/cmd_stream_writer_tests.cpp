@@ -23,6 +23,7 @@
 #include "aerogpu_cmd_stream_writer.h"
 #include "aerogpu_pci.h"
 #include "aerogpu_wddm_alloc.h"
+#include "fixedfunc_test_constants.h"
 
 namespace aerogpu {
 
@@ -51,21 +52,6 @@ namespace {
 constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
-
-// Fixed-function WVP constant block used by the D3D9 UMD. Keep local numeric
-// constants so these tests remain portable (they build without the Windows
-// SDK/WDK).
-constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
-constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
-
-// Fixed-function lighting constant block used by the D3D9 UMD. Keep local numeric
-// constants so these tests remain portable (they build without the Windows
-// SDK/WDK).
-constexpr uint32_t kFixedfuncLightingStartRegister = 208u;
-constexpr uint32_t kFixedfuncLightingVec4Count = 29u;
-constexpr uint32_t kFixedfuncLightingGlobalAmbientRegister = 236u;
-constexpr uint32_t kFixedfuncLightingGlobalAmbientRel =
-    kFixedfuncLightingGlobalAmbientRegister - kFixedfuncLightingStartRegister;
 
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 constexpr D3DDDIFORMAT kD3dFmtIndex32 = static_cast<D3DDDIFORMAT>(102); // D3DFMT_INDEX32
