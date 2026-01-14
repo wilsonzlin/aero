@@ -601,6 +601,359 @@ test("relays a UDP datagram via a Chromium WebRTC DataChannel", async ({ page })
   }
 });
 
+test("drops UDP replies from unexpected source ports over WebRTC by default (UDP_INBOUND_FILTER_MODE=address_and_port)", async ({ page }) => {
+  const echo = await startUdpEchoServerDifferentSourcePort("udp4", "127.0.0.1");
+  test.skip(!echo, "udp4 not supported in test environment");
+  const relay = await spawnRelayServer();
+  const web = await startWebServer();
+  const allowlistDropMetric = "udp_remote_allowlist_overflow_drops_total";
+  expect(echo.replyPort).not.toBe(echo.port);
+
+  try {
+    await page.goto(web.url);
+
+    const before = await getRelayEventCounters(relay.port);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        let ws;
+        let pc;
+        try {
+          const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+          if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
+            throw new Error("invalid ice server response");
+          }
+          const iceServers = iceResp.iceServers;
+
+          ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+          await new Promise((resolve, reject) => {
+            ws.addEventListener("open", () => resolve(), { once: true });
+            ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+          });
+
+          pc = new RTCPeerConnection({ iceServers });
+          const pendingCandidates = [];
+          let remoteDescriptionSet = false;
+          const dc = pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
+          dc.binaryType = "arraybuffer";
+
+          const answerPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+            let answered = false;
+            const onMessage = (event) => {
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error("invalid signaling message (not JSON)"));
+                return;
+              }
+
+              if (msg?.type === "error") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+                return;
+              }
+
+              if (msg?.type === "candidate") {
+                if (!msg.candidate?.candidate) return;
+                if (remoteDescriptionSet) {
+                  pc.addIceCandidate(msg.candidate).catch(() => {});
+                } else {
+                  pendingCandidates.push(msg.candidate);
+                }
+                return;
+              }
+
+              if (msg?.type !== "answer") return;
+              if (answered) return;
+              answered = true;
+              clearTimeout(timeout);
+              resolve(msg);
+            };
+            ws.addEventListener("message", onMessage);
+          });
+
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          await new Promise((resolve) => {
+            if (pc.iceGatheringState === "complete") return resolve();
+            const onState = () => {
+              if (pc.iceGatheringState !== "complete") return;
+              pc.removeEventListener("icegatheringstatechange", onState);
+              resolve();
+            };
+            pc.addEventListener("icegatheringstatechange", onState);
+          });
+
+          if (!pc.localDescription?.sdp) {
+            throw new Error("missing local description");
+          }
+
+          ws.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+
+          const answerMsg = await answerPromise;
+          if (answerMsg?.type !== "answer" || !answerMsg.sdp?.sdp) {
+            throw new Error("invalid answer message shape");
+          }
+
+          await pc.setRemoteDescription(answerMsg.sdp);
+          remoteDescriptionSet = true;
+          for (const candidate of pendingCandidates) {
+            await pc.addIceCandidate(candidate);
+          }
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+            dc.addEventListener(
+              "open",
+              () => {
+                clearTimeout(timeout);
+                resolve();
+              },
+              { once: true },
+            );
+            dc.addEventListener(
+              "error",
+              () => {
+                clearTimeout(timeout);
+                reject(new Error("datachannel error"));
+              },
+              { once: true },
+            );
+          });
+
+          const payload = new TextEncoder().encode("hello from chromium unexpected source port");
+          const guestPort = 10_000;
+          const frame = new Uint8Array(8 + payload.length);
+          frame[0] = (guestPort >> 8) & 0xff;
+          frame[1] = guestPort & 0xff;
+          frame.set([127, 0, 0, 1], 2);
+          frame[6] = (echoPort >> 8) & 0xff;
+          frame[7] = echoPort & 0xff;
+          frame.set(payload, 8);
+          dc.send(frame);
+
+          const echoedFrame = await new Promise((resolve, reject) => {
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              if (done) return;
+              done = true;
+              cleanup();
+              resolve(new Uint8Array(event.data));
+            };
+            const cleanup = () => {
+              dc.removeEventListener("message", onMessage);
+              clearTimeout(timeout);
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              resolve(null);
+            }, 2_000);
+            dc.addEventListener("message", onMessage);
+          });
+
+          return { received: echoedFrame !== null };
+        } finally {
+          ws?.close?.();
+          pc?.close?.();
+        }
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(res.received).toBe(false);
+
+    const beforeDrops = getCounter(before, allowlistDropMetric);
+    const expectedMinDrops = beforeDrops + 1;
+    const after = await waitForRelayEventCounterAtLeast(relay.port, allowlistDropMetric, expectedMinDrops);
+    expect(getCounter(after, allowlistDropMetric)).toBeGreaterThanOrEqual(expectedMinDrops);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});
+
+test("accepts UDP replies from unexpected source ports over WebRTC when UDP_INBOUND_FILTER_MODE=any", async ({ page }) => {
+  const echo = await startUdpEchoServerDifferentSourcePort("udp4", "127.0.0.1");
+  test.skip(!echo, "udp4 not supported in test environment");
+  const relay = await spawnRelayServer({ UDP_INBOUND_FILTER_MODE: "any" });
+  const web = await startWebServer();
+  const allowlistDropMetric = "udp_remote_allowlist_overflow_drops_total";
+  expect(echo.replyPort).not.toBe(echo.port);
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        let ws;
+        let pc;
+        try {
+          const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`).then((r) => r.json());
+          if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
+            throw new Error("invalid ice server response");
+          }
+          const iceServers = iceResp.iceServers;
+
+          ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+          await new Promise((resolve, reject) => {
+            ws.addEventListener("open", () => resolve(), { once: true });
+            ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+          });
+
+          pc = new RTCPeerConnection({ iceServers });
+          const pendingCandidates = [];
+          let remoteDescriptionSet = false;
+          const dc = pc.createDataChannel("udp", { ordered: false, maxRetransmits: 0 });
+          dc.binaryType = "arraybuffer";
+
+          const answerPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+            let answered = false;
+            const onMessage = (event) => {
+              let msg;
+              try {
+                msg = JSON.parse(event.data);
+              } catch {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error("invalid signaling message (not JSON)"));
+                return;
+              }
+
+              if (msg?.type === "error") {
+                clearTimeout(timeout);
+                ws.removeEventListener("message", onMessage);
+                reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+                return;
+              }
+
+              if (msg?.type === "candidate") {
+                if (!msg.candidate?.candidate) return;
+                if (remoteDescriptionSet) {
+                  pc.addIceCandidate(msg.candidate).catch(() => {});
+                } else {
+                  pendingCandidates.push(msg.candidate);
+                }
+                return;
+              }
+
+              if (msg?.type !== "answer") return;
+              if (answered) return;
+              answered = true;
+              clearTimeout(timeout);
+              resolve(msg);
+            };
+            ws.addEventListener("message", onMessage);
+          });
+
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          await new Promise((resolve) => {
+            if (pc.iceGatheringState === "complete") return resolve();
+            const onState = () => {
+              if (pc.iceGatheringState !== "complete") return;
+              pc.removeEventListener("icegatheringstatechange", onState);
+              resolve();
+            };
+            pc.addEventListener("icegatheringstatechange", onState);
+          });
+
+          if (!pc.localDescription?.sdp) {
+            throw new Error("missing local description");
+          }
+
+          ws.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+
+          const answerMsg = await answerPromise;
+          if (answerMsg?.type !== "answer" || !answerMsg.sdp?.sdp) {
+            throw new Error("invalid answer message shape");
+          }
+
+          await pc.setRemoteDescription(answerMsg.sdp);
+          remoteDescriptionSet = true;
+          for (const candidate of pendingCandidates) {
+            await pc.addIceCandidate(candidate);
+          }
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+            dc.addEventListener(
+              "open",
+              () => {
+                clearTimeout(timeout);
+                resolve();
+              },
+              { once: true },
+            );
+            dc.addEventListener(
+              "error",
+              () => {
+                clearTimeout(timeout);
+                reject(new Error("datachannel error"));
+              },
+              { once: true },
+            );
+          });
+
+          const payload = new TextEncoder().encode("hello from chromium any inbound filter");
+          const guestPort = 10_000;
+          const frame = new Uint8Array(8 + payload.length);
+          frame[0] = (guestPort >> 8) & 0xff;
+          frame[1] = guestPort & 0xff;
+          frame.set([127, 0, 0, 1], 2);
+          frame[6] = (echoPort >> 8) & 0xff;
+          frame[7] = echoPort & 0xff;
+          frame.set(payload, 8);
+          dc.send(frame);
+
+          const echoedFrame = await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for echoed datagram")), 10_000);
+            dc.addEventListener(
+              "message",
+              (event) => {
+                clearTimeout(timeout);
+                resolve(new Uint8Array(event.data));
+              },
+              { once: true },
+            );
+          });
+
+          if (echoedFrame.length < 8) throw new Error("echoed frame too short");
+          const echoedGuestPort = (echoedFrame[0] << 8) | echoedFrame[1];
+          if (echoedGuestPort !== guestPort) throw new Error("guest port mismatch");
+          const echoedIP = `${echoedFrame[2]}.${echoedFrame[3]}.${echoedFrame[4]}.${echoedFrame[5]}`;
+          if (echoedIP !== "127.0.0.1") throw new Error("remote ip mismatch");
+
+          const echoedRemotePort = (echoedFrame[6] << 8) | echoedFrame[7];
+          const echoedText = new TextDecoder().decode(echoedFrame.slice(8));
+          return { echoedRemotePort, echoedText };
+        } finally {
+          ws?.close?.();
+          pc?.close?.();
+        }
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(res.echoedText).toBe("hello from chromium any inbound filter");
+    expect(res.echoedRemotePort).toBe(echo.replyPort);
+
+    const counters = await getRelayEventCounters(relay.port);
+    expect(getCounter(counters, allowlistDropMetric)).toBe(0);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});
+
 test("relays a UDP datagram via a Chromium WebRTC DataChannel using negotiated v2 IPv4 framing", async ({ page }) => {
   const echo = await startUdpEchoServer("udp4", "127.0.0.1");
   const relay = await spawnRelayServer();
