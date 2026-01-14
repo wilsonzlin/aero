@@ -34,6 +34,21 @@ Some end-to-end behaviors (especially audio) are hard to validate automatically.
 
 - Windows 7 audio (in-box HDA driver): [`docs/testing/audio-windows7.md`](./testing/audio-windows7.md)
 
+## Disk streaming endpoint conformance (HTTP Range / chunked)
+
+If you are debugging a disk image delivery endpoint (local, staging, prod) and want to validate that it matches
+the browser-side streaming client expectations, use the dependency-free conformance tool:
+
+- Range mode (single object + HTTP `Range`): `python3 tools/disk-streaming-conformance/conformance.py --base-url ...`
+- Chunked mode (`manifest.json` + `chunks/*.bin`, no `Range` header): `python3 tools/disk-streaming-conformance/conformance.py --mode chunked --manifest-url ...`
+
+For quick local sanity checks against the repo’s dev servers:
+
+- `python3 tools/disk-streaming-conformance/selftest_range_server.py`
+- `python3 tools/disk-streaming-conformance/selftest_chunk_server.py`
+
+Use `--strict` to fail on warnings (recommended when validating CDN/edge behavior).
+
 ## Device/driver end-to-end test plans
 
 Some subsystems also have “single document” end-to-end test plans (device model ↔ guest drivers ↔ web runtime).
