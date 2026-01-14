@@ -3,7 +3,7 @@
 mod harness;
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Result};
 
@@ -50,7 +50,12 @@ async fn windows7_boot_placeholder() -> Result<()> {
         }
     } else {
         let dir = harness::artifact_dir();
-        let path = dir.join("windows7_actual.png");
+        let ts_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let pid = std::process::id();
+        let path = dir.join(format!("windows7_actual-{ts_ms}-pid{pid}.png"));
         shot.save(&path)?;
         return Err(anyhow!(
             "no golden image found at {}. Captured screenshot written to {}",

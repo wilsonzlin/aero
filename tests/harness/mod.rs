@@ -248,9 +248,25 @@ fn crop_image(image: &RgbaImage, crop: ImageCrop) -> Result<RgbaImage> {
 }
 
 pub fn artifact_dir() -> PathBuf {
-    let dir = std::env::var_os("AERO_ARTIFACT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root().join("target/aero-test-artifacts"));
+    let dir = if let Some(dir) = std::env::var_os("AERO_ARTIFACT_DIR") {
+        PathBuf::from(dir)
+    } else {
+        // Keep artifacts colocated with the Cargo `target/` directory so they are easy to find
+        // and can be cleaned up with `rm -rf target/` (or by CI caching rules).
+        //
+        // If `CARGO_TARGET_DIR` is set, honor it to avoid writing into a different target dir than
+        // the one used by the build/test invocation.
+        let root = repo_root();
+        let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.join("target"));
+        let target_dir = if target_dir.is_absolute() {
+            target_dir
+        } else {
+            root.join(target_dir)
+        };
+        target_dir.join("aero-test-artifacts")
+    };
     if let Err(err) = std::fs::create_dir_all(&dir) {
         eprintln!(
             "warning: failed to create artifact dir {}: {err}",
