@@ -54,6 +54,13 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 
     Scope (\_SB_)
     {
+        /*
+         * Motherboard resources device.
+         *
+         * Reserving the fixed-function ACPI PM I/O ports (and reset port)
+         * prevents OS resource allocators from treating them as free PCI I/O
+         * space.
+         */
         Device (SYS0)
         {
             Name (_HID, EisaId ("PNP0C02"))
@@ -61,16 +68,16 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
             Name (_STA, 0x0F)
             Name (_CRS, ResourceTemplate ()
             {
-                // SMI command port for ACPI enable/disable handshake.
+                // FADT SMI command port used for the ACPI enable handshake.
                 IO (Decode16, 0x00B2, 0x00B2, 0x01, 0x01)
 
-                // ACPI PM I/O blocks (PM1a_EVT, PM1a_CNT, PM_TMR, GPE0).
-                IO (Decode16, 0x0400, 0x0400, 0x01, 0x04)
-                IO (Decode16, 0x0404, 0x0404, 0x01, 0x02)
-                IO (Decode16, 0x0408, 0x0408, 0x01, 0x04)
-                IO (Decode16, 0x0420, 0x0420, 0x01, 0x08)
+                // ACPI fixed-feature PM blocks.
+                IO (Decode16, 0x0400, 0x0400, 0x01, 0x04) // PM1a_EVT_BLK
+                IO (Decode16, 0x0404, 0x0404, 0x01, 0x02) // PM1a_CNT_BLK
+                IO (Decode16, 0x0408, 0x0408, 0x01, 0x04) // PM_TMR_BLK
+                IO (Decode16, 0x0420, 0x0420, 0x01, 0x08) // GPE0_BLK
 
-                // Reset control port.
+                // Reset port used by the FADT ResetReg.
                 IO (Decode16, 0x0CF9, 0x0CF9, 0x01, 0x01)
             })
         }
@@ -83,13 +90,11 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
             Name (_SEG, Zero)
 
             /*
-             * PCI0 resource settings.
+             * PCI host bridge resource windows.
              *
-             * This matches the `aero-acpi` generator:
-             * - bus range [0..255]
-             * - config mechanism 1 I/O ports (0xCF8..0xCFF)
-             * - legacy I/O ranges
-             * - PCI MMIO window [0xC0000000..0xFEBFFFFF]
+             * This matches `aero-acpi`'s default bridge model (I/O ports for
+             * config mechanism 1, full bus range, and a single 32-bit MMIO
+             * aperture for PCI BAR allocation).
              */
             Name (_CRS, ResourceTemplate ()
             {
@@ -104,7 +109,7 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
                 // PCI config mechanism 1 (0xCF8..0xCFF).
                 IO (Decode16, 0x0CF8, 0x0CF8, 0x01, 0x08)
 
-                // Legacy I/O ranges split around the PCI config ports.
+                // PCI I/O space (excluding 0xCF8..0xCFF).
                 WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
                     0x0000,             // Granularity
                     0x0000,             // Range Minimum
@@ -138,10 +143,10 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
              * and map PIRQs to GSIs:
               *   A → 10, B → 11, C → 12, D → 13
               */
-             Name (_PRT, Package (0x7C)
-              {
-                 Package () { 0x0001FFFF, 0, Zero, 11 },
-                 Package () { 0x0001FFFF, 1, Zero, 12 },
+            Name (_PRT, Package (0x7C)
+            {
+                Package () { 0x0001FFFF, 0, Zero, 11 },
+                Package () { 0x0001FFFF, 1, Zero, 12 },
                 Package () { 0x0001FFFF, 2, Zero, 13 },
                 Package () { 0x0001FFFF, 3, Zero, 10 },
                 Package () { 0x0002FFFF, 0, Zero, 12 },
@@ -260,12 +265,12 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
                 Package () { 0x001EFFFF, 1, Zero, 13 },
                 Package () { 0x001EFFFF, 2, Zero, 10 },
                 Package () { 0x001EFFFF, 3, Zero, 11 },
-                Package () { 0x001FFFFF, 0, Zero, 13 },
-                Package () { 0x001FFFFF, 1, Zero, 10 },
-                Package () { 0x001FFFFF, 2, Zero, 11 },
-                Package () { 0x001FFFFF, 3, Zero, 12 },
-             })
-         }
+                 Package () { 0x001FFFFF, 0, Zero, 13 },
+                 Package () { 0x001FFFFF, 1, Zero, 10 },
+                 Package () { 0x001FFFFF, 2, Zero, 11 },
+                 Package () { 0x001FFFFF, 3, Zero, 12 },
+            })
+        }
 
         Device (HPET)
         {
@@ -278,7 +283,7 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
             })
         }
 
-        Device (RTC_)
+        Device (RTC)
         {
             Name (_HID, EisaId ("PNP0B00"))
             Name (_UID, Zero)
@@ -309,5 +314,5 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
         Processor (CPU0, 0x00, 0x00000000, 0x00) {}
     }
 
-    Name (_S5_, Package (0x02) { 0x05, 0x05 })
+    Name (_S5, Package (0x02) { 0x05, 0x05 })
 }
