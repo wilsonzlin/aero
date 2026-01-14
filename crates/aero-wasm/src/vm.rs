@@ -802,8 +802,8 @@ export function installAeroMmioTestShims() {
         installAeroMmioTestShims();
 
         let mut guest = vec![0u8; 0x10];
-        let guest_base = guest.as_mut_ptr() as u32;
         let guest_size = guest.len() as u64;
+        let guest_base = guest.as_mut_ptr() as u32;
 
         let mut bus = WasmPhysBus {
             guest_base,
@@ -812,7 +812,7 @@ export function installAeroMmioTestShims() {
 
         // Read across the end of RAM: the first byte comes from RAM and the remaining bytes are
         // sourced via MMIO shims.
-        guest[0x0F] = 0xAA;
+        bus.write_u8(0x0F, 0xAA);
         let value = bus.read_u32(0x0F);
         assert_eq!(value, 0x12_11_10_AA);
 
@@ -841,7 +841,7 @@ export function installAeroMmioTestShims() {
         // Write across the end of RAM: first byte should land in RAM, remainder should be routed
         // to MMIO byte writes.
         bus.write_u32(0x0F, 0x4433_2211);
-        assert_eq!(guest[0x0F], 0x11);
+        assert_eq!(bus.read_u8(0x0F), 0x11);
 
         let calls = mmio_calls();
         assert_eq!(
