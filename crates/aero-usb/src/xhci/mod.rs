@@ -190,6 +190,10 @@ impl UsbDeviceModel for UsbDeviceModelPtr {
         unsafe { self.model().speed() }
     }
 
+    fn reset_host_state_for_restore(&mut self) {
+        unsafe { self.model_mut().reset_host_state_for_restore() }
+    }
+
     fn reset(&mut self) {
         unsafe { self.model_mut().reset() }
     }
