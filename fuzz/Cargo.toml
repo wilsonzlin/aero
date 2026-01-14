@@ -11,6 +11,8 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
+base64 = "0.22"
+sha2 = "0.10"
 
 [dependencies.memory]
 path = "../crates/memory"
@@ -35,6 +37,9 @@ path = "../crates/aero-storage"
 
 [dependencies.aero-http-range]
 path = "../crates/aero-http-range"
+
+[dependencies.aero-auth-tokens]
+path = "../crates/aero-auth-tokens"
 
 [dependencies.aero-gpu]
 path = "../crates/aero-gpu"
@@ -198,6 +203,12 @@ doc = false
 [[bin]]
 name = "fuzz_d3d9_sm3_decode"
 path = "fuzz_targets/fuzz_d3d9_sm3_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_auth_tokens"
+path = "fuzz_targets/fuzz_auth_tokens.rs"
 test = false
 doc = false
 
