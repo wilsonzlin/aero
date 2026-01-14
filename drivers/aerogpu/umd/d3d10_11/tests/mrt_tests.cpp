@@ -800,6 +800,19 @@ bool TestSrvBindingUnbindsOnlyAliasedRtv() {
     }
   }
 
+  const CmdLoc ps_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after PSSetShaderResources")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_tex_loc.hdr);
+  if (!Check(set_ps->texture == created[0], "PS slot0 bound to SRV texture handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < ps_tex_loc.offset, "hazard unbind (SET_RENDER_TARGETS) happens before PS SRV bind")) {
+    return false;
+  }
+
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv0.hSrv);
   dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
   dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
@@ -893,6 +906,19 @@ bool TestSrvBindingUnbindsOnlyAllocAliasedRtv() {
     if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased trailing)")) {
       return false;
     }
+  }
+
+  const CmdLoc ps_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after PSSetShaderResources alloc-aliased")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_tex_loc.hdr);
+  if (!Check(set_ps->texture == created[2], "PS slot0 bound to alloc-aliased SRV texture handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < ps_tex_loc.offset, "alloc-aliased hazard unbind (SET_RENDER_TARGETS) happens before PS SRV bind")) {
+    return false;
   }
 
   const auto* alloc100 = FindSubmitAlloc(dev.harness.last_allocs, 100);
@@ -1006,6 +1032,12 @@ bool TestSetRenderTargetsUnbindsAliasedSrvsForMrt() {
   if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after SetRenderTargets MRT)")) {
     return false;
   }
+  if (!Check(vs_loc.offset < rt_loc.offset, "VS SRV unbind occurs before MRT bind")) {
+    return false;
+  }
+  if (!Check(ps_loc.offset < rt_loc.offset, "PS SRV unbind occurs before MRT bind")) {
+    return false;
+  }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
   if (!Check(set_rt->color_count == 2, "SET_RENDER_TARGETS color_count==2 (after MRT bind)")) {
     return false;
@@ -1109,6 +1141,12 @@ bool TestSetRenderTargetsUnbindsAliasedSrvsForDsv() {
   const CmdLoc rt_loc =
       FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after DSV bind)")) {
+    return false;
+  }
+  if (!Check(vs_loc.offset < rt_loc.offset, "VS SRV unbind occurs before DSV bind")) {
+    return false;
+  }
+  if (!Check(ps_loc.offset < rt_loc.offset, "PS SRV unbind occurs before DSV bind")) {
     return false;
   }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
@@ -1224,6 +1262,12 @@ bool TestSetRenderTargetsUnbindsAllocAliasedSrvsForDsv() {
   const CmdLoc rt_loc =
       FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after alloc-aliased DSV bind)")) {
+    return false;
+  }
+  if (!Check(vs_loc.offset < rt_loc.offset, "VS SRV unbind occurs before alloc-aliased DSV bind")) {
+    return false;
+  }
+  if (!Check(ps_loc.offset < rt_loc.offset, "PS SRV unbind occurs before alloc-aliased DSV bind")) {
     return false;
   }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
@@ -1448,6 +1492,19 @@ bool TestSrvBindingUnbindsOnlyAliasedRtvVs() {
     }
   }
 
+  const CmdLoc vs_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_tex_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after VSSetShaderResources")) {
+    return false;
+  }
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_tex_loc.hdr);
+  if (!Check(set_vs->texture == created[0], "VS slot0 bound to SRV texture handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < vs_tex_loc.offset, "hazard unbind (SET_RENDER_TARGETS) happens before VS SRV bind")) {
+    return false;
+  }
+
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv0.hSrv);
   dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
   dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
@@ -1540,6 +1597,19 @@ bool TestSrvBindingUnbindsOnlyAllocAliasedRtvVs() {
     if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased VS trailing)")) {
       return false;
     }
+  }
+
+  const CmdLoc vs_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_tex_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after VSSetShaderResources alloc-aliased")) {
+    return false;
+  }
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_tex_loc.hdr);
+  if (!Check(set_vs->texture == created[2], "VS slot0 bound to alloc-aliased SRV texture handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < vs_tex_loc.offset, "alloc-aliased hazard unbind (SET_RENDER_TARGETS) happens before VS SRV bind")) {
+    return false;
   }
 
   const auto* alloc100 = FindSubmitAlloc(dev.harness.last_allocs, 100);
@@ -1868,6 +1938,18 @@ bool TestSrvBindingUnbindsAliasedDsv() {
   if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after PSSetShaderResources alias DSV)")) {
     return false;
   }
+  const CmdLoc ps_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after PSSetShaderResources alias DSV")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_tex_loc.hdr);
+  if (!Check(set_ps->texture == created[0], "PS slot0 bound to depth SRV handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < ps_tex_loc.offset, "hazard unbind (SET_RENDER_TARGETS) happens before PS SRV bind (DSV)")) {
+    return false;
+  }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
   if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (DSV-only unbound)")) {
     return false;
@@ -1979,6 +2061,18 @@ bool TestSrvBindingUnbindsAllocAliasedDsv() {
   if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after PSSetShaderResources alloc-aliased DSV)")) {
     return false;
   }
+  const CmdLoc ps_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after PSSetShaderResources alloc-aliased DSV")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_tex_loc.hdr);
+  if (!Check(set_ps->texture == created[1], "PS slot0 bound to alloc-aliased depth SRV handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < ps_tex_loc.offset, "alloc-aliased hazard unbind (SET_RENDER_TARGETS) happens before PS SRV bind (DSV)")) {
+    return false;
+  }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
   if (!Check(set_rt->color_count == 0, "SET_RENDER_TARGETS color_count==0 (alloc-aliased DSV unbound)")) {
     return false;
@@ -2069,6 +2163,18 @@ bool TestSrvBindingUnbindsAliasedDsvVs() {
 
   const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after VSSetShaderResources alias DSV)")) {
+    return false;
+  }
+  const CmdLoc vs_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_tex_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after VSSetShaderResources alias DSV")) {
+    return false;
+  }
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_tex_loc.hdr);
+  if (!Check(set_vs->texture == created[0], "VS slot0 bound to depth SRV handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < vs_tex_loc.offset, "hazard unbind (SET_RENDER_TARGETS) happens before VS SRV bind (DSV)")) {
     return false;
   }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
@@ -2180,6 +2286,18 @@ bool TestSrvBindingUnbindsAllocAliasedDsvVs() {
 
   const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after VSSetShaderResources alloc-aliased DSV)")) {
+    return false;
+  }
+  const CmdLoc vs_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_tex_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after VSSetShaderResources alloc-aliased DSV")) {
+    return false;
+  }
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_tex_loc.hdr);
+  if (!Check(set_vs->texture == created[1], "VS slot0 bound to alloc-aliased depth SRV handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < vs_tex_loc.offset, "alloc-aliased hazard unbind (SET_RENDER_TARGETS) happens before VS SRV bind (DSV)")) {
     return false;
   }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
@@ -2301,6 +2419,12 @@ bool TestSetRenderTargetsUnbindsAllocAliasedSrvsForMrt() {
   const CmdLoc rt_loc =
       FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after alloc-aliased MRT bind)")) {
+    return false;
+  }
+  if (!Check(vs_loc.offset < rt_loc.offset, "VS SRV unbind occurs before alloc-aliased MRT bind")) {
+    return false;
+  }
+  if (!Check(ps_loc.offset < rt_loc.offset, "PS SRV unbind occurs before alloc-aliased MRT bind")) {
     return false;
   }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
