@@ -1652,8 +1652,25 @@ impl E1000Device {
     }
 
     pub fn restore_state(&mut self, state: &E1000DeviceState) {
+        // PCI identity/header bytes are read-only on real hardware. Guests cannot modify them, but
+        // snapshots may be corrupt/hostile. Preserve the model-defined values from the currently
+        // constructed device rather than trusting snapshot bytes.
+        let ro_vendor_device: [u8; 4] = self.pci.regs[0x00..0x04].try_into().unwrap();
+        let ro_class_code: [u8; 4] = self.pci.regs[0x08..0x0c].try_into().unwrap();
+        let ro_header_type = self.pci.regs[0x0e];
+        let ro_subsystem: [u8; 4] = self.pci.regs[0x2c..0x30].try_into().unwrap();
+        let ro_cap_ptr = self.pci.regs[0x34];
+        let ro_interrupt_pin = self.pci.regs[0x3d];
+
         // Restore PCI config space.
         self.pci.regs = state.pci_regs;
+        self.pci.regs[0x00..0x04].copy_from_slice(&ro_vendor_device);
+        self.pci.regs[0x08..0x0c].copy_from_slice(&ro_class_code);
+        self.pci.regs[0x0e] = ro_header_type;
+        self.pci.regs[0x2c..0x30].copy_from_slice(&ro_subsystem);
+        self.pci.regs[0x34] = ro_cap_ptr;
+        self.pci.regs[0x3d] = ro_interrupt_pin;
+
         self.pci.bar0_probe = state.pci_bar0_probe;
         self.pci.bar1_probe = state.pci_bar1_probe;
         // PCI BARs are aligned/sanitized by the live device model when written via config space.
@@ -2916,5 +2933,33 @@ mod tests {
 
         // Unknown tags are not preserved; the re-saved snapshot should match the canonical bytes.
         assert_eq!(restored.save_state(), canonical);
+    }
+
+    #[cfg(feature = "io-snapshot")]
+    #[test]
+    fn snapshot_restore_preserves_pci_identity_bytes() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+        let mut state = dev.snapshot_state();
+
+        // Corrupt read-only PCI identity/header bytes in the snapshot image.
+        state.pci_regs[0x00..0x04].copy_from_slice(&0xdead_beefu32.to_le_bytes());
+        state.pci_regs[0x08..0x0c].copy_from_slice(&0xfeed_faceu32.to_le_bytes());
+        state.pci_regs[0x0e] = 0x80;
+        state.pci_regs[0x2c..0x30].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+        state.pci_regs[0x34] = 0x40;
+        state.pci_regs[0x3d] = 0x04;
+
+        dev.restore_state(&state);
+
+        // Identity bytes should remain from the device model.
+        assert_eq!(dev.pci_config_read(0x00, 2) as u16, PciConfig::VENDOR_ID);
+        assert_eq!(dev.pci_config_read(0x02, 2) as u16, PciConfig::DEVICE_ID);
+        assert_eq!(dev.pci_config_read(0x0b, 1) as u8, 0x02); // base class
+        assert_eq!(dev.pci_config_read(0x0a, 1) as u8, 0x00); // subclass
+        assert_eq!(dev.pci_config_read(0x0e, 1) as u8, 0x00); // header type
+        assert_eq!(dev.pci_config_read(0x2c, 2) as u16, PciConfig::VENDOR_ID);
+        assert_eq!(dev.pci_config_read(0x2e, 2) as u16, PciConfig::DEVICE_ID);
+        assert_eq!(dev.pci_config_read(0x34, 1) as u8, 0x00); // no capabilities
+        assert_eq!(dev.pci_config_read(0x3d, 1) as u8, 0x01); // INTA#
     }
 }
