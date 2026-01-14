@@ -432,6 +432,17 @@ The host harness mirrors this into:
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO/SKIP|reset_detected=...|hw_reset_bus=...`
 
+The guest selftest also logs best-effort miniport diagnostics lines (not AERO markers) when the IOCTL payload includes
+additional optional fields:
+
+- `virtio-blk-miniport-flags|INFO/WARN|...`
+- `virtio-blk-miniport-reset-recovery|INFO/WARN|...`
+
+For log scraping, the host harness mirrors these into stable host markers (informational only; does not affect PASS/FAIL):
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_FLAGS|INFO/WARN|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_RESET_RECOVERY|INFO/WARN|...`
+
 To enforce that virtio-blk did not trigger timeout/error recovery resets (best-effort; ignores missing/SKIP markers), enable:
 
 - PowerShell:

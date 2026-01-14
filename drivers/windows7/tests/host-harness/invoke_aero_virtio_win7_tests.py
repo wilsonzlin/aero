@@ -4589,6 +4589,10 @@ def main() -> int:
             virtio_blk_counters_marker_carry = b""
             virtio_blk_reset_recovery_marker_line: Optional[str] = None
             virtio_blk_reset_recovery_marker_carry = b""
+            virtio_blk_miniport_flags_marker_line: Optional[str] = None
+            virtio_blk_miniport_flags_marker_carry = b""
+            virtio_blk_miniport_reset_recovery_marker_line: Optional[str] = None
+            virtio_blk_miniport_reset_recovery_marker_carry = b""
             virtio_blk_resize_marker_line: Optional[str] = None
             virtio_blk_resize_marker_carry = b""
             virtio_blk_reset_marker_line: Optional[str] = None
@@ -4764,6 +4768,18 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|",
                         carry=virtio_blk_reset_recovery_marker_carry,
+                    )
+                    virtio_blk_miniport_flags_marker_line, virtio_blk_miniport_flags_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_blk_miniport_flags_marker_line,
+                        chunk,
+                        prefix=b"virtio-blk-miniport-flags|",
+                        carry=virtio_blk_miniport_flags_marker_carry,
+                    )
+                    virtio_blk_miniport_reset_recovery_marker_line, virtio_blk_miniport_reset_recovery_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_blk_miniport_reset_recovery_marker_line,
+                        chunk,
+                        prefix=b"virtio-blk-miniport-reset-recovery|",
+                        carry=virtio_blk_miniport_reset_recovery_marker_carry,
                     )
                     virtio_blk_resize_marker_line, virtio_blk_resize_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_blk_resize_marker_line,
@@ -8954,6 +8970,24 @@ def main() -> int:
                     virtio_blk_reset_recovery_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_blk_miniport_flags_marker_carry:
+            raw = virtio_blk_miniport_flags_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"virtio-blk-miniport-flags|"):
+                try:
+                    virtio_blk_miniport_flags_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_blk_miniport_reset_recovery_marker_carry:
+            raw = virtio_blk_miniport_reset_recovery_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"virtio-blk-miniport-reset-recovery|"):
+                try:
+                    virtio_blk_miniport_reset_recovery_marker_line = raw2.decode(
+                        "utf-8", errors="replace"
+                    ).strip()
+                except Exception:
+                    pass
         if virtio_blk_resize_marker_carry:
             raw = virtio_blk_resize_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -9199,6 +9233,12 @@ def main() -> int:
             blk_counters_line=virtio_blk_counters_marker_line,
         )
         _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
+        _emit_virtio_blk_miniport_flags_host_marker(
+            tail, marker_line=virtio_blk_miniport_flags_marker_line
+        )
+        _emit_virtio_blk_miniport_reset_recovery_host_marker(
+            tail, marker_line=virtio_blk_miniport_reset_recovery_marker_line
+        )
         _emit_virtio_blk_reset_recovery_host_marker(
             tail, blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line
         )
@@ -10716,6 +10756,101 @@ def _emit_virtio_net_diag_host_marker(tail: bytes) -> None:
         "stat_rx_err",
         "stat_rx_no_buf",
         "msg",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_miniport_flags_host_marker(
+    tail: bytes, *, marker_line: Optional[str] = None
+) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest's `virtio-blk-miniport-flags|...` diagnostics.
+
+    Guest markers (selftest diagnostic lines):
+      virtio-blk-miniport-flags|INFO|raw=0x...|removed=...|surprise_removed=...|reset_in_progress=...|reset_pending=...
+      virtio-blk-miniport-flags|WARN|reason=...|returned_len=...|expected_min=...
+
+    Host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_FLAGS|INFO/WARN|...
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(tail, b"virtio-blk-miniport-flags|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+    raw_status = toks[1] if len(toks) >= 2 else "INFO"
+    raw_status = raw_status.strip().upper()
+    status = "WARN" if raw_status == "WARN" else "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_FLAGS|{status}"]
+
+    ordered = (
+        "raw",
+        "removed",
+        "surprise_removed",
+        "reset_in_progress",
+        "reset_pending",
+        "reason",
+        "returned_len",
+        "expected_min",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_miniport_reset_recovery_host_marker(
+    tail: bytes, *, marker_line: Optional[str] = None
+) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest's `virtio-blk-miniport-reset-recovery|...` diagnostics.
+
+    Guest markers (selftest diagnostic lines):
+      virtio-blk-miniport-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...
+      virtio-blk-miniport-reset-recovery|WARN|reason=...|returned_len=...|expected_min=...
+
+    Host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_RESET_RECOVERY|INFO/WARN|...
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(tail, b"virtio-blk-miniport-reset-recovery|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+    raw_status = toks[1] if len(toks) >= 2 else "INFO"
+    raw_status = raw_status.strip().upper()
+    status = "WARN" if raw_status == "WARN" else "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_RESET_RECOVERY|{status}"]
+
+    ordered = (
+        "reset_detected",
+        "hw_reset_bus",
+        "reason",
+        "returned_len",
+        "expected_min",
     )
     for k in ordered:
         if k in fields:

@@ -2951,6 +2951,98 @@ function Try-EmitAeroVirtioBlkResetRecoveryMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioBlkMiniportFlagsMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk-miniport-flags marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "virtio-blk-miniport-flags|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+  $status = "INFO"
+  if ($toks.Count -ge 2) {
+    $s = $toks[1].Trim().ToUpperInvariant()
+    if ($s -eq "WARN") { $status = "WARN" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $ordered = @("raw", "removed", "surprise_removed", "reset_in_progress", "reset_pending", "reason", "returned_len", "expected_min")
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_FLAGS|$status"
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  foreach ($k in ($fields.Keys | Where-Object { -not $orderedSet.ContainsKey($_) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+  Write-Host $out
+}
+
+function Try-EmitAeroVirtioBlkMiniportResetRecoveryMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk-miniport-reset-recovery marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "virtio-blk-miniport-reset-recovery|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+  $status = "INFO"
+  if ($toks.Count -ge 2) {
+    $s = $toks[1].Trim().ToUpperInvariant()
+    if ($s -eq "WARN") { $status = "WARN" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $ordered = @("reset_detected", "hw_reset_bus", "reason", "returned_len", "expected_min")
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_RESET_RECOVERY|$status"
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  foreach ($k in ($fields.Keys | Where-Object { -not $orderedSet.ContainsKey($_) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioBlkResizeMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -7136,6 +7228,8 @@ try {
   Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkCountersMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkResetRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioBlkMiniportFlagsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioBlkMiniportResetRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkResizeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkResetMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
