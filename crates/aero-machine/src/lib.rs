@@ -6659,9 +6659,41 @@ impl Machine {
             end_gpa <= bar1_end
         };
 
-        let scanout_in_vram = scanout_is_bar1_backed() && self.aerogpu.is_some();
         let cursor_in_vram = cursor_is_bar1_backed() && self.aerogpu.is_some();
 
+        // If an in-process AeroGPU backend is installed and has a presented scanout, prefer that
+        // output over the guest-provided scanout buffer. This is primarily used by native/test
+        // harnesses where rendering is executed via wgpu and the host needs a CPU-readable
+        // framebuffer for display assertions.
+        if let Some((width, height, mut fb)) = {
+            let mut dev = aerogpu.borrow_mut();
+            dev.read_backend_scanout_rgba8888(0)
+        } {
+            if cursor.enable {
+                let cursor_fb = if cursor_in_vram {
+                    let aerogpu = self.aerogpu.as_ref().expect("checked above");
+                    let dev = aerogpu.borrow();
+                    let mut vram_bus =
+                        AeroGpuBar1VramReadbackBus::new(&dev.vram, bar1_base.unwrap_or(0));
+                    cursor.read_rgba8888(&mut vram_bus)
+                } else {
+                    cursor.read_rgba8888(&mut self.mem)
+                };
+
+                if let Some(cursor_fb) = cursor_fb {
+                    aerogpu::composite_cursor_rgba8888_over_scanout(
+                        &mut fb, width, height, &cursor, &cursor_fb,
+                    );
+                }
+            }
+
+            self.display_width = width;
+            self.display_height = height;
+            self.display_fb = fb;
+            return true;
+        }
+
+        let scanout_in_vram = scanout_is_bar1_backed() && self.aerogpu.is_some();
         let Some(mut fb) = (if scanout_in_vram {
             // Avoid borrowing `self.mem` while holding the AeroGPU VRAM borrow.
             let aerogpu = self.aerogpu.as_ref().expect("checked above");
@@ -19588,5 +19620,139 @@ mod tests {
         bus.write_physical(hole_addr, &[0x00]);
         bus.read_physical(hole_addr, &mut byte);
         assert_eq!(byte[0], 0xFF);
+    }
+
+    #[test]
+    fn aerogpu_display_present_prefers_backend_scanout_when_available() {
+        use aero_devices::a20_gate::A20_GATE_PORT;
+        use aero_devices::pci::profile;
+        use aero_devices_gpu::backend::{
+            AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+            AeroGpuCommandBackend,
+        };
+        use aero_protocol::aerogpu::aerogpu_pci as pci;
+
+        #[derive(Debug)]
+        struct DummyBackend {
+            scanout: AeroGpuBackendScanout,
+        }
+
+        impl AeroGpuCommandBackend for DummyBackend {
+            fn reset(&mut self) {}
+
+            fn submit(
+                &mut self,
+                _mem: &mut dyn memory::MemoryBus,
+                _submission: AeroGpuBackendSubmission,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+
+            fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+                Vec::new()
+            }
+
+            fn read_scanout_rgba8(&mut self, scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+                (scanout_id == 0).then(|| self.scanout.clone())
+            }
+        }
+
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 4 * 1024 * 1024,
+            enable_pc_platform: true,
+            enable_vga: false,
+            enable_aerogpu: true,
+            enable_serial: false,
+            enable_i8042: false,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Ensure guest physical addresses above 1MiB behave normally so we can deterministically
+        // access PCI MMIO BARs and framebuffer allocations.
+        m.io_write(A20_GATE_PORT, 1, 0x02);
+
+        // Resolve AeroGPU BAR0 base assigned by BIOS POST and enable device DMA reads (BME) so the
+        // scanout path is active.
+        let aerogpu_bdf = profile::AEROGPU.bdf;
+        let bar0_base = {
+            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(aerogpu_bdf)
+                .expect("AeroGPU must exist when enable_aerogpu=true");
+            cfg.set_command(0x0006); // MEM + BME
+            cfg.bar_range(profile::AEROGPU_BAR0_INDEX)
+                .expect("missing AeroGPU BAR0")
+                .base
+        };
+
+        // Configure scanout0 so the machine considers WDDM scanout active.
+        let fb_gpa = 0x0020_0000u64;
+        let (width, height) = (2u32, 2u32);
+        let pitch_bytes = width * 4;
+
+        // Provide a guest framebuffer with a sentinel color so we can detect whether
+        // `display_present` read from guest memory vs from the backend.
+        let rgba_guest = [0x10u8, 0x20, 0x30, 0x40];
+        let pixel_bgra = [rgba_guest[2], rgba_guest[1], rgba_guest[0], rgba_guest[3]];
+        let mut guest_fb = vec![0u8; (width * height * 4) as usize];
+        guest_fb[0..4].copy_from_slice(&pixel_bgra);
+        m.write_physical(fb_gpa, &guest_fb);
+
+        m.write_physical_u32(
+            bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH),
+            width,
+        );
+        m.write_physical_u32(
+            bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT),
+            height,
+        );
+        m.write_physical_u32(
+            bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
+            pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        );
+        m.write_physical_u32(
+            bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
+            pitch_bytes,
+        );
+        m.write_physical_u32(
+            bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO),
+            fb_gpa as u32,
+        );
+        m.write_physical_u32(
+            bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI),
+            (fb_gpa >> 32) as u32,
+        );
+        m.write_physical_u32(
+            bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+            1,
+        );
+
+        // Install a backend that provides a different scanout image.
+        let rgba_backend = [0xAAu8, 0xBB, 0xCC, 0xDD];
+        let mut rgba8 = Vec::with_capacity((width * height * 4) as usize);
+        for _ in 0..(width * height) {
+            rgba8.extend_from_slice(&rgba_backend);
+        }
+        let backend = DummyBackend {
+            scanout: AeroGpuBackendScanout {
+                width,
+                height,
+                rgba8,
+            },
+        };
+        m.aerogpu_mmio
+            .as_ref()
+            .expect("AeroGPU MMIO present")
+            .borrow_mut()
+            .set_backend(Box::new(backend));
+
+        m.display_present();
+
+        assert_eq!(m.display_resolution(), (width, height));
+        assert_eq!(m.display_framebuffer()[0], u32::from_le_bytes(rgba_backend));
+        assert_ne!(m.display_framebuffer()[0], u32::from_le_bytes(rgba_guest));
     }
 }

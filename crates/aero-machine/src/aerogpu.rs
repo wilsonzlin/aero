@@ -1329,6 +1329,47 @@ impl AeroGpuMmioDevice {
         }
     }
 
+    /// Read back the most recently presented scanout from an in-process command backend (if one is
+    /// installed).
+    ///
+    /// This enables native/test harnesses to display AeroGPU scanout without requiring the guest to
+    /// render into a BAR1-mapped framebuffer.
+    ///
+    /// Returns RGBA8888 pixels in the machine's canonical format (`u32::from_le_bytes([r, g, b, a])`).
+    pub fn read_backend_scanout_rgba8888(
+        &mut self,
+        scanout_id: u32,
+    ) -> Option<(u32, u32, Vec<u32>)> {
+        let backend = self.backend.as_mut()?;
+        let scanout = backend.read_scanout_rgba8(scanout_id)?;
+
+        let width = scanout.width;
+        let height = scanout.height;
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        let pixel_count = usize::try_from(width)
+            .ok()
+            .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))?;
+        let out_bytes = pixel_count.checked_mul(core::mem::size_of::<u32>())?;
+        if out_bytes > MAX_HOST_SCANOUT_RGBA8888_BYTES {
+            return None;
+        }
+
+        let required_bytes = out_bytes;
+        if scanout.rgba8.len() < required_bytes {
+            return None;
+        }
+
+        let mut out = Vec::with_capacity(pixel_count);
+        for src in scanout.rgba8[..required_bytes].chunks_exact(4) {
+            out.push(u32::from_le_bytes([src[0], src[1], src[2], src[3]]));
+        }
+
+        Some((width, height, out))
+    }
+
     pub(crate) fn snapshot_v1(&self) -> AeroGpuMmioSnapshotV1 {
         AeroGpuMmioSnapshotV1 {
             abi_version: self.abi_version,
