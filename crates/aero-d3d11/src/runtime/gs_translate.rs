@@ -2710,11 +2710,12 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     emit_write_masked(&mut w, inst_index, "f32tof16", dst.reg, dst.mask, rhs)?;
                 }
                 Sm4Inst::F16ToF32 { dst, src } => {
-                    // Operand modifiers apply to the numeric `f32` result of the conversion, not
-                    // the raw half-float payload.
+                    // `f16tof32` consumes a raw IEEE 754 binary16 payload stored in the low 16 bits
+                    // of each untyped register lane.
                     //
-                    // Preserve the raw half bits while reading the operand, then apply modifiers
-                    // after unpacking.
+                    // Operand modifiers apply to the numeric `f32` result of the conversion, not
+                    // the raw half-float payload. Preserve the raw half bits while reading the
+                    // operand, then apply modifiers after unpacking.
                     let mut src_bits = src.clone();
                     src_bits.modifier = OperandModifier::None;
                     let src_u = emit_src_vec4_u32(inst_index, "f16tof32", &src_bits, &input_sivs)?;
