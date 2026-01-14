@@ -1057,6 +1057,9 @@ fn is_retryable_http_error(err: &anyhow::Error) -> bool {
         if msg.contains("unexpected Content-Encoding") {
             return false;
         }
+        if msg.contains("response too large") {
+            return false;
+        }
 
         if let Some(status) = cause.downcast_ref::<HttpStatusFailure>() {
             let code = status.status;
@@ -1091,9 +1094,23 @@ async fn download_http_bytes_with_retry(
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
-                    return read_http_response_bytes_with_limit(resp, max_bytes)
+                    let result = read_http_response_bytes_with_limit(resp, max_bytes)
                         .await
                         .with_context(|| format!("GET {url}"));
+                    match result {
+                        Ok(bytes) => return Ok(bytes),
+                        Err(err) if attempt < retries && is_retryable_http_error(&err) => {
+                            let sleep_for = retry_backoff(attempt);
+                            let err_summary = error_chain_summary(&err);
+                            eprintln!(
+                                "download failed (attempt {attempt}/{retries}) for {url}: {err_summary}; retrying in {:?}",
+                                sleep_for
+                            );
+                            tokio::time::sleep(sleep_for).await;
+                            continue;
+                        }
+                        Err(err) => return Err(err),
+                    }
                 }
 
                 let err = anyhow!(HttpStatusFailure {
@@ -1181,10 +1198,23 @@ async fn download_http_bytes_optional_with_retry(
                     return Ok(None);
                 }
                 if status.is_success() {
-                    let bytes = read_http_response_bytes_with_limit(resp, max_bytes)
+                    let result = read_http_response_bytes_with_limit(resp, max_bytes)
                         .await
-                        .with_context(|| format!("GET {url}"))?;
-                    return Ok(Some(bytes));
+                        .with_context(|| format!("GET {url}"));
+                    match result {
+                        Ok(bytes) => return Ok(Some(bytes)),
+                        Err(err) if attempt < retries && is_retryable_http_error(&err) => {
+                            let sleep_for = retry_backoff(attempt);
+                            let err_summary = error_chain_summary(&err);
+                            eprintln!(
+                                "download failed (attempt {attempt}/{retries}) for {url}: {err_summary}; retrying in {:?}",
+                                sleep_for
+                            );
+                            tokio::time::sleep(sleep_for).await;
+                            continue;
+                        }
+                        Err(err) => return Err(err),
+                    }
                 }
 
                 let err = Err(anyhow!(HttpStatusFailure {
@@ -2475,11 +2505,22 @@ async fn download_object_bytes_with_retry(
                         );
                     }
                 }
-                let aggregated = output
-                    .body
-                    .collect()
-                    .await
-                    .with_context(|| format!("read s3://{bucket}/{key}"))?;
+                let aggregated = match output.body.collect().await {
+                    Ok(aggregated) => aggregated,
+                    Err(err) if attempt < retries => {
+                        let sleep_for = retry_backoff(attempt);
+                        eprintln!(
+                            "download failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}; retrying in {:?}",
+                            sleep_for
+                        );
+                        tokio::time::sleep(sleep_for).await;
+                        continue;
+                    }
+                    Err(err) => {
+                        return Err(anyhow!(err))
+                            .with_context(|| format!("read s3://{bucket}/{key}"));
+                    }
+                };
                 let bytes = aggregated.into_bytes();
                 if bytes.len() > MAX_MANIFEST_JSON_BYTES {
                     bail!(
@@ -2543,11 +2584,22 @@ async fn download_object_bytes_optional_with_retry(
                         );
                     }
                 }
-                let aggregated = output
-                    .body
-                    .collect()
-                    .await
-                    .with_context(|| format!("read s3://{bucket}/{key}"))?;
+                let aggregated = match output.body.collect().await {
+                    Ok(aggregated) => aggregated,
+                    Err(err) if attempt < retries => {
+                        let sleep_for = retry_backoff(attempt);
+                        eprintln!(
+                            "download failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}; retrying in {:?}",
+                            sleep_for
+                        );
+                        tokio::time::sleep(sleep_for).await;
+                        continue;
+                    }
+                    Err(err) => {
+                        return Err(anyhow!(err))
+                            .with_context(|| format!("read s3://{bucket}/{key}"));
+                    }
+                };
                 let bytes = aggregated.into_bytes();
                 if bytes.len() > MAX_MANIFEST_JSON_BYTES {
                     bail!(
