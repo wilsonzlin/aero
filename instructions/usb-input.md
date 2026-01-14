@@ -239,6 +239,12 @@ The input injector worker (`io.worker.ts` in `vmRuntime=legacy`, `machine_cpu.wo
 # Use `--usb-all` if you want to run the full `aero-usb` integration suite (all xHCI tests, etc).
 cargo xtask input
 
+# If you run Node tooling from `web/` directly (or your `node_modules/` live under `web/`),
+# you can point `cargo xtask input` at that workspace:
+cargo xtask input --node-dir web
+# (Equivalent env var form.)
+AERO_NODE_DIR=web cargo xtask input
+
 # Run only the Rust USB/input tests (skips Node + Playwright; does not require `node_modules`).
 cargo xtask input --rust-only
 
@@ -302,6 +308,8 @@ cargo xtask input --e2e
 
 # If you're running in a constrained sandbox, consider using safe-run:
 bash ./scripts/safe-run.sh cargo xtask input
+# If your Node workspace is `web/`, you can also use:
+AERO_NODE_DIR=web bash ./scripts/safe-run.sh cargo xtask input
 bash ./scripts/safe-run.sh cargo xtask input --rust-only
 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test webusb_uhci_bridge \
