@@ -45,7 +45,7 @@ Bitness policy (important):
 
 - `aerogpu_dbgctl.exe` is intentionally shipped as an **x86 (32-bit)** PE executable.
 - The same x86 binary is staged into both the x86 and x64 driver outputs under:
-  - `out/drivers/aerogpu/<arch>/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
+  - `out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe`
   - On Windows x64 it runs under **WOW64**.
 - `ci/build-aerogpu-dbgctl.ps1` imports an x86 Visual Studio developer environment (VsDevCmd/vcvarsall) and
   validates the produced binary is `IMAGE_FILE_MACHINE_I386 (0x014c)`, failing fast if it is x64 (0x8664) or unknown.
