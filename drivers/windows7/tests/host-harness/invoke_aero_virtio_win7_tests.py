@@ -65,6 +65,7 @@ do not affect PASS/FAIL):
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|PASS/FAIL/INFO|write_ok=...|write_bytes=...|write_mbps=...|flush_ok=...|read_ok=...|read_bytes=...|read_mbps=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|PASS/FAIL/SKIP|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|PASS/FAIL/SKIP|...`
@@ -6017,6 +6018,7 @@ def main() -> int:
         _emit_virtio_blk_recovery_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_blk_counters_host_marker(tail)
         _emit_virtio_net_large_host_marker(tail)
+        _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
         _emit_virtio_net_diag_host_marker(tail)
         _emit_virtio_net_irq_host_marker(tail)
@@ -6998,6 +7000,28 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
         "msi",
         "msi_messages",
     ):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_net_udp_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker describing the guest's UDP echo test.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|")
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|{status}"]
+    for k in ("bytes", "small_bytes", "mtu_bytes", "reason", "wsa"):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))

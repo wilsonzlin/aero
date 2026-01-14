@@ -155,6 +155,7 @@ Note:
 - The host harness may also emit additional summary/diagnostic markers (informational; do not affect PASS/FAIL), such as:
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|...`

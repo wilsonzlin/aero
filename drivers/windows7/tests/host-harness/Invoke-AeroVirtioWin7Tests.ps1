@@ -2232,6 +2232,47 @@ function Try-EmitAeroVirtioNetLargeMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioNetUdpMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-net-udp marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+  $status = "INFO"
+  if ($toks.Count -ge 4) {
+    $s = $toks[3].Trim().ToUpperInvariant()
+    if ($s -eq "PASS" -or $s -eq "FAIL" -or $s -eq "SKIP" -or $s -eq "INFO") {
+      $status = $s
+    }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|$status"
+  foreach ($k in @("bytes", "small_bytes", "mtu_bytes", "reason", "wsa")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioNetUdpDnsMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -5439,6 +5480,7 @@ try {
   Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkCountersMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioNetUdpMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetUdpDnsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetDiagMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-net" -HostMarker "VIRTIO_NET_IRQ" -SerialLogPath $SerialLogPath
