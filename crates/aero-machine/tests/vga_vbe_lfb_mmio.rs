@@ -7,7 +7,7 @@ use aero_machine::{Machine, MachineConfig};
 fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
     // Use a non-default base to ensure there are no hidden dependencies on
     // `aero_gpu_vga::SVGA_LFB_BASE` in the non-PC-platform MMIO wiring path.
-    let lfb_base: u32 = 0xE100_0000;
+    let lfb_base: u32 = 0xD000_0000;
 
     // Keep the test output deterministic (not required for correctness, but avoids noise if the
     // test ever gets extended).

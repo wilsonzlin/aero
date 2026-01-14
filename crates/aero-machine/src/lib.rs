@@ -17506,7 +17506,9 @@ mod tests {
         assert_eq!(headless.bios.config().vbe_lfb_base, None);
 
         // When VGA is enabled, the BIOS should report the configured MMIO-mapped base.
-        let lfb_base = 0xE100_0000;
+        // Choose a base outside the BIOS PCI BAR allocator default window
+        // (`0xE000_0000..0xF000_0000`) to ensure we don't rely on that sub-window.
+        let lfb_base = 0xD000_0000;
         let vga = Machine::new(MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             enable_pc_platform: true,

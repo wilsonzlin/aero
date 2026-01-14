@@ -2,7 +2,7 @@ use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
-const NON_DEFAULT_LFB_BASE: u32 = 0xE100_0000;
+const NON_DEFAULT_LFB_BASE: u32 = 0xD000_0000;
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
