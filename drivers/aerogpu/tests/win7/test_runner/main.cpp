@@ -1175,6 +1175,7 @@ int main(int argc, char** argv) {
       "d3d9ex_shared_allocations",
       "d3d9ex_shared_surface_stress",
       "d3d10_triangle",
+      "d3d10_rs_om_state_sanity",
       "d3d10_map_do_not_wait",
       "d3d10_shared_surface_ipc",
       "d3d10_1_triangle",
