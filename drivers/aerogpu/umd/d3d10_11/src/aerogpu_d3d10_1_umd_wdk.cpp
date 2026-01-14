@@ -339,36 +339,12 @@ uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
 }
 
 uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
-  switch (dxgi_format) {
-    case kDxgiFormatR32Uint:
-      return AEROGPU_INDEX_FORMAT_UINT32;
-    case kDxgiFormatR16Uint:
-    default:
-      return AEROGPU_INDEX_FORMAT_UINT16;
-  }
+  return aerogpu::d3d10_11::dxgi_index_format_to_aerogpu(dxgi_format);
 }
 
 uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
-  uint32_t usage = AEROGPU_RESOURCE_USAGE_NONE;
-  if (bind_flags & kD3D10BindVertexBuffer) {
-    usage |= AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER;
-  }
-  if (bind_flags & kD3D10BindIndexBuffer) {
-    usage |= AEROGPU_RESOURCE_USAGE_INDEX_BUFFER;
-  }
-  if (bind_flags & kD3D10BindConstantBuffer) {
-    usage |= AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER;
-  }
-  if (bind_flags & kD3D10BindShaderResource) {
-    usage |= AEROGPU_RESOURCE_USAGE_TEXTURE;
-  }
-  if (bind_flags & kD3D10BindRenderTarget) {
-    usage |= AEROGPU_RESOURCE_USAGE_RENDER_TARGET;
-  }
-  if (bind_flags & kD3D10BindDepthStencil) {
-    usage |= AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL;
-  }
-  return usage;
+  // D3D10 and D3D11 bind flags share numeric values for the subset we care about.
+  return aerogpu::d3d10_11::bind_flags_to_usage_flags(bind_flags);
 }
 
 enum class ResourceKind : uint32_t {
