@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -406,9 +405,11 @@ def main() -> int:
 
         if use_rust:
             epoch = _resolve_source_date_epoch(args.source_date_epoch)
+            print(f"Using ISO backend: rust (aero_iso), source_date_epoch={epoch}")
             _build_iso_with_aero_iso(repo_root, stage_root, out_path, label, epoch)
         else:
             assert tool_kind is not None
+            print(f"Using ISO backend: {tool_kind}")
             if tool_kind == "imapi":
                 _build_iso_with_imapi(stage_root, out_path, label)
             elif tool_kind == "oscdimg":
