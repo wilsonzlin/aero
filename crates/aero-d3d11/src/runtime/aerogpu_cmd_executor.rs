@@ -3118,6 +3118,69 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
+        // If the effective viewport/scissor is empty (e.g. entirely out of bounds), treat the draw
+        // as a no-op. This mirrors D3D11 behavior while avoiding invalid WebGPU dynamic state (wgpu
+        // does not allow zero-sized viewports/scissors).
+        let rt_dims = self
+            .state
+            .render_targets
+            .iter()
+            .flatten()
+            .next()
+            .and_then(|rt| self.resources.textures.get(rt))
+            .map(|tex| (tex.desc.width, tex.desc.height))
+            .or_else(|| {
+                self.state
+                    .depth_stencil
+                    .and_then(|ds| self.resources.textures.get(&ds))
+                    .map(|tex| (tex.desc.width, tex.desc.height))
+            });
+        if let Some((rt_w, rt_h)) = rt_dims {
+            let mut viewport_empty = false;
+            if let Some(vp) = self.state.viewport {
+                let valid = vp.x.is_finite()
+                    && vp.y.is_finite()
+                    && vp.width.is_finite()
+                    && vp.height.is_finite()
+                    && vp.min_depth.is_finite()
+                    && vp.max_depth.is_finite()
+                    && vp.width > 0.0
+                    && vp.height > 0.0;
+                if valid {
+                    let max_w = rt_w as f32;
+                    let max_h = rt_h as f32;
+                    let left = vp.x.max(0.0);
+                    let top = vp.y.max(0.0);
+                    let right = (vp.x + vp.width).max(0.0).min(max_w);
+                    let bottom = (vp.y + vp.height).max(0.0).min(max_h);
+                    let width = (right - left).max(0.0);
+                    let height = (bottom - top).max(0.0);
+                    if width == 0.0 || height == 0.0 {
+                        viewport_empty = true;
+                    }
+                }
+            }
+
+            let mut scissor_empty = false;
+            if self.state.scissor_enable {
+                if let Some(sc) = self.state.scissor {
+                    let x = sc.x.min(rt_w);
+                    let y = sc.y.min(rt_h);
+                    let width = sc.width.min(rt_w.saturating_sub(x));
+                    let height = sc.height.min(rt_h.saturating_sub(y));
+                    if width == 0 || height == 0 {
+                        scissor_empty = true;
+                    }
+                }
+            }
+
+            if viewport_empty || scissor_empty {
+                report.commands = report.commands.saturating_add(1);
+                *stream.cursor = cmd_end;
+                return Ok(());
+            }
+        }
+
         // Prepare compute prepass output buffers.
         let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
         let expanded_vertex_count = u64::from(primitive_count)
@@ -3826,14 +3889,18 @@ impl AerogpuD3d11Executor {
                 occlusion_query_set: None,
             });
 
+            let mut skip_draw = false;
+
             if let Some(vp) = self.state.viewport {
-                if vp.x.is_finite()
+                let valid = vp.x.is_finite()
                     && vp.y.is_finite()
                     && vp.width.is_finite()
                     && vp.height.is_finite()
                     && vp.min_depth.is_finite()
                     && vp.max_depth.is_finite()
-                {
+                    && vp.width > 0.0
+                    && vp.height > 0.0;
+                if valid {
                     if let Some((rt_w, rt_h)) = rt_dims {
                         let max_w = rt_w as f32;
                         let max_h = rt_h as f32;
@@ -3852,16 +3919,16 @@ impl AerogpuD3d11Executor {
                                 std::mem::swap(&mut min_depth, &mut max_depth);
                             }
                             pass.set_viewport(left, top, width, height, min_depth, max_depth);
+                        } else {
+                            skip_draw = true;
                         }
                     } else {
-                        pass.set_viewport(
-                            vp.x,
-                            vp.y,
-                            vp.width,
-                            vp.height,
-                            vp.min_depth,
-                            vp.max_depth,
-                        );
+                        let mut min_depth = vp.min_depth.clamp(0.0, 1.0);
+                        let mut max_depth = vp.max_depth.clamp(0.0, 1.0);
+                        if min_depth > max_depth {
+                            std::mem::swap(&mut min_depth, &mut max_depth);
+                        }
+                        pass.set_viewport(vp.x, vp.y, vp.width, vp.height, min_depth, max_depth);
                     }
                 }
             }
@@ -3875,6 +3942,8 @@ impl AerogpuD3d11Executor {
                         let height = sc.height.min(rt_h.saturating_sub(y));
                         if width > 0 && height > 0 {
                             pass.set_scissor_rect(x, y, width, height);
+                        } else {
+                            skip_draw = true;
                         }
                     }
                 }
@@ -3903,26 +3972,28 @@ impl AerogpuD3d11Executor {
                 pass.set_bind_group(group_index as u32, bg.as_ref(), &[]);
             }
 
-            if opcode == OPCODE_DRAW_INDEXED {
-                let ib_end = expanded_index_alloc
-                    .offset
-                    .checked_add(expanded_index_alloc.size)
-                    .ok_or_else(|| anyhow!("geometry prepass expanded index slice overflows u64"))?;
-                pass.set_index_buffer(
-                    expanded_index_alloc
-                        .buffer
-                        .slice(expanded_index_alloc.offset..ib_end),
-                    wgpu::IndexFormat::Uint32,
-                );
-                pass.draw_indexed_indirect(
-                    indirect_args_alloc.buffer.as_ref(),
-                    indirect_args_alloc.offset,
-                );
-            } else {
-                pass.draw_indirect(
-                    indirect_args_alloc.buffer.as_ref(),
-                    indirect_args_alloc.offset,
-                );
+            if !skip_draw {
+                if opcode == OPCODE_DRAW_INDEXED {
+                    let ib_end = expanded_index_alloc
+                        .offset
+                        .checked_add(expanded_index_alloc.size)
+                        .ok_or_else(|| anyhow!("geometry prepass expanded index slice overflows u64"))?;
+                    pass.set_index_buffer(
+                        expanded_index_alloc
+                            .buffer
+                            .slice(expanded_index_alloc.offset..ib_end),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed_indirect(
+                        indirect_args_alloc.buffer.as_ref(),
+                        indirect_args_alloc.offset,
+                    );
+                } else {
+                    pass.draw_indirect(
+                        indirect_args_alloc.buffer.as_ref(),
+                        indirect_args_alloc.offset,
+                    );
+                }
             }
         }
 
@@ -4290,14 +4361,25 @@ impl AerogpuD3d11Executor {
                     .map(|tex| (tex.desc.width, tex.desc.height))
             });
 
+        // WebGPU dynamic state defaults to a full-target viewport/scissor at render-pass begin. The
+        // AeroGPU protocol encodes "reset to default" using degenerate 0-sized state. However, a
+        // *valid* viewport/scissor can still be entirely out of bounds; D3D11 would then draw
+        // nothing. WebGPU does not allow zero-sized viewports/scissors, so we emulate this by
+        // skipping draws while the effective region is empty.
+        let mut viewport_empty = false;
+        let mut scissor_empty = false;
+
         if let Some(vp) = self.state.viewport {
-            if vp.x.is_finite()
+            let valid = vp.x.is_finite()
                 && vp.y.is_finite()
                 && vp.width.is_finite()
                 && vp.height.is_finite()
                 && vp.min_depth.is_finite()
                 && vp.max_depth.is_finite()
-            {
+                && vp.width > 0.0
+                && vp.height > 0.0;
+
+            if valid {
                 if let Some((rt_w, rt_h)) = rt_dims {
                     let max_w = rt_w as f32;
                     let max_h = rt_h as f32;
@@ -4316,22 +4398,31 @@ impl AerogpuD3d11Executor {
                             std::mem::swap(&mut min_depth, &mut max_depth);
                         }
                         pass.set_viewport(left, top, width, height, min_depth, max_depth);
+                    } else {
+                        viewport_empty = true;
                     }
                 } else {
-                    pass.set_viewport(vp.x, vp.y, vp.width, vp.height, vp.min_depth, vp.max_depth);
+                    let mut min_depth = vp.min_depth.clamp(0.0, 1.0);
+                    let mut max_depth = vp.max_depth.clamp(0.0, 1.0);
+                    if min_depth > max_depth {
+                        std::mem::swap(&mut min_depth, &mut max_depth);
+                    }
+                    pass.set_viewport(vp.x, vp.y, vp.width, vp.height, min_depth, max_depth);
                 }
             }
         }
 
-        if self.state.scissor_enable {
-            if let Some(sc) = self.state.scissor {
-                if let Some((rt_w, rt_h)) = rt_dims {
+        if let Some((rt_w, rt_h)) = rt_dims {
+            if self.state.scissor_enable {
+                if let Some(sc) = self.state.scissor {
                     let x = sc.x.min(rt_w);
                     let y = sc.y.min(rt_h);
                     let width = sc.width.min(rt_w.saturating_sub(x));
                     let height = sc.height.min(rt_h.saturating_sub(y));
                     if width > 0 && height > 0 {
                         pass.set_scissor_rect(x, y, width, height);
+                    } else {
+                        scissor_empty = true;
                     }
                 }
             }
@@ -5595,7 +5686,11 @@ impl AerogpuD3d11Executor {
 
             match opcode {
                 OPCODE_DRAW => {
-                    if (self.state.sample_mask & 1) != 0 {
+                    if viewport_empty || scissor_empty {
+                        // D3D11 allows viewports/scissors that clip the entire render target. wgpu
+                        // does not allow zero-sized dynamic state, so we emulate this by treating
+                        // the draw as a no-op while the effective region is empty.
+                    } else if (self.state.sample_mask & 1) != 0 {
                         for group_index in 0..pipeline_bindings.group_layouts.len() {
                             if pipeline_bindings.group_bindings[group_index].is_empty() {
                                 if current_bind_groups[group_index].is_none() {
@@ -5772,7 +5867,9 @@ impl AerogpuD3d11Executor {
                     if self.state.index_buffer.is_none() {
                         bail!("DRAW_INDEXED without index buffer");
                     }
-                    if (self.state.sample_mask & 1) != 0 {
+                    if viewport_empty || scissor_empty {
+                        // See draw path above.
+                    } else if (self.state.sample_mask & 1) != 0 {
                         for group_index in 0..pipeline_bindings.group_layouts.len() {
                             if pipeline_bindings.group_bindings[group_index].is_empty() {
                                 if current_bind_groups[group_index].is_none() {
@@ -5951,23 +6048,32 @@ impl AerogpuD3d11Executor {
                 OPCODE_SET_VIEWPORT => {
                     self.exec_set_viewport(cmd_bytes)?;
                     // WebGPU requires that viewports stay within the render target bounds and have
-                    // positive dimensions. The AeroGPU protocol uses a degenerate 0x0 viewport to
-                    // represent "reset to default", so when we see an invalid/degenerate viewport
-                    // update mid-render-pass we must explicitly restore the default viewport (WGSL
-                    // dynamic state persists until changed).
+                    // positive dimensions.
+                    //
+                    // The AeroGPU protocol uses a degenerate 0x0 viewport (or invalid NaN payload)
+                    // to represent "reset to default", so we must explicitly restore the default
+                    // viewport mid-render-pass.
+                    //
+                    // Separately, D3D11 allows a valid viewport that is entirely out of bounds,
+                    // which should draw nothing. WebGPU does not accept an empty viewport, so we
+                    // track this via `viewport_empty` and skip draws until a non-empty viewport is
+                    // set.
                     if let Some((rt_w, rt_h)) = rt_dims {
                         let default_w = rt_w as f32;
                         let default_h = rt_h as f32;
 
-                        let mut applied = false;
+                        let mut reset = true;
                         if let Some(vp) = self.state.viewport {
-                            if vp.x.is_finite()
+                            let valid = vp.x.is_finite()
                                 && vp.y.is_finite()
                                 && vp.width.is_finite()
                                 && vp.height.is_finite()
                                 && vp.min_depth.is_finite()
-                                && vp.max_depth.is_finite()
-                            {
+                                && vp.max_depth.is_finite();
+
+                            if valid && vp.width > 0.0 && vp.height > 0.0 {
+                                reset = false;
+
                                 let max_w = default_w;
                                 let max_h = default_h;
 
@@ -5987,13 +6093,16 @@ impl AerogpuD3d11Executor {
                                     pass.set_viewport(
                                         left, top, width, height, min_depth, max_depth,
                                     );
-                                    applied = true;
+                                    viewport_empty = false;
+                                } else {
+                                    viewport_empty = true;
                                 }
                             }
                         }
 
-                        if !applied && default_w.is_finite() && default_h.is_finite() {
+                        if reset && default_w.is_finite() && default_h.is_finite() {
                             // Reset to the default viewport (full render target).
+                            viewport_empty = false;
                             pass.set_viewport(0.0, 0.0, default_w, default_h, 0.0, 1.0);
                         }
                     } else if let Some(vp) = self.state.viewport {
@@ -6014,15 +6123,21 @@ impl AerogpuD3d11Executor {
                                 std::mem::swap(&mut min_depth, &mut max_depth);
                             }
                             pass.set_viewport(vp.x, vp.y, vp.width, vp.height, min_depth, max_depth);
+                            viewport_empty = false;
+                        } else {
+                            // Cannot apply; clear empty state to avoid spuriously skipping draws.
+                            viewport_empty = false;
                         }
                     }
                 }
                 OPCODE_SET_SCISSOR => {
                     self.exec_set_scissor(cmd_bytes)?;
-                    // Similar to viewports, scissor state persists within a render pass. The
-                    // AeroGPU protocol uses a 0x0 rect to encode "scissor disabled", so we must
-                    // explicitly restore the full-target scissor when a degenerate scissor rect is
-                    // set mid-pass.
+                    // Similar to viewports, scissor state persists within a render pass.
+                    //
+                    // The AeroGPU protocol uses a 0x0 rect to encode "scissor disabled", so we must
+                    // explicitly restore the full-target scissor mid-pass. Conversely, a valid
+                    // scissor rect may still be entirely out of bounds, which should draw nothing;
+                    // we emulate that with `scissor_empty` + draw skipping.
                     if let Some((rt_w, rt_h)) = rt_dims {
                         if self.state.scissor_enable {
                             if let Some(sc) = self.state.scissor {
@@ -6032,13 +6147,18 @@ impl AerogpuD3d11Executor {
                                 let height = sc.height.min(rt_h.saturating_sub(y));
                                 if width > 0 && height > 0 {
                                     pass.set_scissor_rect(x, y, width, height);
+                                    scissor_empty = false;
                                 } else {
-                                    pass.set_scissor_rect(0, 0, rt_w, rt_h);
+                                    scissor_empty = true;
                                 }
                             } else {
+                                // Scissor disabled via protocol encoding (0x0 rect).
+                                scissor_empty = false;
                                 pass.set_scissor_rect(0, 0, rt_w, rt_h);
                             }
                         } else {
+                            // Scissor test disabled via rasterizer state.
+                            scissor_empty = false;
                             pass.set_scissor_rect(0, 0, rt_w, rt_h);
                         }
                     }
@@ -6115,11 +6235,16 @@ impl AerogpuD3d11Executor {
                                 let height = sc.height.min(rt_h.saturating_sub(y));
                                 if width > 0 && height > 0 {
                                     pass.set_scissor_rect(x, y, width, height);
+                                    scissor_empty = false;
+                                } else {
+                                    scissor_empty = true;
                                 }
                             } else {
+                                scissor_empty = false;
                                 pass.set_scissor_rect(0, 0, rt_w, rt_h);
                             }
                         } else {
+                            scissor_empty = false;
                             pass.set_scissor_rect(0, 0, rt_w, rt_h);
                         }
                     }
@@ -9546,15 +9671,15 @@ impl AerogpuD3d11Executor {
         let top = y.max(0);
         let right = x.saturating_add(w).max(0);
         let bottom = y.saturating_add(h).max(0);
-        if right <= left || bottom <= top {
-            self.state.scissor = None;
-            return Ok(());
-        }
+        // Unlike the 0x0 "scissor disabled" encoding (w<=0||h<=0), a scissor rect that becomes
+        // empty after clamping to non-negative coordinates should be treated as an *empty scissor*
+        // (no pixels pass), not as "disabled". We preserve it as a 0-sized rect here and let the
+        // render-pass path skip draws when the effective scissor is empty.
         self.state.scissor = Some(Scissor {
             x: left as u32,
             y: top as u32,
-            width: (right - left) as u32,
-            height: (bottom - top) as u32,
+            width: (right - left).max(0) as u32,
+            height: (bottom - top).max(0) as u32,
         });
         Ok(())
     }

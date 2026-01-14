@@ -46,7 +46,7 @@ fn rgba_within(got: &[u8], expected: [u8; 4], tol: u8) -> bool {
     got.len() == 4 && got.iter().zip(expected).all(|(&g, e)| g.abs_diff(e) <= tol)
 }
 
-fn patch_first_viewport(bytes: &mut [u8], width: f32, height: f32) {
+fn patch_first_viewport_rect(bytes: &mut [u8], x: f32, y: f32, width: f32, height: f32) {
     let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
     let mut patched = false;
     while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
@@ -60,8 +60,12 @@ fn patch_first_viewport(bytes: &mut [u8], width: f32, height: f32) {
             // `struct aerogpu_cmd_set_viewport` stores float bits as u32s:
             // hdr(8) + x/y/width/height/min/max (6 * 4).
             assert_eq!(size, 32, "unexpected SetViewport size");
+            let x_off = cursor + 8;
+            let y_off = cursor + 12;
             let width_off = cursor + 16;
             let height_off = cursor + 20;
+            bytes[x_off..x_off + 4].copy_from_slice(&x.to_bits().to_le_bytes());
+            bytes[y_off..y_off + 4].copy_from_slice(&y.to_bits().to_le_bytes());
             bytes[width_off..width_off + 4].copy_from_slice(&width.to_bits().to_le_bytes());
             bytes[height_off..height_off + 4].copy_from_slice(&height.to_bits().to_le_bytes());
             patched = true;
@@ -72,6 +76,10 @@ fn patch_first_viewport(bytes: &mut [u8], width: f32, height: f32) {
     }
 
     assert!(patched, "failed to find SetViewport command to patch");
+}
+
+fn patch_first_viewport(bytes: &mut [u8], width: f32, height: f32) {
+    patch_first_viewport_rect(bytes, 0.0, 0.0, width, height);
 }
 
 fn insert_viewport_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
@@ -186,6 +194,16 @@ fn insert_viewport_nan_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
 }
 
 fn insert_scissor_enable_and_rect_before_first_draw(bytes: &mut Vec<u8>, width: i32, height: i32) {
+    insert_scissor_enable_and_rect_before_first_draw_xy(bytes, 0, 0, width, height);
+}
+
+fn insert_scissor_enable_and_rect_before_first_draw_xy(
+    bytes: &mut Vec<u8>,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) {
     // Insert:
     //   SET_RASTERIZER_STATE (scissor_enable=1)
     //   SET_SCISSOR (0,0,width,height)
@@ -227,8 +245,8 @@ fn insert_scissor_enable_and_rect_before_first_draw(bytes: &mut Vec<u8>, width: 
     // SET_SCISSOR (24 bytes).
     insert.extend_from_slice(&OPCODE_SET_SCISSOR.to_le_bytes());
     insert.extend_from_slice(&24u32.to_le_bytes());
-    insert.extend_from_slice(&0i32.to_le_bytes()); // x
-    insert.extend_from_slice(&0i32.to_le_bytes()); // y
+    insert.extend_from_slice(&x.to_le_bytes());
+    insert.extend_from_slice(&y.to_le_bytes());
     insert.extend_from_slice(&width.to_le_bytes());
     insert.extend_from_slice(&height.to_le_bytes());
 
@@ -419,6 +437,57 @@ fn aerogpu_cmd_renders_triangle_fixture_with_small_viewport() {
 }
 
 #[test]
+fn aerogpu_cmd_viewport_out_of_bounds_draws_nothing() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = CMD_TRIANGLE_SM4.to_vec();
+        // Move the viewport completely out of the render target. D3D11 should draw nothing (wgpu
+        // cannot represent an empty viewport, so the executor must skip draws).
+        patch_first_viewport_rect(&mut stream, -1000.0, 0.0, 100.0, 64.0);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let report = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let render_target = report
+            .presents
+            .last()
+            .and_then(|p| p.presented_render_target)
+            .expect("fixture should present a render target");
+        let (width, height) = exec.texture_size(render_target).unwrap();
+        assert_eq!((width, height), (64, 64));
+
+        let pixels = exec.read_texture_rgba8(render_target).await.unwrap();
+        let w = width as usize;
+        let px = |x: usize, y: usize| -> &[u8] {
+            let idx = (y * w + x) * 4;
+            &pixels[idx..idx + 4]
+        };
+
+        // All pixels should remain the clear color (0.1, 0.2, 0.3, 1.0) in UNORM8.
+        assert!(
+            rgba_within(px(16, 16), [26, 51, 77, 255], 1),
+            "unexpected pixel {:?}",
+            px(16, 16)
+        );
+        assert!(
+            rgba_within(px(48, 48), [26, 51, 77, 255], 1),
+            "unexpected pixel {:?}",
+            px(48, 48)
+        );
+    });
+}
+
+#[test]
 fn aerogpu_cmd_viewport_reset_restores_default_within_pass() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
@@ -552,6 +621,60 @@ fn aerogpu_cmd_renders_triangle_fixture_with_small_scissor() {
         assert!(
             rgba_within(px(48, 48), [26, 51, 77, 255], 1),
             "unexpected clear pixel {:?}",
+            px(48, 48)
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_scissor_out_of_bounds_draws_nothing() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = CMD_TRIANGLE_SM4.to_vec();
+        // Enable scissor test and set a rect completely out of the render target.
+        insert_scissor_enable_and_rect_before_first_draw_xy(&mut stream, 1000, 0, 10, 10);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let report = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let render_target = report
+            .presents
+            .last()
+            .and_then(|p| p.presented_render_target)
+            .expect("fixture should present a render target");
+        let (width, height) = exec.texture_size(render_target).unwrap();
+        assert_eq!((width, height), (64, 64));
+
+        let pixels = exec.read_texture_rgba8(render_target).await.unwrap();
+        let w = width as usize;
+        let px = |x: usize, y: usize| -> &[u8] {
+            let idx = (y * w + x) * 4;
+            &pixels[idx..idx + 4]
+        };
+
+        assert!(
+            rgba_within(px(16, 16), [26, 51, 77, 255], 1),
+            "unexpected pixel {:?}",
+            px(16, 16)
+        );
+        assert!(
+            rgba_within(px(48, 48), [26, 51, 77, 255], 1),
+            "unexpected pixel {:?}",
             px(48, 48)
         );
     });
