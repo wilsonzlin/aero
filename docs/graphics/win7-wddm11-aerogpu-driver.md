@@ -498,11 +498,17 @@ See:
    
 - **Purpose:** Submit a command buffer plus its referenced allocations to the GPU.
 - **AeroGPU MVP behavior:**
-   1. Validate the submission (bounds, known opcodes, allocation list sizes).
-   2. Build a **sideband allocation table** for the emulator (optional but recommended; see `drivers/aerogpu/protocol/aerogpu_ring.h`):
-      - `alloc_id` → {guest physical base address, size_bytes, flags}
-   3. Write a submission descriptor into the shared ring and ring the doorbell.
-   4. Choose a monotonically increasing fence value (`aerogpu_submit_desc::signal_fence`) and return it to dxgkrnl.
+  1. Validate the submission (bounds, known opcodes, allocation list sizes).
+  2. Build a **sideband allocation table** for the emulator (optional but recommended; see `drivers/aerogpu/protocol/aerogpu_ring.h`):
+     - `alloc_id` → {guest physical base address, size_bytes, flags}
+  3. Write a submission descriptor into the shared ring and ring the doorbell.
+  4. Use dxgkrnl’s submission fence as the *OS-visible* fence, and ensure the *device-visible* fence is monotonic:
+     - Win7/WDDM 1.1 exposes the submission fence as a **32-bit** value (`DXGKARG_SUBMITCOMMAND::SubmissionFenceId`).
+     - The versioned AeroGPU v1 ring protocol uses **64-bit** fences (`aerogpu_submit_desc::signal_fence`,
+       `AEROGPU_MMIO_REG_COMPLETED_FENCE_{LO,HI}`, and `aerogpu_fence_page.completed_fence`).
+     - Therefore the KMD must **extend** the 32-bit WDDM fence into a monotonic 64-bit device fence (e.g. by tracking a
+       32-bit epoch and computing `(epoch << 32) | fence32`) and use that as `signal_fence`.
+     - When notifying dxgkrnl of DMA completion/fault, continue to pass the **low 32 bits** to preserve the Win7 ABI.
 - **Can be deferred:** Patch-location processing (we design the command stream to avoid it), hardware scheduling, multiple queues.
 
 #### `DxgkDdiPreemptCommand` / `DxgkDdiCancelCommand` (if required by the scheduler)
