@@ -56,6 +56,19 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=intx|msix_config_vector=0xffff|msix_queue_vector=0xFFFF",
         )
 
+    def test_falls_back_to_standalone_irq_diag_lines(self) -> None:
+        # Older guest selftests may not include `irq_mode`/MSI-X fields on the per-test marker,
+        # but can still emit a standalone `virtio-blk-irq|...` diagnostic line.
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
+            b"virtio-blk-irq|INFO|mode=msix|msix_config_vector=0x0000|msix_queue0_vector=0x0001\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001",
+        )
+
     def test_emits_fail_token(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL|irq_mode=intx\n"
         out = self._emit(tail)
