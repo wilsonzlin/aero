@@ -1,5 +1,4 @@
 mod common;
-mod wgpu_common;
 
 use std::borrow::Cow;
 
@@ -13,7 +12,7 @@ fn wgpu_draw_indirect_uses_args_written_by_compute() {
             "::wgpu_draw_indirect_uses_args_written_by_compute"
         );
 
-        let (device, queue, supports_compute) = match wgpu_common::create_device_queue(
+        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
             "aero-d3d11 draw_indirect test device",
         )
         .await
@@ -219,7 +218,7 @@ fn wgpu_draw_indirect_uses_args_written_by_compute() {
 
         queue.submit([encoder.finish()]);
 
-        let pixels = wgpu_common::read_texture_rgba8(&device, &queue, &rt, width, height)
+        let pixels = common::wgpu::read_texture_rgba8(&device, &queue, &rt, width, height)
             .await
             .expect("read back render target");
         assert_eq!(pixels.len(), (width * height * 4) as usize);

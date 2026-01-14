@@ -16,3 +16,5 @@ pub fn skip_or_panic(test_name: &str, reason: &str) {
     }
     eprintln!("skipping {test_name}: {reason}");
 }
+
+pub mod wgpu;
