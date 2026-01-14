@@ -158,7 +158,7 @@ export function readScanoutRgba8FromGuestRam(
   }
 
   if (width === 0 || height === 0) {
-    return { width, height, rgba8: new Uint8Array(0) };
+    return { width, height, rgba8: new Uint8Array(new ArrayBuffer(0)) };
   }
 
   const rowBytes = width * 4;
