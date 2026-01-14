@@ -3957,6 +3957,25 @@ def _qemu_has_device(qemu_system: str, device_name: str) -> bool:
         return False
 
 
+def _qemu_has_device_strict(qemu_system: str, device_name: str) -> bool:
+    """
+    Like `_qemu_has_device`, but re-raise when the qemu-system binary itself cannot be executed.
+
+    `_qemu_has_device` is used for optional feature probing and intentionally treats any QEMU probe
+    failure as "device not present". For required-device validations we want missing/broken QEMU to
+    surface as a clear error (instead of being misreported as missing virtio device support).
+    """
+
+    try:
+        _qemu_device_help_text(qemu_system, device_name)
+        return True
+    except RuntimeError as e:
+        msg = str(e)
+        if msg.startswith("qemu-system binary not found:") or msg.startswith("failed to run '"):
+            raise
+        return False
+
+
 _QEMU_DEVICE_VECTORS_RE = re.compile(r"(?m)^\s*vectors\b")
 
 
@@ -5015,9 +5034,12 @@ def main() -> int:
         # In default (contract-v1) mode we already validate virtio-keyboard-pci/virtio-mouse-pci via
         # `_assert_qemu_supports_aero_w7_virtio_contract_v1`. In transitional mode virtio-input is
         # optional, but input event injection requires these devices to exist.
-        if not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") or not _qemu_has_device(
-            args.qemu_system, "virtio-mouse-pci"
-        ):
+        try:
+            have_kbd = _qemu_has_device_strict(args.qemu_system, "virtio-keyboard-pci")
+            have_mouse = _qemu_has_device_strict(args.qemu_system, "virtio-mouse-pci")
+        except RuntimeError as e:
+            parser.error(str(e))
+        if not have_kbd or not have_mouse:
             parser.error(
                 "--with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events"
                 "/--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel"
@@ -5028,31 +5050,38 @@ def main() -> int:
     if need_input_led and not args.dry_run:
         # The guest virtio-input sanity test requires both keyboard and mouse. Fail fast with a clearer
         # host-side error when the running QEMU build does not advertise one of these devices.
-        if not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") or not _qemu_has_device(
-            args.qemu_system, "virtio-mouse-pci"
-        ):
+        try:
+            have_kbd = _qemu_has_device_strict(args.qemu_system, "virtio-keyboard-pci")
+            have_mouse = _qemu_has_device_strict(args.qemu_system, "virtio-mouse-pci")
+        except RuntimeError as e:
+            parser.error(str(e))
+        if not have_kbd or not have_mouse:
             parser.error(
                 "--with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
                 "Upgrade QEMU or omit LED/statusq validation."
             )
 
     if need_input_leds and not args.dry_run:
-        if not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") or not _qemu_has_device(
-            args.qemu_system, "virtio-mouse-pci"
-        ):
+        try:
+            have_kbd = _qemu_has_device_strict(args.qemu_system, "virtio-keyboard-pci")
+            have_mouse = _qemu_has_device_strict(args.qemu_system, "virtio-mouse-pci")
+        except RuntimeError as e:
+            parser.error(str(e))
+        if not have_kbd or not have_mouse:
             parser.error(
                 "--with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
                 "Upgrade QEMU or omit LED/statusq validation."
             )
 
-    if (
-        need_input_media_keys
-        and not args.dry_run
-        and not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci")
-    ):
-        parser.error(
-            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys requires QEMU virtio-keyboard-pci support. Upgrade QEMU or omit media key injection."
-        )
+    if need_input_media_keys and not args.dry_run:
+        try:
+            have_kbd = _qemu_has_device_strict(args.qemu_system, "virtio-keyboard-pci")
+        except RuntimeError as e:
+            parser.error(str(e))
+        if not have_kbd:
+            parser.error(
+                "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys requires QEMU virtio-keyboard-pci support. Upgrade QEMU or omit media key injection."
+            )
 
     if attach_virtio_tablet and not args.dry_run:
         try:
