@@ -912,6 +912,25 @@ static void HexDumpBytes(const void *data, uint32_t len, uint64_t base) {
   }
 }
 
+static void BestEffortDeleteOutputFile(const wchar_t *path) {
+  if (!path || !path[0]) {
+    return;
+  }
+  if (DeleteFileW(path)) {
+    return;
+  }
+  const DWORD err = GetLastError();
+  if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+    return;
+  }
+  // If the file is read-only, try clearing the attribute and deleting again.
+  const DWORD attrs = GetFileAttributesW(path);
+  if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+    SetFileAttributesW(path, attrs & ~FILE_ATTRIBUTE_READONLY);
+    DeleteFileW(path);
+  }
+}
+
 static bool WriteBinaryFile(const wchar_t *path, const void *data, uint32_t len) {
   if (!path) {
     return false;
@@ -936,6 +955,7 @@ static bool WriteBinaryFile(const wchar_t *path, const void *data, uint32_t len)
              (unsigned long)written,
              (unsigned long)len,
              (unsigned long)lastErr);
+    BestEffortDeleteOutputFile(path);
     return false;
   }
 
@@ -1221,14 +1241,14 @@ static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_
     return false;
   }
 
+  bool ok = false;
   uint32_t done = 0;
   while (done < sizeBytes) {
     const uint32_t chunk = MinU32(sizeBytes - done, (uint32_t)AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
     const uint64_t cur = gpa + (uint64_t)done;
     if (cur < gpa) {
       fwprintf(stderr, L"dump-gpa: address overflow\n");
-      fclose(fp);
-      return false;
+      goto cleanup;
     }
 
     aerogpu_escape_read_gpa_inout io;
@@ -1246,8 +1266,7 @@ static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_
     NTSTATUS st = SendAerogpuEscapeDirect(f, hAdapter, &io, sizeof(io));
     if (!NT_SUCCESS(st)) {
       PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
-      fclose(fp);
-      return false;
+      goto cleanup;
     }
 
     const NTSTATUS op = (NTSTATUS)io.status;
@@ -1257,8 +1276,7 @@ static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_
     }
     if (!NT_SUCCESS(op)) {
       PrintNtStatus(L"read-gpa operation failed", f, op);
-      fclose(fp);
-      return false;
+      goto cleanup;
     }
     if (copied != chunk) {
       fwprintf(stderr,
@@ -1266,21 +1284,28 @@ static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_
                (unsigned long long)cur,
                (unsigned long)chunk,
                (unsigned long)copied);
-      fclose(fp);
-      return false;
+      goto cleanup;
     }
 
     if (copied != 0 && fwrite(io.data, 1, copied, fp) != copied) {
       fwprintf(stderr, L"Failed to write output file: %s (errno=%d)\n", path, errno);
-      fclose(fp);
-      return false;
+      goto cleanup;
     }
 
     done += chunk;
   }
 
-  fclose(fp);
-  return true;
+  ok = true;
+
+cleanup:
+  if (fclose(fp) != 0 && ok) {
+    fwprintf(stderr, L"Failed to close output file: %s (errno=%d)\n", path, errno);
+    ok = false;
+  }
+  if (!ok) {
+    BestEffortDeleteOutputFile(path);
+  }
+  return ok;
 }
 
 typedef struct QueryAdapterInfoThreadCtx {
@@ -5110,6 +5135,7 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
     return 2;
   }
 
+  int rc = 0;
   uint64_t remaining = sizeBytes;
   uint64_t curGpa = gpa;
 
@@ -5138,8 +5164,8 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       if (st == STATUS_NOT_SUPPORTED) {
         fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
       }
-      fclose(fp);
-      return 2;
+      rc = 2;
+      goto cleanup;
     }
 
     const NTSTATUS op = (NTSTATUS)q.status;
@@ -5156,14 +5182,14 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       if (op == STATUS_NOT_SUPPORTED) {
         fwprintf(stderr, L"hint: the installed KMD does not support AEROGPU_ESCAPE_OP_READ_GPA\n");
       }
-      fclose(fp);
-      return 2;
+      rc = 2;
+      goto cleanup;
     }
     if (bytesRead == 0) {
       fwprintf(stderr, L"read-gpa returned 0 bytes at gpa=0x%I64x (status=0x%08lx)\n",
                (unsigned long long)curGpa, (unsigned long)op);
-      fclose(fp);
-      return 2;
+      rc = 2;
+      goto cleanup;
     }
 
     if (!gotFirst && outFirstDword && bytesRead >= 4) {
@@ -5174,8 +5200,8 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
     const size_t wrote = fwrite(q.data, 1, bytesRead, fp);
     if (wrote != (size_t)bytesRead) {
       fwprintf(stderr, L"Failed to write to output file: %s\n", outPath);
-      fclose(fp);
-      return 2;
+      rc = 2;
+      goto cleanup;
     }
 
     curGpa += (uint64_t)bytesRead;
@@ -5185,16 +5211,25 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       // We made some progress but did not satisfy the request; treat as failure so callers
       // don't mistakenly interpret the output as complete.
       PrintNtStatus(L"read-gpa partial copy", f, op);
-      fclose(fp);
-      return 2;
+      rc = 2;
+      goto cleanup;
     }
   }
 
-  fclose(fp);
+  rc = 0;
   if (outFirstDword && gotFirst) {
     *outFirstDword = firstDword;
   }
-  return 0;
+
+cleanup:
+  if (fclose(fp) != 0 && rc == 0) {
+    fwprintf(stderr, L"Failed to close output file: %s\n", outPath);
+    rc = 2;
+  }
+  if (rc != 0) {
+    BestEffortDeleteOutputFile(outPath);
+  }
+  return rc;
 }
 
 static const wchar_t *RingFormatToString(uint32_t fmt) {
@@ -6403,6 +6438,9 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
 
   const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
   if (!NT_SUCCESS(st)) {
+    if (outFile && *outFile) {
+      BestEffortDeleteOutputFile(outFile);
+    }
     JsonWriteTopLevelError(out, "read-gpa", f, "D3DKMTEscape(read-gpa) failed", st);
     return 2;
   }
@@ -6416,16 +6454,21 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     copied = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
   }
 
+  const bool ok = (NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY);
+
   bool wroteFile = false;
   if (outFile && *outFile) {
-    if (!WriteBinaryFile(outFile, io.data, copied)) {
-      JsonWriteTopLevelError(out, "read-gpa", f, "Failed to write --out file", STATUS_UNSUCCESSFUL);
-      return 2;
+    if (!ok) {
+      // Ensure callers do not see a stale/partial output file when the read failed.
+      BestEffortDeleteOutputFile(outFile);
+    } else {
+      if (!WriteBinaryFile(outFile, io.data, copied)) {
+        JsonWriteTopLevelError(out, "read-gpa", f, "Failed to write --out file", STATUS_UNSUCCESSFUL);
+        return 2;
+      }
+      wroteFile = true;
     }
-    wroteFile = true;
   }
-
-  const bool ok = (NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY);
 
   JsonWriter w(out);
   w.BeginObject();

@@ -153,6 +153,7 @@ Minimum supported commands:
   - The KMD enforces a per-escape maximum of `AEROGPU_DBGCTL_READ_GPA_MAX_BYTES` (currently 4096 bytes); dbgctl chunks reads when `--out` is used.
   - Without `--out`, dbgctl prints up to 256 bytes by default; use `--force` to print up to 4096 bytes.
   - With `--out`, dbgctl writes the full requested range to a file.
+  - On failure (including `STATUS_PARTIAL_COPY`), dbgctl best-effort deletes the `--out` path so callers do not see partial/truncated artifacts.
 
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:
@@ -186,6 +187,7 @@ Minimum supported commands:
   `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
   Safety: by default dbgctl refuses to dump buffers larger than 1 MiB; use `--force` to override.
+  On failure while dumping bytes, dbgctl best-effort deletes partially-written `.bin` outputs (`--cmd-out` / `--alloc-out`).
 
 - `aerogpu_dbgctl --watch-ring --samples N --interval-ms M [--ring-id N]`  
   Polls ring head/tail in a loop and prints **one line per sample** with:
