@@ -2406,6 +2406,23 @@ def _virtio_net_link_flap_skip_failure_message(tail: bytes) -> str:
     return "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped but --with-net-link-flap was enabled"
 
 
+def _virtio_net_link_flap_fail_failure_message(tail: bytes) -> str:
+    # virtio-net link flap marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=...|...
+    marker = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|")
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if reason:
+            return (
+                "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
+                f"--with-net-link-flap was enabled (reason={reason})"
+            )
+    return (
+        "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled"
+    )
+
+
 def _virtio_net_link_flap_required_failure_message(
     tail: bytes,
     *,
@@ -2424,10 +2441,7 @@ def _virtio_net_link_flap_required_failure_message(
     if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS" in tail:
         return None
     if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL" in tail:
-        return (
-            "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
-            "--with-net-link-flap was enabled"
-        )
+        return _virtio_net_link_flap_fail_failure_message(tail)
     if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP" in tail:
         return _virtio_net_link_flap_skip_failure_message(tail)
     return (
