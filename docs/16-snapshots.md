@@ -242,7 +242,7 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 | `VIRTIO_NET` | `23` | `net.virtio_net` | virtio-net (virtio-pci) NIC transport state |
 | `VIRTIO_INPUT` | `24` | `input.virtio_input` | virtio-input (virtio-pci) multi-function device state (keyboard + mouse) |
 | `AEROGPU` | `25` | `gpu.aerogpu` | AeroGPU device state |
-| `GPU_VRAM` | `28` | `gpu.vram` | Web runtime GPU VRAM/BAR1 backing store (guest-visible scanout memory) |
+| `GPU_VRAM` | `28` | `gpu.vram` | Web runtime GPU VRAM/BAR1 backing store (guest-visible scanout memory). May be chunked across multiple `(DeviceId, version, flags)` entries. On restore, the IO worker applies VRAM bytes locally and does **not** forward them to the coordinator. |
 
 Note: older runtimes that do not recognize `gpu.aerogpu` may still encode/decode this device as
 `device.25` (the generic fallback spelling). This is acceptable for forward compatibility.
