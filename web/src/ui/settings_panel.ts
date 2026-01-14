@@ -35,6 +35,11 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     'When forced backend is not available (e.g. virtio before DRIVER_OK), Aero falls back to "auto" and logs a warning. ' +
     "Aero will not switch while mouse buttons are held.";
 
+  const vmRuntimeHelpText =
+    "VM runtime backend. " +
+    "legacy uses CPU-only WasmVm + JS I/O shims; machine uses wasm api.Machine with AHCI/IDE. " +
+    "Changing this requires a restart/reload to apply.";
+
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
   for (const mem of AERO_GUEST_MEMORY_PRESETS_MIB) {
@@ -56,6 +61,19 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   webgpuCheckbox.type = "checkbox";
   const webgpuHint = document.createElement("div");
   webgpuHint.className = "hint";
+
+  const vmRuntimeSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["legacy", "legacy (default)"],
+    ["machine", "machine (canonical full-system VM)"],
+  ] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    vmRuntimeSelect.appendChild(option);
+  }
+  const vmRuntimeHint = document.createElement("div");
+  vmRuntimeHint.className = "hint";
 
   const proxyInput = document.createElement("input");
   proxyInput.type = "text";
@@ -159,6 +177,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   fieldset.appendChild(makeRow("Guest memory", memorySelect, memoryHint));
   fieldset.appendChild(makeRow("Enable workers", workersCheckbox, workersHint));
   fieldset.appendChild(makeRow("Enable WebGPU", webgpuCheckbox, webgpuHint));
+  fieldset.appendChild(makeRow("VM runtime", vmRuntimeSelect, vmRuntimeHint));
   fieldset.appendChild(makeRow("Virtio-net mode", virtioNetModeSelect, virtioNetModeHint));
   fieldset.appendChild(makeRow("Virtio-input mode", virtioInputModeSelect, virtioInputModeHint));
   fieldset.appendChild(makeRow("Virtio-snd mode", virtioSndModeSelect, virtioSndModeHint));
@@ -178,6 +197,9 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   });
   webgpuCheckbox.addEventListener("change", () => {
     manager.updateStoredConfig({ enableWebGPU: webgpuCheckbox.checked });
+  });
+  vmRuntimeSelect.addEventListener("change", () => {
+    manager.updateStoredConfig({ vmRuntime: vmRuntimeSelect.value as AeroConfig["vmRuntime"] });
   });
   logSelect.addEventListener("change", () => {
     manager.updateStoredConfig({ logLevel: logSelect.value as AeroConfig["logLevel"] });
@@ -233,6 +255,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
   function renderState(state: ResolvedAeroConfig): void {
     setLocked(memorySelect, memoryHint, state, "guestMemoryMiB");
     setLocked(logSelect, logHint, state, "logLevel");
+    setLocked(vmRuntimeSelect, vmRuntimeHint, state, "vmRuntime");
     setLocked(virtioNetModeSelect, virtioNetModeHint, state, "virtioNetMode");
     setLocked(virtioInputModeSelect, virtioInputModeHint, state, "virtioInputMode");
     setLocked(virtioSndModeSelect, virtioSndModeHint, state, "virtioSndMode");
@@ -241,6 +264,9 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     setLocked(proxyInput, proxyHint, state, "proxyUrl");
     if (!state.lockedKeys.has("proxyUrl")) {
       proxyHint.textContent = proxyHelpText;
+    }
+    if (!state.lockedKeys.has("vmRuntime")) {
+      vmRuntimeHint.textContent = vmRuntimeHelpText;
     }
     if (!state.lockedKeys.has("virtioNetMode")) {
       virtioNetModeHint.textContent = virtioNetModeHelpText;
@@ -272,6 +298,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
     }
     memorySelect.value = desiredMem;
     logSelect.value = state.effective.logLevel;
+    vmRuntimeSelect.value = state.effective.vmRuntime ?? "legacy";
     virtioNetModeSelect.value = state.effective.virtioNetMode ?? "modern";
     virtioInputModeSelect.value = state.effective.virtioInputMode ?? "modern";
     virtioSndModeSelect.value = state.effective.virtioSndMode ?? "modern";

@@ -199,6 +199,12 @@ describe("AeroConfig", () => {
     expect(parsed.overrides.vmRuntime).toBe("machine");
   });
 
+  it("query parsing: accepts vmRuntime override", () => {
+    const parsed = parseAeroConfigQueryOverrides("?vmRuntime=machine");
+    expect(parsed.lockedKeys.has("vmRuntime")).toBe(true);
+    expect(parsed.overrides.vmRuntime).toBe("machine");
+  });
+
   it("query parsing: accepts machine=1 shorthand", () => {
     const parsed = parseAeroConfigQueryOverrides("?machine=1");
     expect(parsed.lockedKeys.has("vmRuntime")).toBe(true);

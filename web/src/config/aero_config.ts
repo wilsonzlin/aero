@@ -51,15 +51,16 @@ export interface AeroConfig {
   l2TunnelTokenTransport?: L2TunnelTokenTransport;
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;
-  uiScale?: number;
   /**
    * Selects which VM runtime implementation to use:
-   * - "legacy": CPU-only `WasmVm` + io.worker AIPC shims (status quo)
-   * - "machine": canonical full-system `api.Machine`
+   *
+   * - "legacy": CPU-only `WasmVm` + JS I/O shims (status quo)
+   * - "machine": canonical full-system `api.Machine` with AHCI/IDE
    *
    * Defaults to "legacy".
    */
   vmRuntime?: AeroVmRuntime;
+  uiScale?: number;
   /**
    * Overrides the keyboard input backend selection in the IO worker.
    *
@@ -209,6 +210,24 @@ function parseLogLevel(value: unknown): AeroLogLevel | undefined {
   return undefined;
 }
 
+function parseVmRuntime(value: unknown): AeroVmRuntime | undefined {
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "legacy") return "legacy";
+    if (v === "machine") return "machine";
+    return undefined;
+  }
+  if (typeof value === "number") {
+    if (value === 0) return "legacy";
+    if (value === 1) return "machine";
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value ? "machine" : "legacy";
+  }
+  return undefined;
+}
+
 function parseVirtioPciMode(value: unknown): "modern" | "transitional" | "legacy" | undefined {
   if (typeof value === "string") {
     const v = value.trim().toLowerCase();
@@ -263,23 +282,6 @@ function parseInputBackendOverride(value: unknown): InputBackendOverride | undef
   if (v === "ps2" || v === "i8042") return "ps2";
   if (v === "usb" || v === "hid" || v === "usbhid") return "usb";
   if (v === "virtio" || v === "virtio-input" || v === "virtio_input") return "virtio";
-  return undefined;
-}
-
-function parseVmRuntime(value: unknown): AeroVmRuntime | undefined {
-  if (typeof value === "string") {
-    const v = value.trim().toLowerCase();
-    if (v === "legacy") return "legacy";
-    if (v === "machine") return "machine";
-    return undefined;
-  }
-  if (typeof value === "boolean") {
-    return value ? "machine" : "legacy";
-  }
-  if (typeof value === "number") {
-    if (value === 1) return "machine";
-    if (value === 0) return "legacy";
-  }
   return undefined;
 }
 
