@@ -3378,11 +3378,14 @@ try {
             # Best-effort: correlate tools\ files against manifest.json entries (when present).
             $manifestPaths = @{}
             $manifestPresent = $null
+            $manifestParseOk = $null
             $manifestIncludesTools = $null
             $manifestToolsFilesListed = $null
+            $manifestCorrelationAvailable = $false
             try {
                 if ($report.media_integrity -and ($report.media_integrity -is [hashtable])) {
                     if ($report.media_integrity.ContainsKey("manifest_present")) { $manifestPresent = $report.media_integrity.manifest_present }
+                    if ($report.media_integrity.ContainsKey("parse_ok")) { $manifestParseOk = $report.media_integrity.parse_ok }
                     if ($report.media_integrity.ContainsKey("manifest_includes_tools")) { $manifestIncludesTools = $report.media_integrity.manifest_includes_tools }
                     if ($report.media_integrity.ContainsKey("tools_files_listed")) { $manifestToolsFilesListed = $report.media_integrity.tools_files_listed }
                     if ($report.media_integrity.ContainsKey("file_results") -and $report.media_integrity.file_results) {
@@ -3399,6 +3402,7 @@ try {
                     }
                 }
             } catch { }
+            if (($manifestParseOk -eq $true) -and ($manifestPaths.Count -gt 0)) { $manifestCorrelationAvailable = $true }
 
             $fileItems = @()
             foreach ($it in @($items)) {
@@ -3433,13 +3437,14 @@ try {
                 $relNorm = $rel.Replace("\", "/")
                 if ($relNorm.StartsWith("./")) { $relNorm = $relNorm.Substring(2) }
                 while ($relNorm.StartsWith("/")) { $relNorm = $relNorm.Substring(1) }
-                $listed = $false
-                try {
-                    if ($manifestPaths.Count -gt 0) {
+                $listed = $null
+                if ($manifestCorrelationAvailable) {
+                    $listed = $false
+                    try {
                         $k = $relNorm.ToLower()
                         if ($manifestPaths.ContainsKey($k)) { $listed = $true }
-                    }
-                } catch { $listed = $false }
+                    } catch { $listed = $false }
+                }
 
                 $isExe = $false
                 $extLower = ""
@@ -3497,19 +3502,24 @@ try {
                 } catch { }
             }
 
-            $listedCount = 0
-            foreach ($e in $files) {
-                try {
-                    if ($e -and $e.listed_in_manifest) { $listedCount++ }
-                } catch { }
+            $listedCount = $null
+            $unlistedCount = $null
+            if ($manifestCorrelationAvailable) {
+                $listedCount = 0
+                foreach ($e in $files) {
+                    try {
+                        if ($e -and ($e.listed_in_manifest -eq $true)) { $listedCount++ }
+                    } catch { }
+                }
+                $unlistedCount = ($files.Count - $listedCount)
             }
-            $unlistedCount = ($files.Count - $listedCount)
 
             $toolsData.files = $files
             $toolsData.exe_files = $exeFiles
             $toolsData.total_size_bytes = $totalBytes
             $toolsData.total_exe_size_bytes = $totalExeBytes
             $toolsData.manifest_present = $manifestPresent
+            $toolsData.manifest_parse_ok = $manifestParseOk
             $toolsData.manifest_includes_tools = $manifestIncludesTools
             $toolsData.manifest_tools_files_listed = $manifestToolsFilesListed
             $toolsData.manifest_listed_files_present = $listedCount
@@ -3522,7 +3532,7 @@ try {
                 $toolsSummary += " (inventory incomplete)."
             }
             $toolsSummary += "; total_bytes=" + $totalBytes
-            if ($manifestPresent -eq $true) {
+            if ($manifestCorrelationAvailable) {
                 $toolsSummary += "; manifest_listed=" + $listedCount + ", unlisted=" + $unlistedCount
             }
 
@@ -3536,7 +3546,7 @@ try {
             if ($otherCount -gt 0) {
                 $toolsDetails += ("Other (non-EXE) file(s): " + $otherCount + " (see report.json)")
             }
-            if ($manifestPresent -eq $true) {
+            if ($manifestCorrelationAvailable) {
                 $toolsDetails += ("Manifest correlation: listed_present=" + $listedCount + ", unlisted_present=" + $unlistedCount + ", manifest_includes_tools=" + $manifestIncludesTools + ", manifest_tools_files_listed=" + $manifestToolsFilesListed)
             }
             foreach ($m in $invErrors) {
