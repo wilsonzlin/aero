@@ -223,6 +223,37 @@ where
     }
 }
 
+fn snapshot_len_for_limits(limits: BlockLimits) -> u32 {
+    // `discover_block` fetches 15 bytes per instruction; when close to `max_bytes` we can read a
+    // little past the limit for decoder lookahead.
+    let max_bytes = u32::try_from(limits.max_bytes).unwrap_or(u32::MAX);
+    max_bytes.saturating_add(15)
+}
+
+fn shrink_meta(mut meta: CompiledBlockMeta, byte_len: u32) -> CompiledBlockMeta {
+    meta.byte_len = byte_len;
+    meta.page_versions = shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions);
+    meta
+}
+
+fn shrink_page_versions(
+    code_paddr: u64,
+    byte_len: u32,
+    mut page_versions: Vec<PageVersionSnapshot>,
+) -> Vec<PageVersionSnapshot> {
+    if byte_len == 0 {
+        page_versions.clear();
+        return page_versions;
+    }
+
+    let start_page = code_paddr >> PAGE_SHIFT;
+    let end = code_paddr.saturating_add(byte_len as u64 - 1);
+    let end_page = end >> PAGE_SHIFT;
+
+    page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);
+    page_versions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,8 +305,8 @@ mod tests {
 
     #[test]
     fn tier1_compiler_compile_handle_panics_at_call_site_on_invalid_bitness() {
-        let jit = JitRuntime::new(JitConfig::default(), DummyBackend::default(), DummyCompileSink);
-        let mut compiler = Tier1Compiler::new(DummyBus::default(), DummyRegistry::default());
+        let jit = JitRuntime::new(JitConfig::default(), DummyBackend, DummyCompileSink);
+        let mut compiler = Tier1Compiler::new(DummyBus, DummyRegistry);
 
         let expected_file = file!();
         let expected_line = line!() + 2;
@@ -285,35 +316,4 @@ mod tests {
         assert_eq!(file, expected_file);
         assert_eq!(line, expected_line);
     }
-}
-
-fn snapshot_len_for_limits(limits: BlockLimits) -> u32 {
-    // `discover_block` fetches 15 bytes per instruction; when close to `max_bytes` we can read a
-    // little past the limit for decoder lookahead.
-    let max_bytes = u32::try_from(limits.max_bytes).unwrap_or(u32::MAX);
-    max_bytes.saturating_add(15)
-}
-
-fn shrink_meta(mut meta: CompiledBlockMeta, byte_len: u32) -> CompiledBlockMeta {
-    meta.byte_len = byte_len;
-    meta.page_versions = shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions);
-    meta
-}
-
-fn shrink_page_versions(
-    code_paddr: u64,
-    byte_len: u32,
-    mut page_versions: Vec<PageVersionSnapshot>,
-) -> Vec<PageVersionSnapshot> {
-    if byte_len == 0 {
-        page_versions.clear();
-        return page_versions;
-    }
-
-    let start_page = code_paddr >> PAGE_SHIFT;
-    let end = code_paddr.saturating_add(byte_len as u64 - 1);
-    let end_page = end >> PAGE_SHIFT;
-
-    page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);
-    page_versions
 }
