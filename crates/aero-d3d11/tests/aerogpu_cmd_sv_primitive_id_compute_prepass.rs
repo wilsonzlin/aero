@@ -31,6 +31,10 @@ fn aerogpu_cmd_sv_primitive_id_compute_prepass_colors_primitives() {
             return;
         }
 
+        if !common::require_shader_primitive_index_or_skip(&exec, test_name) {
+            return;
+        }
+
         const RT: u32 = 1;
         const VS: u32 = 2;
         const PS: u32 = 3;

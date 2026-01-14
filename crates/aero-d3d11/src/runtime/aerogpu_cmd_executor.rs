@@ -4150,7 +4150,7 @@ impl AerogpuD3d11Executor {
                     meta.instance_count.max(1)
                 }
                 None => {
-                    // Some tests (and bring-up paths) bind a non-zero GS handle purely to force the
+                    // Some bring-up tests bind a dummy non-zero GS handle purely to force the
                     // compute-prepass pipeline, without actually creating/translating a GS shader.
                     // Treat an unknown handle as "no GS instancing" so the placeholder prepass can
                     // still run.

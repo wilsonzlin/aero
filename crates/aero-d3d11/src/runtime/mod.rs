@@ -99,6 +99,12 @@ fn negotiated_features_for_available(
         requested |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
     }
 
+    // Enable `@builtin(primitive_index)` when supported so SM4/5 `SV_PrimitiveID` can be mapped to
+    // a native WebGPU builtin in fragment shaders.
+    if available.contains(wgpu::Features::SHADER_PRIMITIVE_INDEX) {
+        requested |= wgpu::Features::SHADER_PRIMITIVE_INDEX;
+    }
+
     requested
 }
 

@@ -135,11 +135,19 @@ fn setup_wgpu() -> anyhow::Result<(wgpu::Device, wgpu::Queue)> {
         }
         .ok_or_else(|| anyhow::anyhow!("wgpu: no suitable adapter found"))?;
 
+        let mut required_features = wgpu::Features::empty();
+        if adapter
+            .features()
+            .contains(wgpu::Features::SHADER_PRIMITIVE_INDEX)
+        {
+            required_features |= wgpu::Features::SHADER_PRIMITIVE_INDEX;
+        }
+
         adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("aero-d3d11 primitive_id test device"),
-                    required_features: wgpu::Features::empty(),
+                    required_features,
                     required_limits: wgpu::Limits::downlevel_defaults(),
                 },
                 None,
@@ -232,6 +240,17 @@ fn primitive_id_pixel_shader_renders_different_colors_per_triangle() {
                 return;
             }
         };
+
+        if !device
+            .features()
+            .contains(wgpu::Features::SHADER_PRIMITIVE_INDEX)
+        {
+            common::skip_or_panic(
+                module_path!(),
+                "SV_PrimitiveID requires wgpu::Features::SHADER_PRIMITIVE_INDEX, but this backend/device does not support it",
+            );
+            return;
+        }
 
         // Build a pixel shader that writes `SV_PrimitiveID` into the red channel.
         let isgn = build_signature_chunk(&[sig_param(

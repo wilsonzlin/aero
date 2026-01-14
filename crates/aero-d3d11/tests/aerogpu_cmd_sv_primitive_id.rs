@@ -73,6 +73,10 @@ fn aerogpu_cmd_sv_primitive_id_colors_primitives() {
             }
         };
 
+        if !common::require_shader_primitive_index_or_skip(&exec, module_path!()) {
+            return;
+        }
+
         const VB: u32 = 1;
         const RT: u32 = 2;
         const VS: u32 = 10;

@@ -83,4 +83,27 @@ pub fn require_gs_prepass_or_skip(
     true
 }
 
+/// Helper for tests that exercise `SV_PrimitiveID` / `@builtin(primitive_index)` paths.
+///
+/// The WebGPU primitive-index builtin is behind the optional `SHADER_PRIMITIVE_INDEX` feature, and
+/// is not available on all backends (notably some wgpu-GL paths used in CI).
+#[allow(dead_code)]
+pub fn require_shader_primitive_index_or_skip(
+    exec: &aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor,
+    test_name: &str,
+) -> bool {
+    if !exec
+        .device()
+        .features()
+        .contains(::wgpu::Features::SHADER_PRIMITIVE_INDEX)
+    {
+        skip_or_panic(
+            test_name,
+            "SV_PrimitiveID requires wgpu::Features::SHADER_PRIMITIVE_INDEX, but this backend/device does not support it",
+        );
+        return false;
+    }
+    true
+}
+
 pub mod wgpu;
