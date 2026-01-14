@@ -202,6 +202,10 @@ Minimum supported commands:
   - On failure (including `STATUS_PARTIAL_COPY`), dbgctl best-effort deletes the `--out` path so callers do not see partial/truncated artifacts.
   - With `--json`, `data_hex` is capped to a bounded prefix; see `request.size_bytes_effective` and `response.truncated`.
     If the KMD returns `STATUS_SUCCESS` but copies fewer bytes than requested, dbgctl treats it as an error (`ok:false`, `response.short_read:true`).
+  - Exit codes:
+    - `0`: full success
+    - `2`: failure or short read (including `STATUS_SUCCESS` + fewer bytes than requested)
+    - `3`: `STATUS_PARTIAL_COPY` (partial data copied; output file is deleted)
 
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:
@@ -428,6 +432,7 @@ for a post-display ownership transition and `enable` may be forced off until own
 
 - `--json` prints JSON to stdout.
 - `--json=PATH` writes JSON to `PATH` (UTF-8).
+- `--json PATH` is also accepted as a convenience form. If your path is ambiguous (for example a purely numeric file name), use `--json=PATH`.
 - `--pretty` pretty-prints JSON (implies `--json`).
 
 `--status --json` is intended as a one-shot “bug report snapshot” and includes nested sections like:
