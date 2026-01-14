@@ -348,43 +348,58 @@ fn format_memory_operand_info(
     let disp = instruction.memory_displacement64();
     let size = instruction.memory_size().size().max(1) as u64;
 
-    let _ = writeln!(
-        out,
-        "mem_operand: size={size} base={base_reg:?} index={index_reg:?} scale={scale} disp={disp:#x}"
-    );
+    let ip_rel = instruction.is_ip_rel_memory_operand();
 
-    let eff = if instruction.is_ip_rel_memory_operand() {
-        instruction.ip_rel_memory_address()
+    let (eff, base_val, index_val) = if ip_rel {
+        // Iced computes RIP-relative addresses from the instruction metadata (IP + disp).
+        (instruction.ip_rel_memory_address(), None, None)
     } else {
-        let base = if base_reg == Register::None {
+        let base_val = if base_reg == Register::None {
             Some(0)
         } else {
             read_register_for_addr(init, base_reg)
         };
-        let index = if index_reg == Register::None {
+        let index_val = if index_reg == Register::None {
             Some(0)
         } else {
             read_register_for_addr(init, index_reg)
         };
 
-        let Some(base) = base else {
+        let Some(base) = base_val else {
             let _ = writeln!(
                 out,
-                "mem_effective: <unknown> (base reg {base_reg:?} not captured in CpuState)"
+                "mem_operand: <unknown> (base reg {base_reg:?} not captured in CpuState)"
             );
             return;
         };
-        let Some(index) = index else {
+        let Some(index) = index_val else {
             let _ = writeln!(
                 out,
-                "mem_effective: <unknown> (index reg {index_reg:?} not captured in CpuState)"
+                "mem_operand: <unknown> (index reg {index_reg:?} not captured in CpuState)"
             );
             return;
         };
 
-        base.wrapping_add(index.wrapping_mul(scale as u64))
-            .wrapping_add(disp)
+        let eff = base
+            .wrapping_add(index.wrapping_mul(scale as u64))
+            .wrapping_add(disp);
+        (eff, base_val, index_val)
     };
+
+    if ip_rel {
+        let next_ip = instruction.next_ip();
+        let _ = writeln!(
+            out,
+            "mem_operand: size={size} ip_rel=1 next_ip={next_ip:#x} disp={disp:#x}"
+        );
+    } else {
+        let base_val = base_val.expect("base_val checked above");
+        let index_val = index_val.expect("index_val checked above");
+        let _ = writeln!(
+            out,
+            "mem_operand: size={size} base={base_reg:?}({base_val:#x}) index={index_reg:?}({index_val:#x}) scale={scale} disp={disp:#x}"
+        );
+    }
 
     let mem_end = mem_base.wrapping_add(mem_len as u64);
     let in_range = eff >= mem_base && eff.checked_add(size).is_some_and(|end| end <= mem_end);
