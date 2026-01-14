@@ -26397,6 +26397,9 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
   if (!Check(cleanup.device_funcs.pfnSetIndices != nullptr, "SetIndices must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
     return false;
   }
@@ -26546,7 +26549,11 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
-  dev->topology = AEROGPU_TOPOLOGY_TRIANGLESTRIP;
+  const Vertex strip[3] = {cps[0], cps[1], cps[2]};
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLESTRIP, 1, strip, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle strip prelude)")) {
+    return false;
+  }
 
   float segs[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   D3DRECTPATCH_INFO info{};
@@ -26728,6 +26735,9 @@ bool TestDrawRectPatchTex1ValidatesStrideAndPreservesTexcoords() {
   if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
     return false;
   }
@@ -26858,7 +26868,11 @@ bool TestDrawRectPatchTex1ValidatesStrideAndPreservesTexcoords() {
   }
 
   // Force a non-trianglelist cached topology so the patch draw must emit a set-topology command.
-  dev->topology = AEROGPU_TOPOLOGY_TRIANGLESTRIP;
+  const VertexTex strip[3] = {cps[0], cps[1], cps[2]};
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLESTRIP, 1, strip, sizeof(VertexTex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle strip prelude)")) {
+    return false;
+  }
   dev->cmd.reset();
   hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect);
   if (!Check(hr == S_OK, "DrawRectPatch(TEX1 stride=28)")) {
@@ -26978,6 +26992,9 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnDrawTriPatch != nullptr, "DrawTriPatch must be available")) {
@@ -27125,7 +27142,11 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
-  dev->topology = AEROGPU_TOPOLOGY_TRIANGLESTRIP;
+  const Vertex strip[3] = {cps[0], cps[1], cps[2]};
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLESTRIP, 1, strip, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle strip prelude)")) {
+    return false;
+  }
 
   float segs[3] = {1.0f, 1.0f, 1.0f};
   D3DTRIPATCH_INFO info{};
@@ -27308,6 +27329,9 @@ bool TestDrawRectPatchTex1UploadsTexcoords() {
   if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
     return false;
   }
@@ -27413,7 +27437,11 @@ bool TestDrawRectPatchTex1UploadsTexcoords() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
-  dev->topology = AEROGPU_TOPOLOGY_TRIANGLESTRIP;
+  const Vertex strip[3] = {cps[0], cps[1], cps[2]};
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLESTRIP, 1, strip, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle strip prelude)")) {
+    return false;
+  }
 
   float segs[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   D3DRECTPATCH_INFO info{};
@@ -27546,6 +27574,9 @@ bool TestDrawTriPatchTex1UploadsTexcoords() {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnDrawTriPatch != nullptr, "DrawTriPatch must be available")) {
@@ -28084,7 +28115,11 @@ bool TestDrawTriPatchTex1ValidatesStrideAndPreservesTexcoords() {
     return false;
   }
 
-  dev->topology = AEROGPU_TOPOLOGY_TRIANGLESTRIP;
+  const VertexTex strip[3] = {cps[0], cps[1], cps[2]};
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLESTRIP, 1, strip, sizeof(VertexTex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle strip prelude)")) {
+    return false;
+  }
   dev->cmd.reset();
   hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri);
   if (!Check(hr == S_OK, "DrawTriPatch(TEX1 stride=28)")) {
