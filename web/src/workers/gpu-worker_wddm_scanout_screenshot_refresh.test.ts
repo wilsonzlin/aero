@@ -7,6 +7,8 @@ import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtim
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
+import { AerogpuCmdWriter } from "../../../emulator/protocol/aerogpu/aerogpu_cmd";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci";
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -89,17 +91,6 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
     // Initial scanout pixel: BGRX -> RGBA 11 22 33 FF after swizzle + alpha policy.
     writeBgrxPixel(0x33, 0x22, 0x11);
 
-    const basePaddr = (VRAM_BASE_PADDR + vramOffset) >>> 0;
-    publishScanoutState(views.scanoutStateI32!, {
-      source: SCANOUT_SOURCE_WDDM,
-      basePaddrLo: basePaddr,
-      basePaddrHi: 0,
-      width: 1,
-      height: 1,
-      pitchBytes: 4,
-      format: SCANOUT_FORMAT_B8G8R8X8,
-    });
-
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
@@ -151,6 +142,51 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
         10_000,
       );
 
+      // Seed an AeroGPU-presented frame so the screenshot code proves it prefers scanout bytes
+      // when scanoutState.base_paddr points into VRAM.
+      const writer = new AerogpuCmdWriter();
+      const texHandle = 1;
+      writer.createTexture2d(texHandle, 0, AerogpuFormat.R8G8B8A8Unorm, 1, 1, 1, 1, 0, 0, 0);
+      // RGBA = AA BB CC DD -> u32 0xddccbbaa (little-endian).
+      writer.uploadResource(texHandle, 0n, new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]));
+      writer.setRenderTargets([texHandle], 0);
+      writer.present(0, 0);
+      const cmdStream = writer.finish().buffer;
+
+      const aerogpuRequestId = 100;
+      const submitCompletePromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+          (msg as { type?: unknown }).type === "submit_complete" &&
+          (msg as { requestId?: unknown }).requestId === aerogpuRequestId,
+        10_000,
+      );
+      worker.postMessage(
+        {
+          protocol: GPU_PROTOCOL_NAME,
+          protocolVersion: GPU_PROTOCOL_VERSION,
+          type: "submit_aerogpu",
+          requestId: aerogpuRequestId,
+          contextId: 0,
+          signalFence: 1n,
+          cmdStream,
+        },
+        [cmdStream],
+      );
+      await submitCompletePromise;
+
+      const basePaddr = (VRAM_BASE_PADDR + vramOffset) >>> 0;
+      publishScanoutState(views.scanoutStateI32!, {
+        source: SCANOUT_SOURCE_WDDM,
+        basePaddrLo: basePaddr,
+        basePaddrHi: 0,
+        width: 1,
+        height: 1,
+        pitchBytes: 4,
+        format: SCANOUT_FORMAT_B8G8R8X8,
+      });
+
       const requestScreenshot = async (requestId: number) => {
         const shotPromise = waitForWorkerMessage(
           worker,
@@ -182,4 +218,3 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
     }
   }, 25_000);
 });
-
