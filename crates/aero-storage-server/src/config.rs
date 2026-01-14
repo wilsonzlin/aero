@@ -220,7 +220,24 @@ impl Config {
 }
 
 fn parse_env(var: &str) -> Option<SocketAddr> {
-    env::var(var).ok().and_then(|value| value.parse().ok())
+    let value = match env::var(var) {
+        Ok(v) => v,
+        Err(env::VarError::NotPresent) => return None,
+        Err(env::VarError::NotUnicode(_)) => {
+            eprintln!("warning: {var} must be valid UTF-8; ignoring");
+            return None;
+        }
+    };
+
+    match value.parse::<SocketAddr>() {
+        Ok(addr) => Some(addr),
+        Err(_) => {
+            eprintln!(
+                "warning: invalid {var} value: {value:?} (expected socket address like 127.0.0.1:8080); ignoring"
+            );
+            None
+        }
+    }
 }
 
 fn parse_origin_list(value: &str) -> Vec<String> {
@@ -256,9 +273,66 @@ fn parse_env_bool(var: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_env_bool;
+    use super::{parse_env, parse_env_bool};
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn parse_env_missing_is_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_ADDR_MISSING";
+        std::env::remove_var(VAR);
+        assert!(parse_env(VAR).is_none());
+    }
+
+    #[test]
+    fn parse_env_valid_socket_addr_is_some() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_ADDR_VALID";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "127.0.0.1:12345");
+        assert_eq!(parse_env(VAR), Some("127.0.0.1:12345".parse().unwrap()));
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[test]
+    fn parse_env_invalid_socket_addr_is_none_and_does_not_panic() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_ADDR_INVALID";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "not-a-socket-addr");
+        assert!(parse_env(VAR).is_none());
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_env_invalid_utf8_is_none_and_does_not_panic() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_ADDR_INVALID_UTF8";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, OsString::from_vec(vec![0xFF, 0xFE, 0xFD]));
+        assert!(parse_env(VAR).is_none());
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
 
     #[test]
     fn parse_env_bool_missing_is_false() {
