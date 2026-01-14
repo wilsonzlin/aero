@@ -1600,7 +1600,7 @@ BOOLEAN AerovblkHwResetBus(_In_ PVOID deviceExtension, _In_ ULONG pathId) {
   UNREFERENCED_PARAMETER(pathId);
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
-  if (devExt->Removed) {
+  if (devExt->Removed || devExt->SurpriseRemoved || devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) {
     return TRUE;
   }
   return AerovblkDeviceBringUp(devExt, FALSE);
@@ -1672,10 +1672,31 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
   case ScsiRestartAdapter:
   {
     STOR_LOCK_HANDLE lock;
+    BOOLEAN canRestart;
+
+    /*
+     * If the adapter was surprise-removed (BAR pointers cleared), do not attempt
+     * to reinitialize the device: MMIO access may fault.
+     */
     StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
-    devExt->Removed = FALSE;
+    canRestart = (devExt->SurpriseRemoved || devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) ? FALSE : TRUE;
+    if (canRestart) {
+      devExt->Removed = FALSE;
+    }
     StorPortReleaseSpinLock(devExt, &lock);
-    return AerovblkDeviceBringUp(devExt, FALSE) ? ScsiAdapterControlSuccess : ScsiAdapterControlUnsuccessful;
+
+    if (!canRestart) {
+      return ScsiAdapterControlUnsuccessful;
+    }
+
+    if (!AerovblkDeviceBringUp(devExt, FALSE)) {
+      /* Bring-up failed: keep the adapter stopped. */
+      StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+      devExt->Removed = TRUE;
+      StorPortReleaseSpinLock(devExt, &lock);
+      return ScsiAdapterControlUnsuccessful;
+    }
+    return ScsiAdapterControlSuccess;
   }
 
   default:
@@ -2078,15 +2099,33 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
       } else if (pnp->PnPAction == StorStartDevice) {
         BOOLEAN allocateResources;
         STOR_LOCK_HANDLE lock;
+        BOOLEAN canStart;
 
-        /* Clear removed under lock so StartIo/queue path sees consistent state. */
+        /*
+         * Clear removed under lock so StartIo/queue path sees consistent state.
+         *
+         * If the adapter was previously surprise-removed (BAR pointers cleared),
+         * we cannot safely reinitialize it: keep it stopped to avoid MMIO faults.
+         */
         StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
-        devExt->Removed = FALSE;
-        devExt->SurpriseRemoved = FALSE;
+        canStart = (!devExt->SurpriseRemoved && devExt->Vdev.CommonCfg != NULL && devExt->Vdev.DeviceCfg != NULL) ? TRUE : FALSE;
+        if (canStart) {
+          devExt->Removed = FALSE;
+          devExt->SurpriseRemoved = FALSE;
+        }
         StorPortReleaseSpinLock(devExt, &lock);
+
+        if (!canStart) {
+          AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+          return TRUE;
+        }
 
         allocateResources = (devExt->Vq.queue_size == 0 || devExt->RequestContexts == NULL) ? TRUE : FALSE;
         if (!AerovblkDeviceBringUp(devExt, allocateResources)) {
+          /* Bring-up failed: keep the adapter stopped. */
+          StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+          devExt->Removed = TRUE;
+          StorPortReleaseSpinLock(devExt, &lock);
           AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
           return TRUE;
         }
