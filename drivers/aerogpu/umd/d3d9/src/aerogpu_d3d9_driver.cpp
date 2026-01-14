@@ -6004,7 +6004,9 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     for (uint32_t i = 0; i < vertex_count; ++i) {
       const uint8_t* src = src_vertices + static_cast<size_t>(i) * src_stride;
       uint8_t* dst = dst_vertices + static_cast<size_t>(i) * dst_stride;
-      std::memset(dst, 0, dst_stride);
+      if (!src_is_xyzrhw) {
+        std::memset(dst, 0, dst_stride);
+      }
 
       if (src_is_xyzrhw) {
         // Pre-transformed vertices: POSITIONT is already in screen space.
