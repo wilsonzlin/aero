@@ -2116,6 +2116,31 @@ fn translate_entrypoint_rejects_invalid_predicate_modifier() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_relative_register_addressing() {
+    // Craft a ps_3_0 shader that uses relative addressing on a non-constant register (r1[a0.x]).
+    // This currently fails during WGSL lowering, and should be treated as malformed input (not as
+    // an "unsupported feature" that triggers legacy fallback).
+    const RELATIVE: u32 = 0x0000_2000;
+
+    let mut words = vec![0xFFFF_0300];
+    // mov r0, r1[a0.x]
+    let src = enc_src(0, 1, 0xE4) | RELATIVE; // r1[...]
+    let rel = enc_src(3, 0, 0x00); // a0.x (swizzle = xxxx)
+    words.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), src, rel]));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_legacy_fallback_supports_derivatives() {
     // Ensure the legacy fallback translator implements `dsx`/`dsy` so shaders that fall back due
     // to unrelated SM3-pipeline limitations can still compute derivatives.

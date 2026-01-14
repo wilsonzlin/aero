@@ -453,7 +453,9 @@ impl Sm3TranslateFailure {
             // failures (these are treated as malformed to avoid using fallback as an escape hatch).
             Sm3TranslateFailure::Wgsl(e) => {
                 let msg = e.message.to_ascii_lowercase();
-                if msg.contains("relative addressing") {
+                // Be permissive in matching: we want to catch both "relative addressing" and
+                // phrases like "relative register addressing".
+                if msg.contains("relative") && msg.contains("address") {
                     return false;
                 }
                 msg.contains("unsupported") || msg.contains("not supported")
