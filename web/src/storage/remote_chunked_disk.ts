@@ -508,6 +508,18 @@ class IntegrityError extends Error {
   override name = "IntegrityError";
 }
 
+class ProtocolError extends Error {
+  override name = "ProtocolError";
+}
+
+function assertIdentityContentEncoding(headers: Headers, label: string): void {
+  const raw = headers.get("content-encoding");
+  if (!raw) return;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === "identity") return;
+  throw new ProtocolError(`${label} unexpected Content-Encoding: ${raw}`);
+}
+
 function hasOpfsRoot(): boolean {
   return typeof navigator !== "undefined" && typeof navigator.storage?.getDirectory === "function";
 }
@@ -1199,6 +1211,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
     const resp = await fetchWithDiskAccessLease(params.lease, { method: "GET" }, { retryAuthOnce: true });
     if (!resp.ok) throw new Error(`failed to fetch manifest: ${resp.status}`);
+    assertIdentityContentEncoding(resp.headers, "manifest.json");
     const json = await readJsonResponseWithLimit(resp, { maxBytes: MAX_REMOTE_MANIFEST_JSON_BYTES, label: "manifest.json" });
     const manifest = parseManifest(json);
 
@@ -1510,6 +1523,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
   private shouldRetry(err: unknown): boolean {
     if (err instanceof ResponseTooLargeError) return false;
+    if (err instanceof ProtocolError) return false;
     if (err instanceof IntegrityError) return true;
     if (err instanceof ChunkFetchError) {
       if (err.status === 429) return true;
@@ -1539,6 +1553,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     if (!resp.ok) {
       throw new ChunkFetchError(`chunk fetch failed: ${resp.status}`, resp.status);
     }
+    assertIdentityContentEncoding(resp.headers, `chunk ${chunkIndex}`);
     const bytes = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: `chunk ${chunkIndex}` });
     if (bytes.length !== expectedLen) {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.length}`);

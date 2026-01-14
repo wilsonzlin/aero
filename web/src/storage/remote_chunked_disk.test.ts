@@ -307,6 +307,92 @@ describe("RemoteChunkedDisk", () => {
     ).rejects.toThrow(/chunkCount.*max/i);
   });
 
+  it("rejects manifests with non-identity Content-Encoding", async () => {
+    const chunkSize = 512;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("content-encoding", "gzip");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    await expect(
+      RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+        store: new TestMemoryStore(),
+      }),
+    ).rejects.toThrow(/content-encoding/i);
+  });
+
+  it("rejects chunks with non-identity Content-Encoding", async () => {
+    const chunkSize = 512;
+    const chunkCount = 1;
+    const totalSize = chunkSize * chunkCount;
+
+    const chunk0 = new Uint8Array(chunkSize).fill(0x11);
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 1,
+    };
+
+    const { baseUrl, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+      if (url.pathname === "/chunks/0.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.setHeader("content-encoding", "gzip");
+        res.end(Buffer.from(chunk0));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store: new TestMemoryStore(),
+    });
+    try {
+      const buf = new Uint8Array(chunkSize);
+      await expect(disk.readSectors(0, buf)).rejects.toThrow(/content-encoding/i);
+    } finally {
+      await disk.close();
+    }
+  });
+
   it("rejects manifests with chunk sizes larger than 64MiB", async () => {
     const chunkSize = 128 * 1024 * 1024;
     const chunkCount = 1;
