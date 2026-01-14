@@ -369,7 +369,14 @@ function hdaDemoTargetFrames(capacityFrames: number, sampleRate: number): number
 function readDemoNumber(demo: unknown, key: string): number | undefined {
   if (!demo || typeof demo !== "object") return undefined;
   const record = demo as Record<string, unknown>;
-  const value = record[key];
+  let value = record[key];
+  // wasm-bindgen output can differ between builds; some transform `snake_case` field/getter names
+  // into camelCase (e.g. `total_frames_written` -> `totalFramesWritten`). Fall back to that
+  // spelling when the canonical key is missing.
+  if (value === undefined && key.includes("_")) {
+    const camelKey = key.replace(/_([a-zA-Z0-9])/gu, (_, chr: string) => chr.toUpperCase());
+    value = record[camelKey];
+  }
   if (typeof value === "number") return value;
   if (typeof value === "function") {
     try {
