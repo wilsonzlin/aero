@@ -32,7 +32,7 @@ Binary path:
 
 Credentials are resolved via the standard AWS SDK chain (env vars, `~/.aws/config`, profiles, IAM role, etc.).
 
-Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size). The default is **4 MiB** (`4194304`).
+Note: `--chunk-size` must be **> 0** and a multiple of **512 bytes** (ATA sector size). The default is **4 MiB** (`4194304`).
 
 ### Per-chunk checksums (`--checksum`)
 
@@ -370,8 +370,9 @@ curl -fSs "<presigned-url>"
 - `imageId` and `version`: identifiers for the image/version
 - `mimeType`: MIME type for chunk objects
 - `totalSize`: logical disk size in bytes (`VirtualDisk::capacity_bytes()`), which may differ from the on-disk container file size for sparse formats
-  - `totalSize` must be a multiple of 512 bytes (disk images are sector-addressed)
+  - `totalSize` must be **> 0** and a multiple of 512 bytes (disk images are sector-addressed)
 - `chunkSize`: the chosen chunk size in bytes
+  - `chunkSize` must be **> 0** and a multiple of 512 bytes
 - `chunkCount`: total number of chunk objects
 - `chunkIndexWidth`: decimal zero-padding width (8)
 - `chunks`: optional per-chunk metadata array (length must equal `chunkCount` if present)
