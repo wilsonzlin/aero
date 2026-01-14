@@ -768,21 +768,6 @@ VirtIoSndHwDrainEventqUsed(
             case VIRTIO_SND_EVENT_KIND_PCM_PERIOD_ELAPSED:
                 InterlockedIncrement(&dx->EventqStats.PcmPeriodElapsed);
                 /*
-                 * Optional pacing signal (polling-only mode):
-                 * If WaveRT registered a notification event object for this stream,
-                 * signal it best-effort. The WaveRT miniport still uses timer-based
-                 * pacing for contract v1 compatibility.
-                 */
-                if (dx->EventqCallback == NULL) {
-                    /*
-                     * If a higher-level callback (WaveRT) is registered, it will
-                     * queue the WaveRT DPC, which in turn signals the notification
-                     * event after updating PacketCount. Avoid double-signaling
-                     * the event here.
-                     */
-                    (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
-                }
-                /*
                  * Diagnostic bookkeeping:
                  * Track a per-stream PERIOD_ELAPSED sequence + timestamp so
                  * telemetry/diagnostics can correlate WaveRT behavior with eventq
@@ -829,6 +814,16 @@ VirtIoSndHwDrainEventqUsed(
         if (cb != NULL) {
             cb(cbCtx, evtType, evtData);
             InterlockedDecrement(&dx->EventqCallbackInFlight);
+        } else if (evtType == VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED) {
+            /*
+             * Optional pacing signal (polling-only mode):
+             * If WaveRT registered a notification event object for this stream,
+             * signal it best-effort. If a higher-level callback is registered,
+             * it will queue the WaveRT DPC which signals the event after updating
+             * PacketCount; avoid double-signaling by only doing this when no
+             * callback is present.
+             */
+            (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evtData);
         }
     }
 }
