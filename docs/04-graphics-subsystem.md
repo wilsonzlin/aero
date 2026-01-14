@@ -74,6 +74,7 @@ Related shared-memory descriptor: **hardware cursor state** uses the same seqloc
 - CursorState layout + publish protocol (Rust): `crates/aero-shared/src/cursor_state.rs`
 - CursorState layout + publish protocol (TS mirror): `web/src/ipc/cursor_state.ts`
 - Consumed by the GPU worker: `web/src/workers/gpu-worker.ts` (cursor snapshot + presenter cursor APIs / compositing)
+  - `CursorState.format` also uses AeroGPU `AerogpuFormat` discriminants and follows the same X8 alpha + sRGB interpretation rules as scanout formats.
 
 ### 4) Host-side AeroGPU execution / translation building blocks (implemented)
 
@@ -197,6 +198,9 @@ This is a small `u32[]` / `Int32Array` structure containing:
 - base physical address (lo/hi)
 - width/height/pitch/format
   - `format` uses the AeroGPU `AerogpuFormat` numeric (`u32`) discriminants (where `0` is reserved for `Invalid`).
+  - Format semantics (from the AeroGPU protocol):
+    - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha; treat alpha as fully opaque (`0xFF`) when converting to RGBA.
+    - `*_SRGB` variants are layout-identical to UNORM; only the interpretation differs (avoid double-applying gamma in presenters).
 
 Defined in:
 
