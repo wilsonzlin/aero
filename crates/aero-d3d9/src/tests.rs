@@ -3946,6 +3946,128 @@ fn accepts_cube_sampler_declarations() {
     );
 }
 
+#[test]
+fn accepts_1d_sampler_declarations() {
+    // ps_3_0 with a `dcl_1d s0` declaration.
+    let mut words = vec![0xFFFF_0300];
+    // Texture type = 1d (1) encoded in opcode_token[16..20].
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        1u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let program = shader::parse(&bytes).unwrap();
+    assert_eq!(
+        program.sampler_texture_types.get(&0).copied(),
+        Some(TextureType::Texture1D)
+    );
+}
+
+#[test]
+fn accepts_volume_sampler_declarations() {
+    // ps_3_0 with a `dcl_volume s0` (3d) declaration.
+    let mut words = vec![0xFFFF_0300];
+    // Texture type = volume (4) encoded in opcode_token[16..20].
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        4u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let program = shader::parse(&bytes).unwrap();
+    assert_eq!(
+        program.sampler_texture_types.get(&0).copied(),
+        Some(TextureType::Texture3D)
+    );
+}
+
+#[test]
+fn legacy_translator_emits_texture_1d_and_x_coords() {
+    // Minimal ps_3_0 that samples from a 1D texture.
+    let mut words = vec![0xFFFF_0300];
+    // dcl_1d s0
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        1u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // texld r0, t0, s0
+    words.extend(enc_inst(
+        0x0042,
+        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let program = shader::parse(&bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("texture_1d<f32>"), "wgsl:\n{}", wgsl.wgsl);
+    assert!(
+        wgsl.wgsl
+            .contains("textureSample(tex0, samp0, (t0.xyzw).x)"),
+        "wgsl:\n{}",
+        wgsl.wgsl
+    );
+}
+
+#[test]
+fn legacy_translator_emits_texture_3d_and_xyz_coords() {
+    // Minimal ps_3_0 that samples from a 3D texture.
+    let mut words = vec![0xFFFF_0300];
+    // dcl_volume s0
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        4u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // texld r0, t0, s0
+    words.extend(enc_inst(
+        0x0042,
+        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let program = shader::parse(&bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("texture_3d<f32>"), "wgsl:\n{}", wgsl.wgsl);
+    assert!(
+        wgsl.wgsl
+            .contains("textureSample(tex0, samp0, (t0.xyzw).xyz)"),
+        "wgsl:\n{}",
+        wgsl.wgsl
+    );
+}
+
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }

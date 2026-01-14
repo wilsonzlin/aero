@@ -627,7 +627,13 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     other => TextureType::Unknown(other),
                 };
                 sampler_texture_types.insert(sampler, ty);
-                if !matches!(ty, TextureType::Texture2D | TextureType::TextureCube) {
+                if !matches!(
+                    ty,
+                    TextureType::Texture1D
+                        | TextureType::Texture2D
+                        | TextureType::TextureCube
+                        | TextureType::Texture3D
+                ) {
                     return Err(ShaderError::UnsupportedSamplerTextureType {
                         sampler: sampler as u32,
                         ty,
@@ -1218,7 +1224,13 @@ pub fn generate_wgsl_with_options(
     // If the shader declared an unsupported sampler texture type, reject before generating WGSL
     // to avoid `wgpu` validation errors from mismatched `texture_*` types / bind group layouts.
     for (&sampler, &ty) in &ir.sampler_texture_types {
-        if !matches!(ty, TextureType::Texture2D | TextureType::TextureCube) {
+        if !matches!(
+            ty,
+            TextureType::Texture1D
+                | TextureType::Texture2D
+                | TextureType::TextureCube
+                | TextureType::Texture3D
+        ) {
             return Err(ShaderError::UnsupportedSamplerTextureType {
                 sampler: sampler as u32,
                 ty,
@@ -1235,8 +1247,10 @@ pub fn generate_wgsl_with_options(
             .copied()
             .unwrap_or(TextureType::Texture2D);
         let wgsl_tex_ty = match ty {
+            TextureType::Texture1D => "texture_1d<f32>",
             TextureType::Texture2D => "texture_2d<f32>",
             TextureType::TextureCube => "texture_cube<f32>",
+            TextureType::Texture3D => "texture_3d<f32>",
             _ => unreachable!("unsupported sampler texture types are rejected above"),
         };
         wgsl.push_str(&format!(
@@ -1707,7 +1721,7 @@ fn emit_inst(
                 .copied()
                 .unwrap_or(TextureType::Texture2D);
             let coords = match ty {
-                TextureType::TextureCube => {
+                TextureType::TextureCube | TextureType::Texture3D => {
                     if project {
                         format!("(({}).xyz / ({}).w)", coord_expr, coord_expr)
                     } else {
@@ -1719,6 +1733,13 @@ fn emit_inst(
                         format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
                     } else {
                         format!("({}).xy", coord_expr)
+                    }
+                }
+                TextureType::Texture1D => {
+                    if project {
+                        format!("(({}).x / ({}).w)", coord_expr, coord_expr)
+                    } else {
+                        format!("({}).x", coord_expr)
                     }
                 }
                 _ => {
