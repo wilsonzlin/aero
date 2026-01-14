@@ -288,9 +288,9 @@ Guest (Win7):
 ```cmd
 :: Replace <GuestToolsDrive> with the drive letter of the mounted Guest Tools ISO/zip (e.g. D).
 :: Win7 x64:
-cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin
 :: Win7 x86:
-:: cd /d <GuestToolsDrive>:\drivers\x86\aerogpu\tools
+:: cd /d <GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin
 
 aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
 ```
