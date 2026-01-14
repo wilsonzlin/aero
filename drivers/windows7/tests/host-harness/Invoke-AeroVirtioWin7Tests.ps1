@@ -1264,11 +1264,11 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   #
   # Prefer miniport diagnostics when present (newer guests reserve `virtio-blk-irq|...` for
   # cfgmgr32/Windows-assigned IRQ resources).
-  $miniportIrqMatches = [regex]::Matches($Tail, "(?m)^\\s*virtio-blk-miniport-irq\\|[^`r`n]*")
+  $miniportIrqMatches = [regex]::Matches($Tail, "(?m)^\s*virtio-blk-miniport-irq\|[^`r`n]*")
   if ($miniportIrqMatches.Count -gt 0) {
     & $addLineFields $miniportIrqMatches[$miniportIrqMatches.Count - 1].Value
   }
-  $irqMatches = [regex]::Matches($Tail, "(?m)^\\s*virtio-blk-irq\\|[^`r`n]*")
+  $irqMatches = [regex]::Matches($Tail, "(?m)^\s*virtio-blk-irq\|[^`r`n]*")
   if ($irqMatches.Count -gt 0) {
     & $addLineFields $irqMatches[$irqMatches.Count - 1].Value
   }
