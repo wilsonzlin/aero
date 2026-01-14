@@ -108,6 +108,7 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
         role: "gpu",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
+        vgaFramebuffer: segments.sharedFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

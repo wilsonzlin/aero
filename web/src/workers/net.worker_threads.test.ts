@@ -188,6 +188,7 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
     role: "net",
     controlSab: segments.control,
     guestMemory: segments.guestMemory,
+    vgaFramebuffer: segments.sharedFramebuffer,
     ioIpcSab: segments.ioIpc,
     sharedFramebuffer: segments.sharedFramebuffer,
     sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

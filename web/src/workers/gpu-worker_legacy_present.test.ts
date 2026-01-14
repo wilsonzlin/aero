@@ -134,7 +134,7 @@ function allocateTestSegments() {
 }
 
 describe("workers/gpu-worker legacy framebuffer plumbing", () => {
-  it("presents from sharedFramebuffer via a mock presenter module (no vgaFramebuffer)", async () => {
+  it("presents from sharedFramebuffer via a mock presenter module (vgaFramebuffer aliases sharedFramebuffer)", async () => {
     const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
@@ -150,6 +150,7 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
         role: "gpu",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
+        vgaFramebuffer: segments.sharedFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
@@ -282,6 +283,7 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
         role: "gpu",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
+        vgaFramebuffer: segments.sharedFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
@@ -451,6 +453,7 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
         role: "gpu",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
+        vgaFramebuffer: segments.sharedFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
