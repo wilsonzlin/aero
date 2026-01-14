@@ -197,9 +197,10 @@ When we say “USB passthrough” in Aero, what is realistically achievable in t
 
 - **Forwarding USB control/bulk/interrupt transfers** for a **vendor-specific interface** that WebUSB can claim.
 
-Note: the **guest-visible USB controller** matters. Aero’s production passthrough path is currently
-UHCI (full-speed), which can be incompatible with some **high-speed-only** devices. High-speed
-passthrough is planned via EHCI/xHCI.
+Note: the **guest-visible USB controller** matters. Aero’s default passthrough path is currently
+UHCI (full-speed), which can be incompatible with some **high-speed-only** devices. When available
+in the deployed build, the web runtime can instead route guest-visible WebUSB passthrough via
+EHCI/xHCI (high-speed view), but this remains experimental/bring-up quality.
 
 We should avoid promising:
 
