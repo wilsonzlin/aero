@@ -294,6 +294,7 @@ See also:
 * If the UMD uses a staging resource backed by guest memory (`backing_alloc_id != 0`) for `Map(READ)`-style readback, the `CopyResource`/`CopySubresourceRegion` path must emit:
   * `AEROGPU_CMD_COPY_BUFFER` / `AEROGPU_CMD_COPY_TEXTURE2D` with `AEROGPU_COPY_FLAG_WRITEBACK_DST`, so the host writes the copied bytes back into guest memory before signaling the fence.
 * The submission must include an allocation-table entry for the destination resource’s `backing_alloc_id` (Win7: include the WDDM allocation handle in the submit allocation list).
+  * The destination allocation must be marked writable for the submission (`WriteOperation` bit set in the WDDM allocation list); otherwise the KMD will mark it `AEROGPU_ALLOC_FLAG_READONLY` and the host will reject the writeback.
 
 ### 2.2 D3D11: adapter + device/context entrypoints (D3D11DDI)
 
