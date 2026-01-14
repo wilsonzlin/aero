@@ -5010,10 +5010,14 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
-                        // Aero's binding state does not track UAVs separately yet. For now, treat
-                        // typed UAV textures as best-effort aliases of the stage's texture
-                        // bindings so ordering heuristics still see the resource as used.
-                        if let Some(tex) = stage_bindings.texture(*slot) {
+                        // Prefer the stage's UAV texture binding, falling back to the regular `t#`
+                        // SRV texture binding as a best-effort alias. This keeps queue.write_*
+                        // ordering heuristics aware of storage textures even when the command
+                        // stream/runtime hasn't fully plumbed typed UAV texture binding packets yet.
+                        if let Some(tex) = stage_bindings
+                            .uav_texture(*slot)
+                            .or_else(|| stage_bindings.texture(*slot))
+                        {
                             self.encoder_used_textures.insert(tex.texture);
                         }
                     }

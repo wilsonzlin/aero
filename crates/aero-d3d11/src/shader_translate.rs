@@ -5503,8 +5503,35 @@ fn emit_instructions(
                 value,
                 mask,
             } => {
+                let format = ctx
+                    .resources
+                    .uav_textures
+                    .get(&uav.slot)
+                    .copied()
+                    .ok_or(ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot })?;
+
+                // DXBC `store_uav_typed` carries a write mask on the `u#` operand. Most typed UAV
+                // stores are 4-component and therefore require a full `xyzw` mask; partial masks
+                // would require a read-modify-write sequence (not supported yet).
+                //
+                // Single-channel `r32*` typed UAVs are common (`RWTexture2D<float>` /
+                // `RWTexture2D<uint>` / `RWTexture2D<int>`). In that case, only `.x` is meaningful;
+                // treat any mask that doesn't include `.x` as a no-op.
                 let mask_bits = mask.0 & 0xF;
-                if mask_bits != 0xF {
+                let effective_mask = match format {
+                    StorageTextureFormat::R32Float
+                    | StorageTextureFormat::R32Uint
+                    | StorageTextureFormat::R32Sint => mask_bits & WriteMask::X.0,
+                    _ => mask_bits,
+                };
+                if effective_mask == 0 {
+                    // Store is fully masked out; no side effects.
+                } else if format == StorageTextureFormat::R32Float
+                    || format == StorageTextureFormat::R32Uint
+                    || format == StorageTextureFormat::R32Sint
+                {
+                    // r32* accepts any mask containing `.x`.
+                } else if effective_mask != WriteMask::XYZW.0 {
                     return Err(ShaderTranslateError::UnsupportedWriteMask {
                         inst_index,
                         opcode: "store_uav_typed",
@@ -5522,11 +5549,6 @@ fn emit_instructions(
                     "select(({coord_i}).y, i32(({coord_f}).y), ({coord_f}).y == floor(({coord_f}).y))"
                 );
 
-                let format =
-                    ctx.resources.uav_textures.get(&uav.slot).copied().ok_or(
-                        ShaderTranslateError::MissingUavTypedDeclaration { slot: uav.slot },
-                    )?;
-
                 let value = match format.store_value_type() {
                     StorageTextureValueType::F32 => {
                         emit_src_vec4(value, inst_index, "store_uav_typed", ctx)?
@@ -5538,10 +5560,15 @@ fn emit_instructions(
                         emit_src_vec4_i32(value, inst_index, "store_uav_typed", ctx)?
                     }
                 };
-                w.line(&format!(
-                    "textureStore(u{}, vec2<i32>({x}, {y}), {value});",
-                    uav.slot
-                ));
+
+                // Only emit the store when at least one component is enabled. For r32 formats this
+                // is equivalent to `mask.x`.
+                if effective_mask != 0 {
+                    w.line(&format!(
+                        "textureStore(u{}, vec2<i32>({x}, {y}), {value});",
+                        uav.slot
+                    ));
+                }
             }
             Sm4Inst::Unknown { opcode } => {
                 let opcode = opcode_name(*opcode)
