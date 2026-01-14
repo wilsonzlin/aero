@@ -216,6 +216,31 @@ fn aerogpu_bar_probe_returns_expected_size_masks() {
 }
 
 #[test]
+fn aerogpu_bar1_vram_is_large_enough_for_vbe_lfb() {
+    // VBE uses a linear framebuffer inside BAR1, with a fixed offset to keep the first 128KiB
+    // reserved for the legacy VGA 0xA0000..0xBFFFF window.
+    //
+    // See `docs/16-aerogpu-vga-vesa-compat.md` (VBE_LFB_OFFSET = 0x20000).
+    const VBE_LFB_OFFSET: u64 = 0x20_000;
+
+    // Keep BAR1 large enough to hold at least one 32bpp 4K-class framebuffer after the offset.
+    // Use 4096x2160 to cover DCI 4K as well as UHD.
+    const WIDTH: u64 = 4096;
+    const HEIGHT: u64 = 2160;
+    const BYTES_PER_PIXEL: u64 = 4;
+    const LFB_BYTES: u64 = WIDTH * HEIGHT * BYTES_PER_PIXEL;
+
+    assert!(
+        AEROGPU_VRAM_SIZE >= VBE_LFB_OFFSET + LFB_BYTES,
+        "AEROGPU_VRAM_SIZE (0x{:x}) too small: need at least 0x{:x} (VBE_LFB_OFFSET 0x{:x} + LFB 0x{:x})",
+        AEROGPU_VRAM_SIZE,
+        VBE_LFB_OFFSET + LFB_BYTES,
+        VBE_LFB_OFFSET,
+        LFB_BYTES,
+    );
+}
+
+#[test]
 fn virtio_ids_include_transitional_and_modern_variants() {
     assert_eq!(PCI_VENDOR_ID_VIRTIO, 0x1af4);
 
