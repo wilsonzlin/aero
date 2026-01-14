@@ -4474,6 +4474,8 @@ def main() -> int:
             virtio_net_msix_marker_carry = b""
             virtio_net_offload_csum_marker_line: Optional[str] = None
             virtio_net_offload_csum_marker_carry = b""
+            virtio_net_diag_marker_line: Optional[str] = None
+            virtio_net_diag_marker_carry = b""
             virtio_snd_msix_marker_line: Optional[str] = None
             virtio_snd_msix_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
@@ -4619,6 +4621,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|",
                         carry=virtio_net_offload_csum_marker_carry,
+                    )
+                    virtio_net_diag_marker_line, virtio_net_diag_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_net_diag_marker_line,
+                        chunk,
+                        prefix=b"virtio-net-diag|",
+                        carry=virtio_net_diag_marker_carry,
                     )
                     virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_snd_msix_marker_line,
@@ -6693,6 +6701,12 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|",
                             carry=virtio_net_offload_csum_marker_carry,
                         )
+                        virtio_net_diag_marker_line, virtio_net_diag_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_net_diag_marker_line,
+                            chunk2,
+                            prefix=b"virtio-net-diag|",
+                            carry=virtio_net_diag_marker_carry,
+                        )
                         virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_snd_msix_marker_line,
                             chunk2,
@@ -8004,6 +8018,22 @@ def main() -> int:
                     virtio_net_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_net_offload_csum_marker_carry:
+            raw = virtio_net_offload_csum_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|"):
+                try:
+                    virtio_net_offload_csum_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_net_diag_marker_carry:
+            raw = virtio_net_diag_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"virtio-net-diag|"):
+                try:
+                    virtio_net_diag_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
         if virtio_snd_msix_marker_carry:
             raw = virtio_snd_msix_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -8044,7 +8074,10 @@ def main() -> int:
             else tail
         )
         _emit_virtio_net_offload_csum_host_marker(net_csum_tail)
-        _emit_virtio_net_diag_host_marker(tail)
+        net_diag_tail = (
+            virtio_net_diag_marker_line.encode("utf-8") if virtio_net_diag_marker_line is not None else tail
+        )
+        _emit_virtio_net_diag_host_marker(net_diag_tail)
         net_msix_tail = (
             virtio_net_msix_marker_line.encode("utf-8") if virtio_net_msix_marker_line is not None else tail
         )
