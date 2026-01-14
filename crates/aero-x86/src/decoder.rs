@@ -2246,6 +2246,12 @@ fn map_reg_real(reg: yaxpeax_x86::real_mode::RegSpec, prefixes: Prefixes) -> Opt
             index: idx,
         });
     }
+    if class == RegSpec::mask(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Mask,
+            index: idx,
+        });
+    }
     if class == RegSpec::ymm(0).class() {
         return Some(Operand::OtherReg {
             class: crate::inst::OtherRegClass::Ymm,
@@ -2332,6 +2338,12 @@ fn map_reg_protected(
     if class == RegSpec::mm0().class() {
         return Some(Operand::OtherReg {
             class: crate::inst::OtherRegClass::Mmx,
+            index: idx,
+        });
+    }
+    if class == RegSpec::mask(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Mask,
             index: idx,
         });
     }
@@ -2425,6 +2437,12 @@ fn map_reg_long(reg: yaxpeax_x86::long_mode::RegSpec, prefixes: Prefixes) -> Opt
     if class == RegSpec::mm0().class() {
         return Some(Operand::OtherReg {
             class: crate::inst::OtherRegClass::Mmx,
+            index: idx,
+        });
+    }
+    if class == RegSpec::mask(0).class() {
+        return Some(Operand::OtherReg {
+            class: crate::inst::OtherRegClass::Mask,
             index: idx,
         });
     }

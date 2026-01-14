@@ -978,8 +978,18 @@ fn decode_one_inner(rip: u64, bytes: &[u8], bitness: u32) -> Result<DecodedInst,
         0xeb => {
             let rel8 = read_u8(bytes, offset)? as i8;
             offset += 1;
-            let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
-            InstKind::JmpRel { target }
+            if bitness == 16 && operand_override {
+                // In 16-bit mode, the operand-size override selects a 32-bit IP (EIP) for near
+                // branches, which Tier-1 does not currently model (see `near_branch_ip_mask`).
+                InstKind::Invalid
+            } else {
+                let mask = near_branch_ip_mask(bitness, operand_override);
+                if bitness == 32 && operand_override {
+                    next_rip_mask = mask;
+                }
+                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & mask;
+                InstKind::JmpRel { target }
+            }
         }
         0xe8 => {
             match bitness {
@@ -1053,8 +1063,17 @@ fn decode_one_inner(rip: u64, bytes: &[u8], bitness: u32) -> Result<DecodedInst,
             })?;
             let rel8 = read_u8(bytes, offset)? as i8;
             offset += 1;
-            let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & ip_mask(bitness);
-            InstKind::JccRel { cond, target }
+            if bitness == 16 && operand_override {
+                // See `0xEB` case above.
+                InstKind::Invalid
+            } else {
+                let mask = near_branch_ip_mask(bitness, operand_override);
+                if bitness == 32 && operand_override {
+                    next_rip_mask = mask;
+                }
+                let target = (rip + offset as u64).wrapping_add(rel8 as i64 as u64) & mask;
+                InstKind::JccRel { cond, target }
+            }
         }
         0x0f => {
             let opcode2 = read_u8(bytes, offset)?;

@@ -256,6 +256,17 @@ fn decode_one_mode_32bit_opsize_override_jmp_rel16_zero_extends_ip() {
 }
 
 #[test]
+fn decode_one_mode_32bit_opsize_override_jmp_rel8_zero_extends_ip() {
+    // Like `decode_one_mode_32bit_opsize_override_jmp_rel16_zero_extends_ip`, but for JMP rel8.
+    //
+    // 66 EB 00 at 0x0001_FFFD:
+    // next EIP would be 0x0002_0000, but IP wraps to 0x0000.
+    let inst = decode_one_mode(0x0001_fffd, &[0x66, 0xeb, 0x00], 32);
+    assert_eq!(inst.len, 3);
+    assert_eq!(inst.kind, InstKind::JmpRel { target: 0x0 });
+}
+
+#[test]
 fn decode_one_mode_16bit_call_rel16_uses_imm16() {
     // call near +0 (rel16) in 16-bit mode:
     // next IP = 0x2003, target = 0x2003
@@ -311,6 +322,25 @@ fn decode_one_mode_32bit_opsize_override_jcc_rel16_zero_extends_fallthrough() {
         }
     );
     assert_eq!(inst.next_rip(), 0xffff);
+}
+
+#[test]
+fn decode_one_mode_32bit_opsize_override_jcc_rel8_zero_extends_ip() {
+    // Like `decode_one_mode_32bit_opsize_override_jcc_rel16_zero_extends_fallthrough`, but for
+    // short Jcc (rel8).
+    //
+    // 66 70 00 at 0x0001_FFFD => JO +0
+    // next EIP would be 0x0002_0000, but IP wraps to 0x0000.
+    let inst = decode_one_mode(0x0001_fffd, &[0x66, 0x70, 0x00], 32);
+    assert_eq!(inst.len, 3);
+    assert_eq!(
+        inst.kind,
+        InstKind::JccRel {
+            cond: Cond::O,
+            target: 0x0
+        }
+    );
+    assert_eq!(inst.next_rip(), 0x0);
 }
 
 #[test]
