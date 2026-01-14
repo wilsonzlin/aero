@@ -3792,6 +3792,11 @@ def _update_virtio_irq_markers_from_chunk(
     new_carry = b""
     if parts and not parts[-1].endswith((b"\n", b"\r")):
         new_carry = parts.pop()
+    # Bound the carry buffer to avoid unbounded growth if the guest prints extremely long
+    # lines without newlines. The harness tail buffer is capped at 128 KiB; use the same cap
+    # here since we can only reliably parse marker lines within that window anyway.
+    if len(new_carry) > 131072:
+        new_carry = new_carry[-131072:]
 
     for raw in parts:
         # Drop the line ending so we can match against the raw marker text.
