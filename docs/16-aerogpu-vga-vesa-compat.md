@@ -538,6 +538,12 @@ For `ScanoutState.source = Wddm` (`SCANOUT_SOURCE_WDDM`), the worker:
    - X8 formats force `alpha=0xFF` (fully opaque); A8 formats preserve alpha.
    - For `*_SRGB` scanout formats, the GPU worker decodes sRGB→linear after swizzle so blending/presentation happens in linear space.
 
+Notes on `base_paddr == 0` for `source=Wddm`:
+
+- **Disabled WDDM descriptor** (matches the required scanout handoff contract above): when the guest disables scanout after WDDM has claimed it, the device model publishes a descriptor with
+  `base/width/height/pitch = 0`. This represents **blank output** while WDDM retains scanout ownership (legacy output remains suppressed until reset).
+- **Placeholder WDDM descriptor** (web-runtime/harness-only): some host-side harnesses publish `base_paddr=0` with **non-zero** `width/height/pitch` as a placeholder for the host-side AeroGPU path (no guest-memory scanout readback). This is not part of the guest-facing AeroGPU MMIO ABI; it is an implementation detail used by some tests.
+
 This same “VRAM aperture fast-path” idea is also used for WDDM hardware cursor surfaces (which are
 often allocated in VRAM).
 
