@@ -1825,7 +1825,7 @@ export class AerogpuCmdWriter {
     hs: AerogpuHandle,
     ds: AerogpuHandle,
   ): void {
-    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
+    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
     this.view.setUint32(base + 16, cs, true);

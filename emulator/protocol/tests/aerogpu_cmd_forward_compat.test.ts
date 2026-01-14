@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   AEROGPU_CMD_BIND_SHADERS_SIZE,
+  AEROGPU_CMD_BIND_SHADERS_EX_SIZE,
   AEROGPU_CMD_COPY_BUFFER_SIZE,
   AEROGPU_CMD_COPY_TEXTURE2D_SIZE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
@@ -399,8 +400,8 @@ test("BIND_SHADERS decoders accept append-only extensions for additional stages"
   assert.equal(packetsExtTrailing[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
   assert.equal(packetsBase[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE);
   assert.equal(packetsBaseTrailing[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 4);
-  assert.equal(packetsExt[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
-  assert.equal(packetsExtTrailing[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 12 + 4);
+  assert.equal(packetsExt[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
+  assert.equal(packetsExtTrailing[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_EX_SIZE + 4);
 
   const decodedBase = decodeCmdBindShadersPayload(base, packetsBase[0]!.offsetBytes);
   const decodedBaseTrailing = decodeCmdBindShadersPayload(baseWithTrailing, packetsBaseTrailing[0]!.offsetBytes);

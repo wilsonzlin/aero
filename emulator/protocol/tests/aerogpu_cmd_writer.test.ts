@@ -6,6 +6,7 @@ import {
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
   AEROGPU_CMD_BIND_SHADERS_SIZE,
+  AEROGPU_CMD_BIND_SHADERS_EX_SIZE,
   AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
   AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
@@ -567,7 +568,7 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
   const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
 
   assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.BindShaders);
-  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
 
   // `aerogpu_cmd_bind_shaders`: vs/ps/cs + reserved0
   assert.equal(view.getUint32(pkt0 + 8, true), 1);
@@ -584,7 +585,7 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
   const decoded = decodeCmdBindShadersPayloadFromPacket({
     opcode: AerogpuCmdOpcode.BindShaders,
     sizeBytes: view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
-    payload: bytes.subarray(pkt0 + AEROGPU_CMD_HDR_SIZE, pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 12),
+    payload: bytes.subarray(pkt0 + AEROGPU_CMD_HDR_SIZE, pkt0 + AEROGPU_CMD_BIND_SHADERS_EX_SIZE),
   });
   assert.equal(decoded.vs, 1);
   assert.equal(decoded.ps, 2);
