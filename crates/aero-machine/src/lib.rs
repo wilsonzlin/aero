@@ -4712,7 +4712,6 @@ impl Machine {
     ) -> io::Result<()> {
         self.attach_ide_secondary_master_iso_for_restore(disk)
     }
-
     /// Attach an ISO image (provided as raw bytes) as the machine's canonical install media /
     /// ATAPI CD-ROM (`disk_id=1`).
     ///
@@ -4722,6 +4721,10 @@ impl Machine {
     pub fn attach_install_media_iso_bytes(&mut self, bytes: Vec<u8>) -> io::Result<()> {
         let disk = RawDisk::open(MemBackend::from_vec(bytes))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        // Raw/in-memory ISOs do not have a stable "base_image" identifier, so do not update the
+        // snapshot overlay ref. Clear any existing ref so callers do not accidentally snapshot with
+        // stale disk reopen metadata.
+        self.clear_ide_secondary_master_atapi_overlay_ref();
         self.attach_ide_secondary_master_iso(Box::new(disk))
     }
 
@@ -6683,7 +6686,6 @@ impl Machine {
             } else {
                 None
             };
-
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
             let pci_allocator_cfg = PciResourceAllocatorConfig::default();
