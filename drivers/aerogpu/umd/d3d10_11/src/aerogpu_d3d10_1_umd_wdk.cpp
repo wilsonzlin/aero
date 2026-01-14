@@ -3781,6 +3781,20 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
       cmd->reserved0 = 0;
     }
   }
+  for (uint32_t slot = 0; slot < dev->current_gs_srvs.size(); ++slot) {
+    if (dev->current_gs_srvs[slot] == res) {
+      dev->current_gs_srvs[slot] = nullptr;
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      if (!cmd) {
+        set_error(dev, E_OUTOFMEMORY);
+        break;
+      }
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+      cmd->slot = slot;
+      cmd->texture = 0;
+      cmd->reserved0 = 0;
+    }
+  }
 
   auto unbind_constant_buffers = [&](uint32_t shader_stage,
                                      std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots>& table,
@@ -3815,6 +3829,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
 
   unbind_constant_buffers(AEROGPU_SHADER_STAGE_VERTEX, dev->vs_constant_buffers, dev->current_vs_cb_resources);
   unbind_constant_buffers(AEROGPU_SHADER_STAGE_PIXEL, dev->ps_constant_buffers, dev->current_ps_cb_resources);
+  unbind_constant_buffers(AEROGPU_SHADER_STAGE_GEOMETRY, dev->gs_constant_buffers, dev->current_gs_cb_resources);
 
   if (res->handle != kInvalidHandle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
@@ -7823,6 +7838,21 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
         }
         dev->current_ps_srvs[slot] = nullptr;
         cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+        cmd->slot = slot;
+        cmd->texture = 0;
+        cmd->reserved0 = 0;
+      }
+    }
+    for (uint32_t slot = 0; slot < dev->current_gs_srvs.size(); ++slot) {
+      if (ResourcesAlias(dev->current_gs_srvs[slot], res)) {
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+        if (!cmd) {
+          set_error(dev, E_OUTOFMEMORY);
+          oom = true;
+          return;
+        }
+        dev->current_gs_srvs[slot] = nullptr;
+        cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
         cmd->slot = slot;
         cmd->texture = 0;
         cmd->reserved0 = 0;

@@ -2107,6 +2107,13 @@ static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t ha
         dev->current_ps_srv_resources[slot] = nullptr;
       }
     }
+    if ((handle != 0 && dev->gs_srvs[slot] == handle) ||
+        (res && ResourcesAlias(dev->current_gs_srv_resources[slot], res))) {
+      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, slot, 0);
+      if (dev->gs_srvs[slot] == 0) {
+        dev->current_gs_srv_resources[slot] = nullptr;
+      }
+    }
   }
 }
 
