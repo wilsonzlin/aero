@@ -2,4 +2,5 @@
 pub mod boot_vga_serial;
 
 pub mod bootsector;
+pub mod int_sanity;
 pub mod realmode_vbe_test;
