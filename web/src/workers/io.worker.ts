@@ -1332,6 +1332,10 @@ function emitWebUsbGuestStatus(): void {
 
 const uhciHidTopology = new UhciHidTopologyManager();
 const xhciHidTopology = new XhciHidTopologyManager();
+// Source object currently wired into {@link uhciHidTopology}. This is typically the WASM
+// `UhciControllerBridge`, but in builds that omit UHCI we may reuse the same topology manager with
+// `EhciControllerBridge` since the attachment API is identical (attach_hub/detach_at_path/...).
+let uhciHidTopologyBridgeSource: unknown | null = null;
 let xhciHidTopologyBridge: XhciTopologyBridge | null = null;
 let xhciHidTopologyBridgeSource: unknown | null = null;
 const hidTopologyMux = new IoWorkerHidTopologyMux({
@@ -1402,6 +1406,7 @@ function maybeInitUhciRuntime(): void {
     mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
     uhciHidTopology.setUhciBridge(null);
+    uhciHidTopologyBridgeSource = null;
   } catch (err) {
     console.warn("[io.worker] Failed to register UHCI runtime PCI device", err);
     try {
@@ -1705,6 +1710,7 @@ function maybeInitUhciDevice(): void {
         mgr.registerPciDevice(dev);
         mgr.addTickable(dev);
         uhciHidTopology.setUhciBridge(bridge as unknown as any);
+        uhciHidTopologyBridgeSource = bridge as unknown;
       } catch (err) {
         console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
       }
@@ -2000,6 +2006,28 @@ function maybeInitEhciDevice(): void {
     ehciControllerBridge = bridge;
     ehciDevice = dev;
 
+    // In WASM builds that omit UHCI, reuse the UHCI HID topology manager with EHCI since the
+    // exported topology attachment API is identical (attach_hub/detach_at_path/attach_webhid_device/...).
+    //
+    // This allows WebHID passthrough + synthetic USB HID devices to function in EHCI-only builds.
+    if (!uhciRuntime && !uhciControllerBridge && uhciHidTopologyBridgeSource === null) {
+      const topo = bridge as unknown as {
+        attach_hub?: unknown;
+        detach_at_path?: unknown;
+        attach_webhid_device?: unknown;
+        attach_usb_hid_passthrough_device?: unknown;
+      };
+      if (
+        typeof topo.attach_hub === "function" &&
+        typeof topo.detach_at_path === "function" &&
+        typeof topo.attach_webhid_device === "function" &&
+        typeof topo.attach_usb_hid_passthrough_device === "function"
+      ) {
+        uhciHidTopology.setUhciBridge(bridge as unknown as any);
+        uhciHidTopologyBridgeSource = bridge as unknown;
+      }
+    }
+
     // Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) may be attached behind EHCI in WASM builds
     // that omit UHCI/xHCI. Attempt attachment now that the controller exists.
     maybeInitSyntheticUsbHidDevices();
@@ -2257,7 +2285,7 @@ function maybeInitSyntheticUsbHidDevices(): void {
   }
 
   // Legacy controller bridge path: use the topology manager so hub attachments + reattachments are handled consistently.
-  if (uhciControllerBridge) {
+  if (uhciHidTopologyBridgeSource !== null) {
     uhciHidTopology.attachDevice(
       SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID,
       SYNTHETIC_USB_HID_KEYBOARD_PATH,
@@ -2284,31 +2312,6 @@ function maybeInitSyntheticUsbHidDevices(): void {
     );
     syntheticUsbHidAttached = true;
     return;
-  }
-
-  // EHCI controller bridge path (WASM builds that omit UHCI): attach synthetic devices behind EHCI.
-  //
-  // Note: This is best-effort; older WASM builds may not expose the topology helpers required to
-  // attach devices.
-  if (ehciControllerBridge) {
-    const bridge = ehciControllerBridge as unknown as {
-      attach_hub?: unknown;
-      attach_usb_hid_passthrough_device?: unknown;
-    };
-    if (typeof bridge.attach_hub === "function" && typeof bridge.attach_usb_hid_passthrough_device === "function") {
-      try {
-        // Ensure the external hub exists before attaching the fixed synthetic device ports.
-        bridge.attach_hub.call(bridge, EXTERNAL_HUB_ROOT_PORT, DEFAULT_EXTERNAL_HUB_PORT_COUNT);
-        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_KEYBOARD_PATH, syntheticUsbKeyboard);
-        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_MOUSE_PATH, syntheticUsbMouse);
-        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_GAMEPAD_PATH, syntheticUsbGamepad);
-        bridge.attach_usb_hid_passthrough_device.call(bridge, SYNTHETIC_USB_HID_CONSUMER_CONTROL_PATH, syntheticUsbConsumerControl);
-        syntheticUsbHidAttached = true;
-        return;
-      } catch (err) {
-        console.warn("[io.worker] Failed to attach synthetic USB HID devices to EHCI bridge", err);
-      }
-    }
   }
 
   // xHCI controller bridge path (WASM builds that omit UHCI/EHCI): attach synthetic devices behind xHCI.
@@ -2926,27 +2929,22 @@ function maybeInitWasmHidGuestBridge(): void {
   // initialize the bridge before the UHCI controller exists, devices would never be visible to the
   // guest OS (PCI hotplug isn't modeled yet).
   maybeInitUhciDevice();
+  maybeInitEhciDevice();
   maybeInitXhciDevice();
   wireXhciHidTopologyBridge();
   const hasXhciTopology = xhciHidTopologyBridge !== null;
+  const hasUhciTopology = uhciHidTopologyBridgeSource !== null;
   if (wasmHidGuest) {
     maybeSendWasmReady();
     return;
   }
-  if (!hasXhciTopology) {
-    // xHCI topology isn't available; fall back to the UHCI guest bridge when possible.
-    if (uhciRuntime) {
-      // ok: UHCI runtime WebHID bridge does not require UhciControllerBridge
-    } else if (api.UhciControllerBridge) {
-      if (!uhciControllerBridge) return;
-    } else if (api.XhciControllerBridge) {
-      // xHCI is present but does not expose the HID topology management exports.
-      // Wait for the controller to initialize if needed; otherwise there's no supported backend.
-      if (!xhciControllerBridge) return;
-      return;
-    } else {
-      return;
-    }
+  if (!hasXhciTopology && !uhciRuntime && !hasUhciTopology) {
+    // No active topology backend. Wait for controllers to initialize when possible.
+    if (api.XhciControllerBridge && !xhciControllerBridge) return;
+    if (api.UhciControllerBridge && !uhciControllerBridge) return;
+    const hasEhciCtor = typeof (api as unknown as { EhciControllerBridge?: unknown }).EhciControllerBridge === "function";
+    if (hasEhciCtor && !ehciControllerBridge) return;
+    return;
   }
 
   try {
@@ -6177,6 +6175,7 @@ function shutdown(): void {
       virtioInputMouse?.destroy();
       virtioInputMouse = null;
       uhciHidTopology.setUhciBridge(null);
+      uhciHidTopologyBridgeSource = null;
       xhciHidTopologyBridge = null;
       xhciHidTopologyBridgeSource = null;
       xhciHidTopology.setXhciBridge(null);
