@@ -24,8 +24,8 @@ Status:
 - The web runtime exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge` (wrapping
   `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
   root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, snapshot/restore), but it
-  does not yet drive full command/transfer ring execution (doorbells + transfer scheduling), so
-  treat it as bring-up quality and incomplete.
+  does not yet drive full command/transfer ring execution (command ring doorbell + non-control
+  transfer scheduling), so treat it as bring-up quality and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -96,11 +96,11 @@ Native integration (not yet wired into the canonical `Machine` by default):
 
 Notes:
 
-- `crates/devices/src/usb/xhci.rs` is currently a **standalone PCI/MMIO stub** with its own register
-  backing store for enumeration/IRQ smoke tests. It is **not yet** wired to the canonical
-  `aero_usb::xhci::XhciController`.
-- The canonical Rust xHCI controller model (`aero_usb::xhci::XhciController`) is currently exercised
-  via Rust tests and the web/WASM bridge (`aero_wasm::XhciControllerBridge`).
+- `crates/devices/src/usb/xhci.rs` is the canonical native PCI/MMIO wrapper around
+  `aero_usb::xhci::XhciController` (BAR sizing, PCI COMMAND gating for MMIO/DMA/INTx, optional MSI,
+  and snapshot/restore).
+- The canonical Rust xHCI controller model (`aero_usb::xhci::XhciController`) is exercised via Rust
+  tests, the web/WASM bridge (`aero_wasm::XhciControllerBridge`), and native wrappers/integrations.
 
 ### PCI identity (canonical)
 
