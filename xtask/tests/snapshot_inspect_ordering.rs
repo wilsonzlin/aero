@@ -7,7 +7,7 @@ use std::io::{Cursor, Read};
 
 use aero_snapshot::{
     save_snapshot, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState,
-    SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuSnapshot,
+    SaveOptions, SectionId, SnapshotMeta, SnapshotSource, VcpuMmuSnapshot, VcpuSnapshot,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -275,6 +275,19 @@ impl SnapshotSource for TwoCpuSource {
 
     fn mmu_state(&self) -> MmuState {
         MmuState::default()
+    }
+
+    fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
+        vec![
+            VcpuMmuSnapshot {
+                apic_id: 0,
+                mmu: MmuState::default(),
+            },
+            VcpuMmuSnapshot {
+                apic_id: 1,
+                mmu: MmuState::default(),
+            },
+        ]
     }
 
     fn device_states(&self) -> Vec<DeviceState> {
@@ -563,6 +576,19 @@ impl SnapshotSource for CpuEntrySummarySource {
 
     fn mmu_state(&self) -> MmuState {
         MmuState::default()
+    }
+
+    fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
+        vec![
+            VcpuMmuSnapshot {
+                apic_id: 0,
+                mmu: MmuState::default(),
+            },
+            VcpuMmuSnapshot {
+                apic_id: 1,
+                mmu: MmuState::default(),
+            },
+        ]
     }
 
     fn device_states(&self) -> Vec<DeviceState> {

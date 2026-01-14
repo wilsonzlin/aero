@@ -9,7 +9,7 @@ use std::io::{Seek, Write};
 use aero_snapshot::{
     limits, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs,
     MmuState, RamMode, RamWriteOptions, SaveOptions, SectionId, SnapshotMeta, SnapshotSource,
-    VcpuSnapshot, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
+    VcpuMmuSnapshot, VcpuSnapshot, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -129,6 +129,19 @@ impl SnapshotSource for MultiCpuSource {
 
     fn mmu_state(&self) -> MmuState {
         MmuState::default()
+    }
+
+    fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
+        vec![
+            VcpuMmuSnapshot {
+                apic_id: 0,
+                mmu: self.mmu_state(),
+            },
+            VcpuMmuSnapshot {
+                apic_id: 1,
+                mmu: self.mmu_state(),
+            },
+        ]
     }
 
     fn device_states(&self) -> Vec<DeviceState> {

@@ -78,20 +78,10 @@ pub trait SnapshotSource {
     /// Default behavior uses the legacy [`SnapshotSource::mmu_state`] API to produce a single
     /// entry for `apic_id = 0`.
     fn mmu_states(&self) -> Vec<VcpuMmuSnapshot> {
-        // Backward-compatible default: replicate the legacy `mmu_state()` payload across all vCPUs
-        // returned by `cpu_states()`, preserving their `apic_id` mapping.
-        //
-        // This keeps multi-vCPU snapshot sources working even if they have not been updated to
-        // implement `mmu_states()` explicitly, at the cost of cloning the `cpu_states()` list to
-        // extract APIC IDs.
-        let mmu = self.mmu_state();
-        self.cpu_states()
-            .into_iter()
-            .map(|cpu| VcpuMmuSnapshot {
-                apic_id: cpu.apic_id,
-                mmu: mmu.clone(),
-            })
-            .collect()
+        vec![VcpuMmuSnapshot {
+            apic_id: 0,
+            mmu: self.mmu_state(),
+        }]
     }
     /// Snapshot representation of device state entries.
     ///
@@ -261,31 +251,32 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
     }
 
     // MMU/MMUS section.
-    let mut mmus = source.mmu_states();
-    if mmus.is_empty() {
-        return Err(SnapshotError::Corrupt("missing MMU entry"));
-    }
-    if mmus.len() > limits::MAX_CPU_COUNT as usize {
-        return Err(SnapshotError::Corrupt("too many MMU states"));
-    }
-    mmus.sort_by_key(|m| m.apic_id);
-    if mmus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
-        return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
-    }
-
-    if mmus.len() != cpus.len()
-        || mmus
-            .iter()
-            .zip(cpus.iter())
-            .any(|(mmu, cpu)| mmu.apic_id != cpu.apic_id)
-    {
-        return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
-    }
-
-    // Preserve the legacy single-CPU MMU section encoding when representable.
-    if mmus.len() == 1 && mmus[0].apic_id == 0 {
-        write_section(w, SectionId::MMU, 2, 0, |w| mmus[0].mmu.encode_v2(w))?;
+    if cpus.len() == 1 {
+        // For single-vCPU snapshots (whether encoded as `CPU` or `CPUS` with count=1), preserve the
+        // legacy `MMU` section bytes exactly for backward compatibility.
+        write_section(w, SectionId::MMU, 2, 0, |w| source.mmu_state().encode_v2(w))?;
     } else {
+        let mut mmus = source.mmu_states();
+        if mmus.is_empty() {
+            return Err(SnapshotError::Corrupt("missing MMU entry"));
+        }
+        if mmus.len() > limits::MAX_CPU_COUNT as usize {
+            return Err(SnapshotError::Corrupt("too many MMU states"));
+        }
+        mmus.sort_by_key(|m| m.apic_id);
+        if mmus.windows(2).any(|w| w[0].apic_id == w[1].apic_id) {
+            return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
+        }
+
+        if mmus.len() != cpus.len()
+            || mmus
+                .iter()
+                .zip(cpus.iter())
+                .any(|(mmu, cpu)| mmu.apic_id != cpu.apic_id)
+        {
+            return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
+        }
+
         write_section(w, SectionId::MMUS, 2, 0, |w| {
             let count: u32 = mmus
                 .len()
@@ -778,7 +769,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
             id if id == SectionId::MMUS => {
                 if header.version == 1 {
                     if seen_mmu_section {
-                        return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
+                        return Err(SnapshotError::Corrupt(
+                            "snapshot contains both MMU and MMUS",
+                        ));
                     }
                     if seen_mmus_section {
                         return Err(SnapshotError::Corrupt("duplicate MMUS section"));
@@ -819,7 +812,9 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     target.restore_mmu_states(mmus)?;
                 } else if header.version >= 2 {
                     if seen_mmu_section {
-                        return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
+                        return Err(SnapshotError::Corrupt(
+                            "snapshot contains both MMU and MMUS",
+                        ));
                     }
                     if seen_mmus_section {
                         return Err(SnapshotError::Corrupt("duplicate MMUS section"));

@@ -1927,10 +1927,10 @@ fn cmd_diff(args: Vec<String>) -> Result<()> {
         .map_err(|e| XtaskError::Message(format!("stat {path_b:?}: {e}")))?
         .len();
 
-    let mut file_a = fs::File::open(path_a)
-        .map_err(|e| XtaskError::Message(format!("open {path_a:?}: {e}")))?;
-    let mut file_b = fs::File::open(path_b)
-        .map_err(|e| XtaskError::Message(format!("open {path_b:?}: {e}")))?;
+    let mut file_a =
+        fs::File::open(path_a).map_err(|e| XtaskError::Message(format!("open {path_a:?}: {e}")))?;
+    let mut file_b =
+        fs::File::open(path_b).map_err(|e| XtaskError::Message(format!("open {path_b:?}: {e}")))?;
 
     let index_a = aero_snapshot::inspect_snapshot(&mut file_a)
         .map_err(|e| XtaskError::Message(format!("inspect snapshot A: {e}")))?;
@@ -2055,11 +2055,7 @@ impl std::fmt::Display for SectionDigest {
     }
 }
 
-fn diff_section_table(
-    out: &mut DiffOutput,
-    a: &[SnapshotSectionInfo],
-    b: &[SnapshotSectionInfo],
-) {
+fn diff_section_table(out: &mut DiffOutput, a: &[SnapshotSectionInfo], b: &[SnapshotSectionInfo]) {
     let a: Vec<SectionDigest> = a
         .iter()
         .map(|s| SectionDigest {
@@ -2167,11 +2163,8 @@ fn diff_devices_section(
             }
 
             // Compare entries.
-            let all_keys: BTreeMap<(u32, u16, u16), ()> = map_a
-                .keys()
-                .chain(map_b.keys())
-                .map(|&k| (k, ()))
-                .collect();
+            let all_keys: BTreeMap<(u32, u16, u16), ()> =
+                map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
 
             for (key, ()) in all_keys {
                 match (map_a.get(&key), map_b.get(&key)) {
@@ -2203,23 +2196,13 @@ fn diff_devices_section(
                     }
                     (Some(_), None) => {
                         out.diff_msg(
-                            &format!(
-                                "DEVICES[{} v{} flags={}]",
-                                DeviceId(key.0),
-                                key.1,
-                                key.2
-                            ),
+                            &format!("DEVICES[{} v{} flags={}]", DeviceId(key.0), key.1, key.2),
                             "present in A, missing in B",
                         );
                     }
                     (None, Some(_)) => {
                         out.diff_msg(
-                            &format!(
-                                "DEVICES[{} v{} flags={}]",
-                                DeviceId(key.0),
-                                key.1,
-                                key.2
-                            ),
+                            &format!("DEVICES[{} v{} flags={}]", DeviceId(key.0), key.1, key.2),
                             "missing in A, present in B",
                         );
                     }
@@ -2409,9 +2392,7 @@ fn deep_diff_ram(
         if ha != hb {
             diff_pages += 1;
             if printed < MAX_PAGE_DIFF_PRINT {
-                println!(
-                    "diff RAM.page[{page_idx}]: A=0x{ha:016x} B=0x{hb:016x}"
-                );
+                println!("diff RAM.page[{page_idx}]: A=0x{ha:016x} B=0x{hb:016x}");
                 printed += 1;
             }
         }
@@ -2420,9 +2401,7 @@ fn deep_diff_ram(
     if diff_pages != 0 {
         out.diff_msg(
             "RAM.deep.pages",
-            format!(
-                "{diff_pages} / {page_count} pages differ (showing first {printed})"
-            ),
+            format!("{diff_pages} / {page_count} pages differ (showing first {printed})"),
         );
     }
 
@@ -2734,10 +2713,7 @@ impl SnapshotTarget for DeepValidateTarget {
     }
 
     fn restore_mmu_state(&mut self, _state: aero_snapshot::MmuState) {}
-    fn restore_mmu_states(
-        &mut self,
-        states: Vec<VcpuMmuSnapshot>,
-    ) -> aero_snapshot::Result<()> {
+    fn restore_mmu_states(&mut self, states: Vec<VcpuMmuSnapshot>) -> aero_snapshot::Result<()> {
         if states.is_empty() {
             return Err(SnapshotError::Corrupt("missing MMU entry"));
         }
