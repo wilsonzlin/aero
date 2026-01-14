@@ -14,6 +14,7 @@ import {
   type ProtocolMessage,
   type WorkerInitMessage,
 } from "../runtime/protocol";
+import { openFileHandle } from "../platform/opfs";
 import {
   IO_IPC_NET_RX_QUEUE_KIND,
   IO_IPC_NET_TX_QUEUE_KIND,
@@ -531,6 +532,24 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
       );
       changed = true;
     }
+  } else {
+    // Best-effort: clear HDD overlay refs when the slot is cleared so future snapshots do not
+    // persist stale disk paths.
+    try {
+      const clearRef = (m as unknown as { clear_ahci_port0_disk_overlay_ref?: unknown }).clear_ahci_port0_disk_overlay_ref;
+      if (typeof clearRef === "function") {
+        (clearRef as () => void).call(m);
+        changed = true;
+      } else {
+        const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+        if (typeof setRef === "function") {
+          (setRef as (base: string, overlay: string) => void).call(m, "", "");
+          changed = true;
+        }
+      }
+    } catch {
+      // ignore
+    }
   }
 
   if (!msg.cd) {
@@ -538,8 +557,27 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     try {
       const eject = (m as unknown as { eject_install_media?: unknown }).eject_install_media;
       if (typeof eject === "function") {
-        (eject as () => void).call(m);
+        await maybeAwait((eject as () => unknown).call(m));
         changed = true;
+      }
+    } catch {
+      // ignore
+    }
+
+    // Best-effort: clear CD overlay refs when the slot is cleared.
+    try {
+      const clearRef =
+        (m as unknown as { clear_ide_secondary_master_atapi_overlay_ref?: unknown }).clear_ide_secondary_master_atapi_overlay_ref;
+      if (typeof clearRef === "function") {
+        (clearRef as () => void).call(m);
+        changed = true;
+      } else {
+        const setRef =
+          (m as unknown as { set_ide_secondary_master_atapi_overlay_ref?: unknown }).set_ide_secondary_master_atapi_overlay_ref;
+        if (typeof setRef === "function") {
+          (setRef as (base: string, overlay: string) => void).call(m, "", "");
+          changed = true;
+        }
       }
     } catch {
       // ignore
@@ -687,10 +725,24 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       const fn =
         (m as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs ??
         (m as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs;
-      if (typeof fn !== "function") {
-        throw new Error("Machine.snapshot_full_to_opfs(path) is unavailable in this WASM build.");
+      if (typeof fn === "function") {
+        await maybeAwait((fn as (path: string) => unknown).call(m, op.path));
+      } else {
+        const snapBytesFn =
+          (m as unknown as { snapshot_full?: unknown }).snapshot_full ??
+          (m as unknown as { snapshot_dirty?: unknown }).snapshot_dirty;
+        if (typeof snapBytesFn !== "function") {
+          throw new Error("Machine snapshot exports are unavailable in this WASM build.");
+        }
+        const bytes = await maybeAwait((snapBytesFn as () => unknown).call(m));
+        if (!(bytes instanceof Uint8Array)) {
+          throw new Error("Machine snapshot returned invalid bytes.");
+        }
+        const handle = await openFileHandle(op.path, { create: true });
+        const writable = await handle.createWritable({ keepExistingData: false });
+        await writable.write(bytes);
+        await writable.close();
       }
-      await maybeAwait((fn as (path: string) => unknown).call(m, op.path));
       postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineSavedMessage);
       return;
     }
@@ -699,13 +751,39 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       if (!vmSnapshotPaused) {
         throw new Error("VM is not paused; call vm.snapshot.pause before restoring.");
       }
-      await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
+      const restoreFromOpfs = (m as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs;
+      if (typeof restoreFromOpfs === "function") {
+        await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
+      } else {
+        const handle = await openFileHandle(op.path, { create: false });
+        const file = await handle.getFile();
+        const buf = await file.arrayBuffer();
+        await restoreMachineSnapshotAndReattachDisks({
+          api,
+          machine: m,
+          bytes: new Uint8Array(buf),
+          logPrefix: "machine_cpu.worker",
+        });
+      }
       postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
       return;
     }
 
     if (op.kind === "machine.restoreFromOpfs") {
-      await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
+      const restoreFromOpfs = (m as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs;
+      if (typeof restoreFromOpfs === "function") {
+        await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
+      } else {
+        const handle = await openFileHandle(op.path, { create: false });
+        const file = await handle.getFile();
+        const buf = await file.arrayBuffer();
+        await restoreMachineSnapshotAndReattachDisks({
+          api,
+          machine: m,
+          bytes: new Uint8Array(buf),
+          logPrefix: "machine_cpu.worker",
+        });
+      }
       postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
       return;
     }
