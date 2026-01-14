@@ -681,7 +681,7 @@ fn accept_trace_with_older_aerogpu_abi_minor_version() {
     // The AeroGPU protocol defines ABI minor versions as backwards-compatible extensions.
     // A trace recorded against an older minor version should still be readable by the trace
     // container reader (the container stores the value but does not interpret packet bytes).
-    let older_minor_version: u32 = (AEROGPU_ABI_MAJOR << 16) | 0;
+    let older_minor_version: u32 = AEROGPU_ABI_MAJOR << 16;
 
     // Assert this really is an "older or equal minor" version of the current ABI major.
     assert_eq!(
