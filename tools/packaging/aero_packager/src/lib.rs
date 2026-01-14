@@ -20,7 +20,7 @@ pub use iso9660::read_joliet_tree;
 pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use iso_from_dir::write_iso9660_joliet_from_dir;
 pub use manifest::{
-    Manifest, ManifestFileEntry, ManifestInputFile, ManifestInputs,
+    Manifest, ManifestFileEntry, ManifestInputFile, ManifestInputs, ManifestProvenance,
     ManifestWindowsDeviceContractInput, SigningPolicy,
 };
 pub use spec::{DriverSpec, PackagingSpec};
@@ -208,16 +208,25 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     manifest.inputs = Some(ManifestInputs {
         packaging_spec: Some(ManifestInputFile {
             path: manifest_input_path(&config.spec_path)?,
-            sha256: spec_sha256,
+            sha256: spec_sha256.clone(),
         }),
         windows_device_contract: Some(ManifestWindowsDeviceContractInput {
             path: manifest_input_path(&config.windows_device_contract_path)?,
-            sha256: contract_sha256,
+            sha256: contract_sha256.clone(),
             contract_name: contract.contract_name.clone(),
             contract_version: contract.contract_version.clone(),
             schema_version: contract.schema_version,
         }),
         aero_packager_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+    });
+    manifest.provenance = Some(ManifestProvenance {
+        packaging_spec_path: config.spec_path.to_string_lossy().to_string(),
+        packaging_spec_sha256: spec_sha256,
+        windows_device_contract_path: config
+            .windows_device_contract_path
+            .to_string_lossy()
+            .to_string(),
+        windows_device_contract_sha256: contract_sha256,
     });
 
     let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest.json")?;

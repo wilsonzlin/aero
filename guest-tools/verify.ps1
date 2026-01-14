@@ -1292,6 +1292,8 @@ try {
         package = $null
         signing_policy = $null
         certs_required = $null
+        provenance_present = $false
+        provenance = $null
         files_listed = 0
         manifest_includes_tools = $false
         tools_files_listed = 0
@@ -1326,9 +1328,9 @@ try {
             $unsupportedSchema = $false
             $schemaStr = $null
             if ($schema -ne $null) { $schemaStr = ("" + $schema).Trim() }
-            if ($schemaStr -and -not (@("2", "3") -contains $schemaStr)) {
+            if ($schemaStr -and -not (@("2", "3", "4") -contains $schemaStr)) {
                 $unsupportedSchema = $true
-                $mDetails += ("WARN: Unsupported manifest schema_version=" + $schemaStr + " (supported: 2, 3). Integrity checks will continue, but newer manifest fields may be ignored.")
+                $mDetails += ("WARN: Unsupported manifest schema_version=" + $schemaStr + " (supported: 2, 3, 4). Integrity checks will continue, but newer manifest fields may be ignored.")
             }
 
             $pkg = $null
@@ -1440,6 +1442,30 @@ try {
                 }
 
                 Add-Check "guest_tools_manifest_inputs" "Guest Tools Packaging Inputs (manifest.json)" $inputsStatus $inputsSummary $inputsData $inputsDetails
+            }
+
+            # Optional: manifest provenance (packaging spec + device contract hashes).
+            $prov = $null
+            if ($parsed.ContainsKey("provenance")) { $prov = $parsed["provenance"] }
+            if ($prov -and ($prov -is [System.Collections.IDictionary])) {
+                $psPath = $null
+                $psSha = $null
+                $cPath = $null
+                $cSha = $null
+                if ($prov.ContainsKey("packaging_spec_path")) { $psPath = "" + $prov["packaging_spec_path"] }
+                if ($prov.ContainsKey("packaging_spec_sha256")) { $psSha = "" + $prov["packaging_spec_sha256"] }
+                if ($prov.ContainsKey("windows_device_contract_path")) { $cPath = "" + $prov["windows_device_contract_path"] }
+                if ($prov.ContainsKey("windows_device_contract_sha256")) { $cSha = "" + $prov["windows_device_contract_sha256"] }
+                $mediaIntegrity.provenance_present = $true
+                $mediaIntegrity.provenance = @{
+                    packaging_spec_path = $psPath
+                    packaging_spec_sha256 = $psSha
+                    windows_device_contract_path = $cPath
+                    windows_device_contract_sha256 = $cSha
+                }
+            } else {
+                $mediaIntegrity.provenance_present = $false
+                $mediaIntegrity.provenance = $null
             }
 
             $files = $null
@@ -1679,6 +1705,26 @@ try {
                     $mediaIntegrity.extra_files_not_in_manifest_error = $_.Exception.Message
                     Add-Check "extra_files_not_in_manifest" "Extra Files Not In Manifest (mixed media check)" "WARN" ("Failed: " + $_.Exception.Message) $null @("Remediation: Replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions.")
                 }
+            }
+
+            # Provenance is optional for back-compat with older media, but surface it when present.
+            if (-not $mediaIntegrity.provenance_present) {
+                $mStatus = Merge-Status $mStatus "WARN"
+                $mDetails += "WARN: manifest.json does not contain provenance fields (packaging spec + device contract hashes). Media may have been built with an older packager."
+            } else {
+                $prov = $mediaIntegrity.provenance
+                $missing = @()
+                foreach ($k in @("packaging_spec_path","packaging_spec_sha256","windows_device_contract_path","windows_device_contract_sha256")) {
+                    if (-not $prov.ContainsKey($k) -or -not $prov[$k] -or (("" + $prov[$k]).Trim().Length -eq 0)) { $missing += $k }
+                }
+                if ($missing.Count -gt 0) {
+                    $mStatus = Merge-Status $mStatus "WARN"
+                    $mDetails += ("WARN: manifest.json provenance is missing field(s): " + ($missing -join ", "))
+                }
+                $mDetails += ("Provenance: packaging_spec_path=" + ("" + $prov.packaging_spec_path))
+                $mDetails += ("Provenance: packaging_spec_sha256=" + ("" + $prov.packaging_spec_sha256))
+                $mDetails += ("Provenance: windows_device_contract_path=" + ("" + $prov.windows_device_contract_path))
+                $mDetails += ("Provenance: windows_device_contract_sha256=" + ("" + $prov.windows_device_contract_sha256))
             }
         }
     }

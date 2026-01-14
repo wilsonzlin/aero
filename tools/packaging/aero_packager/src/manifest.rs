@@ -46,6 +46,8 @@ pub struct Manifest {
     pub inputs: Option<ManifestInputs>,
     pub signing_policy: SigningPolicy,
     pub certs_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ManifestProvenance>,
     pub files: Vec<ManifestFileEntry>,
 }
 
@@ -75,6 +77,18 @@ pub struct ManifestWindowsDeviceContractInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestProvenance {
+    /// Packaging spec path as provided to the packager (string form).
+    pub packaging_spec_path: String,
+    /// SHA-256 of the packaging spec JSON after canonicalization (stable key ordering).
+    pub packaging_spec_sha256: String,
+    /// Windows device contract path as provided to the packager (string form).
+    pub windows_device_contract_path: String,
+    /// SHA-256 of the windows device contract JSON after canonicalization (stable key ordering).
+    pub windows_device_contract_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestPackage {
     pub name: String,
     pub version: String,
@@ -99,7 +113,7 @@ impl Manifest {
     ) -> Self {
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Self {
-            schema_version: 3,
+            schema_version: 4,
             package: ManifestPackage {
                 name: "aero-guest-tools".to_string(),
                 version,
@@ -107,6 +121,7 @@ impl Manifest {
                 source_date_epoch,
             },
             inputs: None,
+            provenance: None,
             signing_policy,
             certs_required: signing_policy.certs_required(),
             files,

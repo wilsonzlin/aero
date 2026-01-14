@@ -177,12 +177,31 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     // Verify manifest hashes match the packaged bytes (via the zip).
     let manifest_bytes = fs::read(&outputs1.manifest_path)?;
     let manifest: aero_packager::Manifest = serde_json::from_slice(&manifest_bytes)?;
-    assert_eq!(manifest.schema_version, 3);
+    assert_eq!(manifest.schema_version, 4);
     assert_eq!(manifest.package.version, "1.2.3");
     assert_eq!(manifest.package.build_id, "test");
     assert_eq!(manifest.package.source_date_epoch, 0);
     assert_eq!(manifest.signing_policy, aero_packager::SigningPolicy::Test);
     assert!(manifest.certs_required);
+
+    // Compute expected canonical hashes for provenance checks below.
+    let spec_sha256 = canonical_json_sha256_hex(&fs::read(&spec_path)?)?;
+    let contract_sha256 = canonical_json_sha256_hex(&fs::read(&windows_device_contract_path)?)?;
+
+    let provenance = manifest
+        .provenance
+        .as_ref()
+        .expect("manifest should include provenance");
+    assert_eq!(
+        provenance.packaging_spec_path,
+        spec_path.to_string_lossy().to_string()
+    );
+    assert_eq!(
+        provenance.windows_device_contract_path,
+        windows_device_contract_path.to_string_lossy().to_string()
+    );
+    assert_eq!(provenance.packaging_spec_sha256, spec_sha256);
+    assert_eq!(provenance.windows_device_contract_sha256, contract_sha256);
 
     // Input provenance should be present.
     let inputs = manifest.inputs.as_ref().expect("manifest.inputs");
@@ -211,15 +230,13 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     );
 
     // Verify input hashes are correct.
-    let spec_sha256 = canonical_json_sha256_hex(&fs::read(&spec_path)?)?;
     assert_eq!(spec_input.sha256, spec_sha256);
 
-    let contract_sha256 = canonical_json_sha256_hex(&fs::read(&windows_device_contract_path)?)?;
     assert_eq!(contract_input.sha256, contract_sha256);
 
     // Legacy spec schema should still produce the exact same packaged file list/hashes, even
     // though the overall media differs due to `manifest.inputs.packaging_spec.sha256`.
-    assert_eq!(manifest4.schema_version, 3);
+    assert_eq!(manifest4.schema_version, 4);
     assert_eq!(manifest4.files, manifest.files);
     let legacy_inputs = manifest4.inputs.as_ref().expect("manifest4.inputs");
     let legacy_spec_input = legacy_inputs
@@ -2675,19 +2692,16 @@ fn manifest_input_hashes_are_formatting_insensitive() -> anyhow::Result<()> {
   "contract_name": "aero-windows-pci-device-contract"
 }"#;
 
-    let spec_dir_a = tempfile::tempdir()?;
-    let spec_dir_b = tempfile::tempdir()?;
-    let spec_path_a = spec_dir_a.path().join("spec.json");
-    let spec_path_b = spec_dir_b.path().join("spec.json");
-    fs::write(&spec_path_a, spec_a)?;
-    fs::write(&spec_path_b, spec_b)?;
+    // Use the same spec/contract paths across both packaging runs; only the JSON formatting changes.
+    // This keeps the package outputs stable even when the packager records the source file paths in
+    // the manifest provenance.
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    fs::write(&spec_path, spec_a)?;
 
-    let contract_dir_a = tempfile::tempdir()?;
-    let contract_dir_b = tempfile::tempdir()?;
-    let contract_path_a = contract_dir_a.path().join("windows-device-contract.json");
-    let contract_path_b = contract_dir_b.path().join("windows-device-contract.json");
-    fs::write(&contract_path_a, contract_a)?;
-    fs::write(&contract_path_b, contract_b)?;
+    let contract_dir = tempfile::tempdir()?;
+    let contract_path = contract_dir.path().join("windows-device-contract.json");
+    fs::write(&contract_path, contract_a)?;
 
     let out1 = tempfile::tempdir()?;
     let out2 = tempfile::tempdir()?;
@@ -2695,9 +2709,9 @@ fn manifest_input_hashes_are_formatting_insensitive() -> anyhow::Result<()> {
     let config1 = aero_packager::PackageConfig {
         drivers_dir: drivers_tmp.path().to_path_buf(),
         guest_tools_dir: guest_tools_dir.clone(),
-        windows_device_contract_path: contract_path_a,
+        windows_device_contract_path: contract_path,
         out_dir: out1.path().to_path_buf(),
-        spec_path: spec_path_a,
+        spec_path: spec_path,
         version: "1.2.3".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
@@ -2706,12 +2720,13 @@ fn manifest_input_hashes_are_formatting_insensitive() -> anyhow::Result<()> {
     };
     let config2 = aero_packager::PackageConfig {
         out_dir: out2.path().to_path_buf(),
-        windows_device_contract_path: contract_path_b,
-        spec_path: spec_path_b,
         ..config1.clone()
     };
 
     let outputs1 = aero_packager::package_guest_tools(&config1)?;
+
+    fs::write(&config1.spec_path, spec_b)?;
+    fs::write(&config1.windows_device_contract_path, contract_b)?;
     let outputs2 = aero_packager::package_guest_tools(&config2)?;
 
     // If JSON canonicalization is working, the input hashes (and thus the entire package outputs)
