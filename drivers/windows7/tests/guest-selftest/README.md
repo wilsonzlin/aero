@@ -89,13 +89,24 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       timing flakiness. In that case the guest may observe multiple injected scroll events; the wheel selftest is
       designed to handle this, and totals may be multiples of the injected values.
     - Emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS/FAIL/SKIP|...`.
-  - Optional end-to-end **extended virtio-input events** smoke tests (`virtio-input-events-modifiers`, `virtio-input-events-buttons`, `virtio-input-events-wheel`):
+  - Optional end-to-end **extended input events** (`virtio-input-events-*` subtests):
     - Disabled by default.
-    - Enable with `--test-input-events-extended` or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`.
-    - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
+    - Enable all extended subtests with:
+      - `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`)
+    - Or enable individual subtests:
+      - `--test-input-events-modifiers` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_MODIFIERS=1`)
+      - `--test-input-events-buttons` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_BUTTONS=1`)
+      - `--test-input-events-wheel` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_WHEEL=1`)
+    - Intended to be paired with host-side QMP injection when the harness is run with:
       - PowerShell: `-WithInputEventsExtended` (alias: `-WithInputEventsExtra`)
       - Python: `--with-input-events-extended` (alias: `--with-input-events-extra`)
-    - Emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-<subtest>|PASS/FAIL/SKIP|...` markers for each enabled subtest.
+    - Emits separate `PASS/FAIL/SKIP` markers:
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|...` (Shift/Ctrl/Alt + F1)
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|...` (mouse side/extra buttons)
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|...` (wheel + horizontal wheel)
+  - Optional virtio-input MSI-X requirement (`virtio-input-msix`):
+    - The selftest emits a `virtio-input-msix` marker describing interrupt mode (`mode=intx/msix`) and vector mapping.
+    - Use `--require-input-msix` to fail the overall selftest when virtio-input is not using MSI-X.
   - Optional end-to-end **tablet (absolute pointer)** event delivery smoke test (`virtio-input-tablet-events`):
     - Disabled by default (requires host-side QMP injection).
     - Enable with `--test-input-tablet-events` (alias: `--test-tablet-events`) or env var
@@ -251,12 +262,15 @@ Notes:
     - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>`
     - `virtio-<dev>-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when a driver exposes richer MSI-X diagnostics)
       (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
-  The host harness mirrors the per-test fields into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` markers, and the
-  standalone lines into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI.
+  The host harness mirrors the per-test `irq_*` fields into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` markers, and the
+  standalone lines into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI
+  (for example `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|INFO|mode=msi|messages=4`).
 - Dedicated MSI-X **TEST markers** are also emitted for some devices (used by the host harness when `--require-virtio-*-msix` is enabled):
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|...`
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix|...`
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=intx/msix|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue_vector=<v>`
+    (emitted when the virtio-blk miniport IOCTL includes interrupt diagnostics; the harness can require `mode=msix`)
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=intx/msix/none/unknown|messages=<n>|config_vector=<v>|queue0_vector=<v>|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=intx/msix/unknown|messages=<n>|mapping=...|...`
+    (the marker is always emitted; `--require-input-msix` makes non-`mode=msix` fail the overall selftest)
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - The optional virtio-input end-to-end event delivery markers are always emitted:

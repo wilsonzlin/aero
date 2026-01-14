@@ -157,6 +157,9 @@ To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
   - `virtio-blk`: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...`
   - `virtio-snd`: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...`
   - `virtio-input`: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|...`
+    - PowerShell: `-RequireVirtioInputMsix`
+    - Python: `--require-virtio-input-msix`
+    - (Optional guest-side hard requirement: `aero-virtio-selftest.exe --require-input-msix`)
 - For virtio-blk specifically, you can also make MSI/MSI-X a **guest-side** hard requirement:
   - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
 
@@ -265,6 +268,14 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) sets
       - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
       - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
         In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
+    - When `-WithInputWheel` / `--with-input-wheel` is enabled, the harness also injects vertical + horizontal scroll wheel events
+      and requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS`.
+      - Note: this still requires the guest image provisioned with `--test-input-events` (wheel runs as part of the virtio-input-events flow).
+    - When `-WithInputEventsExtended` / `--with-input-events-extended` is enabled, the harness injects additional keyboard/mouse inputs and requires:
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS`
+      This requires provisioning the guest with `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`).
     - When `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-WithTabletEvents`) /
       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`) is enabled,
       the harness attaches `virtio-tablet-pci`, injects a

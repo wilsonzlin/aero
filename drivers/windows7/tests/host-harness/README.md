@@ -26,6 +26,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
     - To enable the optional end-to-end virtio-input event delivery smoke tests (HID input reports),
       the guest selftest must be provisioned with:
       - keyboard + relative mouse: `--test-input-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`)
+      - (optional) extended keyboard/mouse coverage: `--test-input-events-extended`
+        (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`)
       - tablet / absolute pointer: `--test-input-tablet-events` (alias: `--test-tablet-events`)
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`)
   - has virtio-snd installed if you intend to test audio
@@ -151,12 +153,12 @@ MSI-X as disabled on the corresponding PCI function (best-effort introspection v
   - `-RequireVirtioNetMsix`
   - `-RequireVirtioBlkMsix`
   - `-RequireVirtioSndMsix` *(requires `-WithVirtioSnd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
-  - `-RequireVirtioInputMsix` *(requires a guest selftest binary that emits `virtio-input-msix` markers)*
+  - `-RequireVirtioInputMsix` *(guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 - Python:
   - `--require-virtio-net-msix`
   - `--require-virtio-blk-msix`
   - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
-  - `--require-virtio-input-msix` *(requires a guest selftest binary that emits `virtio-input-msix` markers)*
+  - `--require-virtio-input-msix` *(guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 
 Notes:
 
@@ -339,7 +341,7 @@ marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harnes
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
-#### Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
+#### Optional: extended virtio-input events (modifiers/buttons/wheel)
 
 The base `virtio-input-events` marker validates that basic keyboard + mouse motion/click reports are delivered end-to-end.
 To also validate additional HID report paths deterministically, the guest selftest can emit three extra markers:
@@ -358,15 +360,33 @@ This:
 - **implies** `-WithInputEvents` / `--with-input-events`
 - injects an extended deterministic sequence via QMP `input-send-event`
 - requires all three `virtio-input-events-*` markers above to PASS
-
-Guest requirement:
-
-- Provision the guest selftest to run with `--test-input-events-extended` (or env var
-  `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`). This is in addition to the base `--test-input-events` flag; the
-  harness will fail if `virtio-input-events` is skipped.
+- requires the guest selftest to be provisioned with `--test-input-events-extended`
+  (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`)
+  - the harness fails if the base `virtio-input-events` marker is skipped/missing
 
 Note: This is separate from `-WithInputWheel` / `--with-input-wheel`, which instead requires the aggregate marker
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`.
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithInputEventsExtended `
+  -TimeoutSeconds 600
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-input-events-extended \
+  --timeout-seconds 600 \
+  --snapshot
+```
 
 ### virtio-input tablet (absolute pointer) event delivery (QMP input injection)
 
