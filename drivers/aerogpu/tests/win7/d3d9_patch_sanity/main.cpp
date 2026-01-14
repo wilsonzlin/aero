@@ -477,6 +477,28 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
                            (unsigned long)expected_corner);
     }
 
+    if (dump) {
+      std::string err;
+      const std::wstring bmp_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9_patch_sanity.bmp");
+      if (aerogpu_test::WriteBmp32BGRA(bmp_path,
+                                       (int)desc.Width,
+                                       (int)desc.Height,
+                                       lr.pBits,
+                                       (int)lr.Pitch,
+                                       &err)) {
+        reporter.AddArtifactPathW(bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+      }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d9_patch_sanity.bin",
+                      lr.pBits,
+                      (int)lr.Pitch,
+                      (int)desc.Width,
+                      (int)desc.Height);
+    }
+
     sysmem->UnlockRect();
 
     hr = dev->DeletePatch(patch);
@@ -669,6 +691,28 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
           (unsigned long)expected2,
           (unsigned long)corner2,
           (unsigned long)expected_corner2);
+    }
+
+    if (dump) {
+      std::string err;
+      const std::wstring bmp_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9_patch_sanity_rect.bmp");
+      if (aerogpu_test::WriteBmp32BGRA(bmp_path,
+                                       (int)desc.Width,
+                                       (int)desc.Height,
+                                       lr.pBits,
+                                       (int)lr.Pitch,
+                                       &err)) {
+        reporter.AddArtifactPathW(bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: rect BMP dump failed: %s", kTestName, err.c_str());
+      }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d9_patch_sanity_rect.bin",
+                      lr.pBits,
+                      (int)lr.Pitch,
+                      (int)desc.Width,
+                      (int)desc.Height);
     }
 
     sysmem->UnlockRect();
