@@ -209,6 +209,63 @@ describe("OpfsLruChunkCache", () => {
     await expect(reopened.getChunk(2, 4)).resolves.toEqual(new Uint8Array([2, 2, 2, 2]));
   });
 
+  it("treats QuotaExceededError index.json writes as best-effort (non-fatal) and keeps index consistent", async () => {
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    const cacheKey = "test";
+    const cache = await OpfsLruChunkCache.open({ cacheKey, chunkSize: 4, maxBytes: 1024 });
+    await cache.putChunk(0, new Uint8Array([0, 0, 0, 0]));
+
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = async function (
+      this: MemoryFileHandle,
+      options?: { keepExistingData?: boolean },
+    ) {
+      const fileName = this.name;
+      if (fileName === "index.json") {
+        return {
+          write: async () => {
+            throw new DOMException("Quota exceeded", "QuotaExceededError");
+          },
+          close: async () => undefined,
+          abort: async () => undefined,
+        };
+      }
+      return await originalCreateWritable.call(this, options);
+    };
+
+    let result: { stored: boolean; evicted: number[]; quotaExceeded: boolean } | null = null;
+    try {
+      result = await cache.putChunk(1, new Uint8Array([1, 1, 1, 1]));
+    } finally {
+      (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = originalCreateWritable;
+    }
+
+    expect(result).not.toBeNull();
+    expect(result!.stored).toBe(false);
+    expect(result!.quotaExceeded).toBe(true);
+
+    // The cache may evict entries to try to make room, but it must not end up with a partially
+    // cached chunk or a corrupt index.
+    await expect(cache.getChunk(1, 4)).resolves.toBeNull();
+    await expect(cache.getChunkIndices()).resolves.not.toContain(1);
+
+    // Ensure the failed chunk did not leave an orphan file behind.
+    const chunksDir = await getDir(root, ["aero", "disks", "remote-cache", cacheKey, "chunks"]);
+    const chunkFiles: string[] = [];
+    for await (const [name, handle] of chunksDir.entries()) {
+      if (handle.kind === "file") chunkFiles.push(name);
+    }
+    expect(chunkFiles).not.toContain("1.bin");
+
+    // Caller can continue using the cache after a quota failure.
+    await expect(cache.putChunk(2, new Uint8Array([2, 2, 2, 2]))).resolves.toMatchObject({ stored: true });
+    await cache.flush();
+    const reopened = await OpfsLruChunkCache.open({ cacheKey, chunkSize: 4, maxBytes: 1024 });
+    await expect(reopened.getChunk(2, 4)).resolves.toEqual(new Uint8Array([2, 2, 2, 2]));
+  });
+
   it("treats oversized index.json files as corrupt without attempting to read them", async () => {
     const root = new MemoryDirectoryHandle("root");
     restoreOpfs = installMemoryOpfs(root).restore;

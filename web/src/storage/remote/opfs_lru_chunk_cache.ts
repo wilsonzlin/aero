@@ -372,8 +372,17 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
     const base = await this.getOrCreateBaseDir();
     const handle = await base.getFileHandle("index.json", { create: true });
     const writable = await handle.createWritable({ keepExistingData: false });
-    await writable.write(JSON.stringify(this.index, null, 2));
-    await writable.close();
+    try {
+      await writable.write(JSON.stringify(this.index, null, 2));
+      await writable.close();
+    } catch (err) {
+      try {
+        await writable.abort(err);
+      } catch {
+        // ignore abort failures
+      }
+      throw err;
+    }
     this.dirty = false;
   }
 
@@ -582,7 +591,12 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           delete this.index.chunks[String(index)];
           this.totalBytes -= meta.byteLength;
           this.dirty = true;
-          await this.persistIndexIfDirty();
+          try {
+            await this.persistIndexIfDirty();
+          } catch (err) {
+            if (!isQuotaExceededError(err)) throw err;
+            // best-effort: quota errors must never break cache reads
+          }
           return null;
         }
         const bytes = new Uint8Array(await file.arrayBuffer());
@@ -592,7 +606,12 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           delete this.index.chunks[String(index)];
           this.totalBytes -= meta.byteLength;
           this.dirty = true;
-          await this.persistIndexIfDirty();
+          try {
+            await this.persistIndexIfDirty();
+          } catch (err) {
+            if (!isQuotaExceededError(err)) throw err;
+            // best-effort: quota errors must never break cache reads
+          }
           return null;
         }
 
@@ -604,7 +623,12 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           delete this.index.chunks[String(index)];
           this.totalBytes -= meta.byteLength;
           this.dirty = true;
-          await this.persistIndexIfDirty();
+          try {
+            await this.persistIndexIfDirty();
+          } catch (err2) {
+            if (!isQuotaExceededError(err2)) throw err2;
+            // best-effort: quota errors must never break cache reads
+          }
           return null;
         }
         throw err;
@@ -689,7 +713,11 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
         if (!isQuotaExceededError(err)) {
           // Preserve the existing behavior for non-quota errors, but persist any eviction work
           // we may have done above so index.json remains consistent with on-disk chunk files.
-          await this.persistIndexIfDirty();
+          try {
+            await this.persistIndexIfDirty();
+          } catch {
+            // best-effort: do not mask the original write error
+          }
           throw err;
         }
 
@@ -706,13 +734,21 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
           await writeChunk();
         } catch (err2) {
           if (!isQuotaExceededError(err2)) {
-            await this.persistIndexIfDirty();
+            try {
+              await this.persistIndexIfDirty();
+            } catch {
+              // best-effort: do not mask the original write error
+            }
             throw err2;
           }
 
           // Still out of quota after eviction: skip caching without failing the caller.
           await this.deleteChunkFile(index);
-          await this.persistIndexIfDirty();
+          try {
+            await this.persistIndexIfDirty();
+          } catch {
+            // best-effort: quota (or other) errors while persisting metadata must never break reads
+          }
           return { stored: false, evicted, quotaExceeded: true };
         }
       }
@@ -727,7 +763,23 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
       this.touch(index);
 
       evicted.push(...(await this.evictIfNeeded()));
-      await this.persistIndexIfDirty();
+      try {
+        await this.persistIndexIfDirty();
+      } catch (err) {
+        if (!isQuotaExceededError(err)) {
+          throw err;
+        }
+        // QuotaExceededError while persisting index.json: best-effort clear + retry once. Caching
+        // must never be fatal.
+        evicted.push(...(await this.evictUntilTotalBytesAtMost(0)));
+        try {
+          await this.persistIndexIfDirty();
+        } catch (err2) {
+          if (!isQuotaExceededError(err2)) throw err2;
+          return { stored: false, evicted, quotaExceeded: true };
+        }
+        return { stored: false, evicted, quotaExceeded: true };
+      }
 
       return { stored: !!this.index.chunks[key], evicted, quotaExceeded: false };
     });
