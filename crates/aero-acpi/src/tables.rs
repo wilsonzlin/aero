@@ -763,6 +763,12 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     // }
     out.extend_from_slice(&aml_method_pic());
 
+    // Minimal sleep/wake control methods for Windows 7 compatibility.
+    // Method (_PTS, 1) { }
+    out.extend_from_slice(&aml_method_pts());
+    // Method (_WAK, 1) { Return (Package(){0,0}) }
+    out.extend_from_slice(&aml_method_wak());
+
     // Scope (_SB_) { ... }
     let mut sb = Vec::new();
     sb.extend_from_slice(&aml_device_sys0(cfg));
@@ -980,6 +986,40 @@ fn aml_method_pic() -> Vec<u8> {
 
     let mut payload = Vec::new();
     payload.extend_from_slice(b"_PIC");
+    payload.push(0x01); // method flags: 1 argument, NotSerialized, sync level 0
+    payload.extend_from_slice(&body);
+
+    let mut out = Vec::new();
+    out.push(0x14); // MethodOp
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
+    out.extend_from_slice(&payload);
+    out
+}
+
+fn aml_method_pts() -> Vec<u8> {
+    // Method (_PTS, 1) { }
+    let mut payload = Vec::new();
+    payload.extend_from_slice(b"_PTS");
+    payload.push(0x01); // method flags: 1 argument, NotSerialized, sync level 0
+
+    let mut out = Vec::new();
+    out.push(0x14); // MethodOp
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
+    out.extend_from_slice(&payload);
+    out
+}
+
+fn aml_method_wak() -> Vec<u8> {
+    // Method (_WAK, 1) { Return (Package(){0,0}) }
+    let elements = [aml_integer(0), aml_integer(0)];
+    let pkg = aml_package(&elements);
+
+    let mut body = Vec::new();
+    body.push(0xA4); // ReturnOp
+    body.extend_from_slice(&pkg);
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(b"_WAK");
     payload.push(0x01); // method flags: 1 argument, NotSerialized, sync level 0
     payload.extend_from_slice(&body);
 
