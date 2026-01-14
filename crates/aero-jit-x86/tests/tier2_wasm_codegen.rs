@@ -1258,9 +1258,15 @@ mod random_traces {
                     values.push(dst);
                 }
                 85..=89 => {
-                    // Code version guard. We avoid StoreMem in these random traces, because the
-                    // `tier2_wasm_codegen` wasmi harness bumps code versions on memory writes and
-                    // the Tier-2 interpreter does not currently do the same for `StoreMem`.
+                    // Code version guard.
+                    //
+                    // Keep these guards in the prologue for linear traces: Tier-2 expects
+                    // `Instr::GuardCodeVersion` to live in the prologue (or in the loop body prefix
+                    // for loop traces).
+                    //
+                    // We avoid `StoreMem` in these random traces, because the `tier2_wasm_codegen`
+                    // wasmi harness bumps code versions on memory writes and the Tier-2 interpreter
+                    // does not currently do the same for `StoreMem`.
                     let table_len = code_versions.len() as u64;
                     let page = if table_len != 0 {
                         rng.gen_range(0..table_len)

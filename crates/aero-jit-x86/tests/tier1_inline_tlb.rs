@@ -5,7 +5,7 @@ mod tier1_common;
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx::{self, JitContext};
-use aero_jit_x86::tier1::ir::{GuestReg, IrBuilder, IrTerminator};
+use aero_jit_x86::tier1::ir::{GuestReg, IrBlock, IrBuilder, IrInst, IrTerminator};
 use aero_jit_x86::tier1::{
     discover_block_mode, translate_block, BlockLimits, Tier1WasmCodegen, Tier1WasmOptions,
     EXPORT_BLOCK_FN,
@@ -1463,6 +1463,69 @@ fn tier1_inline_tlb_mmio_exit_reports_faulting_rip() {
     assert_eq!(got_cpu.rip, second_rip);
     assert_eq!(host_state.mmio_exit_calls, 1);
     assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_mmio_exit_preserves_unrelated_gprs() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0xF000);
+    let _ = b.load(Width::W32, addr);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let sentinel = 0x1122_3344_5566_7788u64;
+    let mut cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+    cpu.gpr[Gpr::Rbx.as_u8() as usize] = sentinel;
+
+    let ram = vec![0u8; 0x10000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize], sentinel);
+
+    assert_eq!(host_state.mmio_exit_calls, 1);
+}
+
+#[test]
+fn tier1_inline_tlb_call_helper_exit_preserves_unrelated_gprs() {
+    let block = IrBlock {
+        entry_rip: 0x1000,
+        insts: vec![IrInst::CallHelper {
+            helper: "test_helper",
+            args: vec![],
+            ret: None,
+        }],
+        terminator: IrTerminator::Jump { target: 0x3000 },
+        value_types: vec![],
+    };
+    block.validate().unwrap();
+
+    let sentinel = 0x1122_3344_5566_7788u64;
+    let mut cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+    cpu.gpr[Gpr::Rbx.as_u8() as usize] = sentinel;
+
+    let ram = vec![0u8; 0x10000];
+    // CallHelper blocks don't use inline-TLB, but `run_wasm` is still fine (the code generator will
+    // auto-disable inline-TLB for this block).
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
+
+    assert_eq!(next_rip, 0x1000);
+    assert_eq!(got_cpu.rip, 0x1000);
+    assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize], sentinel);
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
 }
 
 #[test]
