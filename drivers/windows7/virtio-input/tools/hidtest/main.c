@@ -2559,11 +2559,11 @@ static void print_usage(void)
     wprintf(L"             [--led 0x1F | --led-hidd 0x1F | --led-ioctl-set-output 0x1F | --led-cycle | --led-spam N] [--dump-desc]\n");
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
-    wprintf(L"             [--state]\n");
+    wprintf(L"             [--state [--json]]\n");
     wprintf(L"             [--state-json]\n");
-    wprintf(L"             [--interrupt-info]\n");
+    wprintf(L"             [--interrupt-info [--json]]\n");
     wprintf(L"             [--interrupt-info-json]\n");
-    wprintf(L"             [--counters]\n");
+    wprintf(L"             [--counters [--json]]\n");
     wprintf(L"             [--counters-json]\n");
     wprintf(L"             [--reset-counters]\n");
     wprintf(L"             [--get-log-mask | --set-log-mask 0xMASK]\n");
@@ -2580,7 +2580,7 @@ static void print_usage(void)
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
     wprintf(L"  --selftest      Validate virtio-input HID descriptor contract and exit (0=pass, 1=fail)\n");
-    wprintf(L"  --json          With --list or --selftest, emit machine-readable JSON on stdout\n");
+    wprintf(L"  --json          With --list/--selftest/--state/--interrupt-info/--counters, emit machine-readable JSON on stdout\n");
     wprintf(L"  --quiet         Suppress enumeration / device summary output (keeps stdout clean for scraping)\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
     wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
@@ -2592,11 +2592,11 @@ static void print_usage(void)
     wprintf(L"  --duration SECS Exit report read loop after SECS seconds\n");
     wprintf(L"  --count N       Exit report read loop after reading N reports\n");
     wprintf(L"  --state         Query virtio-input driver state via IOCTL_VIOINPUT_QUERY_STATE and exit\n");
-    wprintf(L"  --state-json    Query virtio-input driver state and print as JSON\n");
+    wprintf(L"  --state-json    Query virtio-input driver state and print as JSON (alias: --state --json)\n");
     wprintf(L"  --interrupt-info\n");
     wprintf(L"                 Query virtio-input interrupt diagnostics via IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO and exit\n");
     wprintf(L"  --interrupt-info-json\n");
-    wprintf(L"                 Query virtio-input interrupt diagnostics and print as JSON\n");
+    wprintf(L"                 Query virtio-input interrupt diagnostics and print as JSON (alias: --interrupt-info --json)\n");
     wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock, 0x08 Compose, 0x10 Kana\n");
     wprintf(L"  --led-hidd 0xMASK\n");
@@ -2611,7 +2611,7 @@ static void print_usage(void)
     wprintf(L"  --dump-collection-desc\n");
     wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR\n");
     wprintf(L"  --counters      Query and print virtio-input driver diagnostic counters (IOCTL_VIOINPUT_QUERY_COUNTERS)\n");
-    wprintf(L"  --counters-json Query and print virtio-input driver diagnostic counters as JSON\n");
+    wprintf(L"  --counters-json Query and print virtio-input driver diagnostic counters as JSON (alias: --counters --json)\n");
     wprintf(L"  --reset-counters\n");
     wprintf(L"                 Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS)\n");
     wprintf(L"                 (Depth gauges reflect current driver state and may remain non-zero after reset)\n");
@@ -6671,6 +6671,26 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
 
+    // Allow `--json` as a shorthand for the dedicated `--*-json` flags.
+    //
+    // `--json` historically applied only to `--list` and `--selftest`, but it's also useful for the
+    // virtio-input diagnostics actions (state/interrupt-info/counters). Keep the dedicated flags
+    // as stable entrypoints and treat `--json` as an alias for those modes.
+    if (opt.json) {
+        if (opt.query_state) {
+            opt.query_state_json = 1;
+            opt.quiet = 1;
+        }
+        if (opt.query_interrupt_info) {
+            opt.query_interrupt_info_json = 1;
+            opt.quiet = 1;
+        }
+        if (opt.query_counters) {
+            opt.query_counters_json = 1;
+            opt.quiet = 1;
+        }
+    }
+
     if ((opt.want_keyboard + opt.want_mouse + opt.want_consumer + opt.want_tablet) > 1) {
         wprintf(L"--keyboard, --mouse, --consumer, and --tablet are mutually exclusive.\n");
         return 2;
@@ -6682,8 +6702,9 @@ int wmain(int argc, wchar_t **argv)
             L"--list is mutually exclusive with --state, --interrupt-info, --counters/--counters-json/--reset-counters, and --ioctl-query-*-short.\n");
         return 2;
     }
-    if (opt.json && !(opt.list_only || opt.selftest)) {
-        wprintf(L"--json is only supported with --list or --selftest.\n");
+    if (opt.json &&
+        !(opt.list_only || opt.selftest || opt.query_state || opt.query_interrupt_info || opt.query_counters)) {
+        wprintf(L"--json is only supported with --list, --selftest, --state, --interrupt-info, or --counters.\n");
         return 2;
     }
     if (opt.selftest &&
