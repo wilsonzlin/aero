@@ -252,6 +252,10 @@ impl BiosSnapshot {
         w.write_all(&[self.config.cd_boot_drive])?;
         w.write_all(&[self.config.boot_from_cd_if_present as u8])?;
 
+        // v6 extension block: SMBIOS UUID seed.
+        w.write_all(&[5])?;
+        w.write_all(&self.config.smbios_uuid_seed.to_le_bytes())?;
+
         Ok(())
     }
 
@@ -455,6 +459,11 @@ impl BiosSnapshot {
                         config.cd_boot_drive = b[0];
                         r.read_exact(&mut b)?;
                         config.boot_from_cd_if_present = b[0] != 0;
+                    }
+                    5 => {
+                        let mut buf8 = [0u8; 8];
+                        r.read_exact(&mut buf8)?;
+                        config.smbios_uuid_seed = u64::from_le_bytes(buf8);
                     }
                     _ => {
                         // Unknown extension; ignore trailing bytes.

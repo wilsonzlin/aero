@@ -34,14 +34,14 @@ impl PcMachine {
     ///
     /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
     #[wasm_bindgen(constructor)]
-    pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
+    pub fn new(ram_size_bytes: u32, smbios_uuid_seed: Option<u64>) -> Result<Self, JsValue> {
         // The BIOS expects to use the EBDA at 0x9F000, so enforce a minimum RAM size.
         let ram_size_bytes = (ram_size_bytes as u64).max(2 * 1024 * 1024);
 
         let cfg = aero_machine::PcMachineConfig {
             ram_size_bytes,
             cpu_count: 1,
-            smbios_uuid_seed: 0,
+            smbios_uuid_seed: smbios_uuid_seed.unwrap_or(0),
             enable_hda: false,
             enable_e1000: true,
         };

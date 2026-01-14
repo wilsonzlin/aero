@@ -183,6 +183,8 @@ pub struct MachineConfig {
     ///
     /// Runtimes that need stable per-VM identities (e.g. Windows guests) should set this to a
     /// stable value. The default (`0`) keeps tests deterministic.
+    ///
+    /// Forwarded to [`firmware::bios::BiosConfig::smbios_uuid_seed`].
     pub smbios_uuid_seed: u64,
     /// Whether to attach canonical PC platform devices (PIC/APIC/PIT/RTC/PCI/ACPI PM/HPET).
     ///

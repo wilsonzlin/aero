@@ -1048,6 +1048,98 @@ mod tests {
         assert!(rsdt_addr >= reclaim_base && rsdt_addr < reclaim_base + reclaim_len);
     }
 
+    fn parse_smbios_type1_uuid(mem: &mut TestMemory, eps_addr: u32) -> [u8; 16] {
+        // SMBIOS 2.x EPS length is 0x1F bytes.
+        let eps = mem.read_bytes(eps_addr as u64, 0x1F);
+        assert_eq!(&eps[0..4], b"_SM_");
+
+        let table_len = u16::from_le_bytes([eps[0x16], eps[0x17]]) as usize;
+        let table_addr = u32::from_le_bytes([eps[0x18], eps[0x19], eps[0x1A], eps[0x1B]]) as u64;
+
+        let table = mem.read_bytes(table_addr, table_len);
+
+        let mut i = 0usize;
+        while i < table.len() {
+            if i + 1 >= table.len() {
+                break;
+            }
+            let ty = table[i];
+            let len = table[i + 1] as usize;
+            assert!(len >= 4, "invalid SMBIOS structure length {len}");
+            assert!(i + len <= table.len(), "truncated SMBIOS structure");
+
+            if ty == 1 {
+                let start = i + 8;
+                let end = start + 16;
+                assert!(end <= table.len(), "truncated SMBIOS Type 1 UUID field");
+                return table[start..end].try_into().unwrap();
+            }
+
+            // Skip formatted + string-set (terminated by double NUL).
+            let mut j = i + len;
+            while j + 1 < table.len() {
+                if table[j] == 0 && table[j + 1] == 0 {
+                    j += 2;
+                    break;
+                }
+                j += 1;
+            }
+            i = j;
+
+            if ty == 127 {
+                break;
+            }
+        }
+
+        panic!("SMBIOS Type 1 structure missing");
+    }
+
+    fn smbios_uuid_for_seed(uuid_seed: u64) -> [u8; 16] {
+        let config = BiosConfig {
+            smbios_uuid_seed: uuid_seed,
+            ..BiosConfig::default()
+        };
+        let mut bios = Bios::new(config.clone());
+        let mut cpu = CpuState::new(aero_cpu_core::state::CpuMode::Real);
+        let mut mem = TestMemory::new(config.memory_size_bytes);
+        let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
+
+        bios.post(&mut cpu, &mut mem, &mut disk);
+
+        let eps_addr = bios
+            .smbios_eps_addr()
+            .expect("SMBIOS EPS should be built during POST");
+        parse_smbios_type1_uuid(&mut mem, eps_addr)
+    }
+
+    #[test]
+    fn smbios_type1_uuid_default_seed_is_stable() {
+        assert_eq!(
+            smbios_uuid_for_seed(0),
+            [
+                0x5c, 0xca, 0x68, 0x4d, 0xc9, 0x6c, 0x2b, 0x4a, 0xa9, 0x9d, 0x58, 0x2e, 0x63, 0xb0,
+                0xe0, 0x17
+            ]
+        );
+    }
+
+    #[test]
+    fn smbios_type1_uuid_seed_is_configurable_and_deterministic() {
+        let uuid0 = smbios_uuid_for_seed(0);
+
+        let uuid1 = smbios_uuid_for_seed(1);
+        assert_eq!(
+            uuid1,
+            [
+                0xef, 0x9b, 0xef, 0x09, 0xc9, 0xd4, 0x26, 0x4a, 0xa8, 0x5c, 0x04, 0xad, 0xa0, 0x2c,
+                0xec, 0x36
+            ]
+        );
+        assert_ne!(uuid0, uuid1);
+
+        // Deterministic: same seed yields the same bytes across runs/instances.
+        assert_eq!(smbios_uuid_for_seed(1), uuid1);
+    }
     #[test]
     fn post_reports_acpi_build_failure_to_tty_output() {
         // Force ACPI placement to be out-of-bounds by advertising too little guest RAM for the
