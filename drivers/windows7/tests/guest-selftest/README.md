@@ -48,7 +48,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - The in-tree Aero Win7 virtio-input INF is revision-gated, so QEMU-style `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
   - Read the HID report descriptor (`IOCTL_HID_GET_REPORT_DESCRIPTOR`) and sanity-check that:
     - at least one **keyboard-only** HID device exists
-    - at least one **mouse-only** HID device exists
+    - at least one **relative-mouse-only** HID device exists (X/Y reported as *Relative*)
+    - additional **tablet / absolute-pointer** virtio-input HID devices are allowed and are counted separately
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
   - Optional end-to-end **event delivery** smoke test (`virtio-input-events`):
     - Disabled by default (so the selftest remains fully headless and does not depend on host-side input injection).
