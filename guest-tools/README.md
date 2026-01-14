@@ -290,6 +290,7 @@ Optional parameters (PowerShell-style; forwarded by `verify.cmd`):
 verify.cmd -PingTarget 192.168.0.1
 verify.cmd -PlayTestSound
 verify.cmd -RunDbgctl
+verify.cmd -RunDbgctlSelftest
 ```
 
 If `-PingTarget` is not provided, the script will attempt to ping the default gateway (if present).
@@ -298,10 +299,16 @@ If `-PingTarget` is not provided, the script will attempt to ping the default ga
 
 - `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status --timeout-ms 2000`
 
+`-RunDbgctlSelftest` is also **off by default**. When enabled, `verify.ps1` will additionally attempt to run:
+
+- `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --selftest --timeout-ms 2000`
+
+Note: selftest may return `GPU_BUSY` on active desktops; treat it as a best-effort diagnostic.
+
 The captured stdout/stderr/exit code is embedded into:
 
 - `C:\AeroGuestTools\report.txt`
-- `C:\AeroGuestTools\report.json` (`aerogpu.dbgctl`)
+- `C:\AeroGuestTools\report.json` (`aerogpu.dbgctl` and `aerogpu.dbgctl_selftest`)
 
 ### Checks performed
 
@@ -360,4 +367,4 @@ In addition to the per-check `checks` object, newer versions of `verify.ps1` inc
 - `media_integrity`
 - `packaged_drivers_summary`
 - `installed_driver_binding_summary`
-- `aerogpu` (including `non_local_memory_size_mb`)
+- `aerogpu` (including `non_local_memory_size_mb` and, when enabled, `dbgctl` / `dbgctl_selftest`)

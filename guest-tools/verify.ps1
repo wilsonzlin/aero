@@ -8,7 +8,12 @@ param(
 
     # Optional: run aerogpu_dbgctl.exe (if present on the Guest Tools media) and embed its output in the report.
     # This is intended for richer AeroGPU diagnostics in bug reports.
-    [switch]$RunDbgctl
+    [switch]$RunDbgctl,
+
+    # Optional: run aerogpu_dbgctl.exe --selftest (requires AeroGPU to be present and healthy).
+    # This is off by default because selftest may report GPU_BUSY on active desktops; use it when
+    # explicitly gathering GPU bring-up diagnostics.
+    [switch]$RunDbgctlSelftest
 )
 
 # PowerShell 2.0 compatible (Windows 7 inbox).
@@ -4313,12 +4318,14 @@ try {
     $dbgStatus = "PASS"
     $summary = ""
     $details = @()
+    $dbgctlEnabled = ($RunDbgctl -or $RunDbgctlSelftest)
 
     # Template: drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
     $dbgctlRelTemplate = 'drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
 
     $data = @{
-        enabled = $RunDbgctl
+        enabled = $dbgctlEnabled
+        enabled_selftest = $RunDbgctlSelftest
         aerogpu_detected = $false
         aerogpu_healthy = $false
         aerogpu_config_manager_error_codes = @()
@@ -4378,8 +4385,8 @@ try {
         }
     }
 
-    if (-not $RunDbgctl) {
-        $summary = "Skipped: -RunDbgctl not set."
+    if (-not $dbgctlEnabled) {
+        $summary = "Skipped: -RunDbgctl / -RunDbgctlSelftest not set."
     } elseif (-not $data.aerogpu_detected) {
         $summary = "Skipped: no AeroGPU device detected."
     } elseif (-not $data.aerogpu_healthy) {
@@ -4468,6 +4475,127 @@ try {
     Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" $dbgStatus $summary $data $details
 } catch {
     Add-Check "aerogpu_dbgctl" "AeroGPU dbgctl (optional diagnostics)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- AeroGPU dbgctl selftest (optional in-guest diagnostics) ---
+try {
+    $dbgStatus = "PASS"
+    $summary = ""
+    $details = @()
+
+    $data = @{
+        enabled = $RunDbgctlSelftest
+        expected_path_template = 'drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe'
+        expected_path = $null
+        found = $false
+        path = $null
+        args = @("--selftest","--timeout-ms","2000")
+        tool_timeout_ms = 2000
+        host_timeout_ms = 8000
+        exit_code = $null
+        stdout = $null
+        stderr = $null
+        timed_out = $false
+        output_path = $null
+        aerogpu_detected = $false
+        aerogpu_healthy = $false
+        aerogpu_config_manager_error_codes = @()
+    }
+
+    # Reuse dbgctl path + AeroGPU health detection from the previous check (avoids duplicating the device search logic).
+    $base = $null
+    try {
+        if ($report -and $report.checks -and $report.checks.ContainsKey("aerogpu_dbgctl")) {
+            $base = $report.checks["aerogpu_dbgctl"].data
+        }
+    } catch { $base = $null }
+
+    if ($base) {
+        if ($base.expected_path_template) { $data.expected_path_template = $base.expected_path_template }
+        if ($base.expected_path) { $data.expected_path = $base.expected_path }
+        if ($base.found -ne $null) { $data.found = $base.found }
+        if ($base.path) { $data.path = $base.path }
+        if ($base.aerogpu_detected -ne $null) { $data.aerogpu_detected = $base.aerogpu_detected }
+        if ($base.aerogpu_healthy -ne $null) { $data.aerogpu_healthy = $base.aerogpu_healthy }
+        if ($base.aerogpu_config_manager_error_codes) { $data.aerogpu_config_manager_error_codes = $base.aerogpu_config_manager_error_codes }
+    }
+
+    if (-not $RunDbgctlSelftest) {
+        $summary = "Skipped: -RunDbgctlSelftest not set."
+    } elseif (-not $data.aerogpu_detected) {
+        $summary = "Skipped: no AeroGPU device detected."
+    } elseif (-not $data.aerogpu_healthy) {
+        $codes = @($data.aerogpu_config_manager_error_codes | Sort-Object -Unique)
+        $summary = "Skipped: AeroGPU device detected but not healthy (ConfigManagerErrorCode != 0)."
+        if ($codes -and $codes.Count -gt 0) { $summary += " CM=" + ($codes -join ",") }
+    } elseif (-not $data.found -or -not $data.path) {
+        $dbgStatus = "WARN"
+        $summary = "aerogpu_dbgctl.exe not found on Guest Tools media; skipping selftest."
+        if ($data.expected_path) { $details += "Expected: " + $data.expected_path }
+    } else {
+        $cap = Invoke-CaptureWithTimeout $data.path $data.args $data.host_timeout_ms
+        $data.exit_code = $cap.exit_code
+        $data.stdout = $cap.stdout
+        $data.stderr = $cap.stderr
+        $data.timed_out = $cap.timed_out
+
+        if ($cap.timed_out -or ($cap.exit_code -ne 0)) {
+            $dbgStatus = "WARN"
+        }
+
+        $summary = "aerogpu_dbgctl --selftest exit_code=" + (if ($cap.exit_code -ne $null) { $cap.exit_code } else { "null" })
+        if ($cap.timed_out) { $summary += " (timed out)" }
+
+        $details += "Tool: " + $data.path
+        $details += "Args: " + ($data.args -join " ")
+        if ($cap.exit_code -ne $null) { $details += "Exit code: " + $cap.exit_code }
+        if ($cap.timed_out) { $details += ("Timed out: true (host timeout " + $data.host_timeout_ms + " ms)") }
+
+        # Save output as a convenience artifact for bug reports.
+        $outFile = Join-Path $outDir "dbgctl_selftest.txt"
+        try {
+            $toWrite = $cap.stdout
+            if (-not $toWrite) { $toWrite = "" }
+            if ($cap.stderr) { $toWrite += "`r`n--- STDERR ---`r`n" + $cap.stderr }
+            Set-Content -Path $outFile -Value $toWrite -Encoding UTF8
+            $data.output_path = $outFile
+            $details += "Saved: " + $outFile
+        } catch { }
+
+        if ($cap.stdout) {
+            $details += "Stdout:"
+            foreach ($line in ($cap.stdout -split "`r?`n")) {
+                if ($line -eq $null) { continue }
+                $t = ("" + $line).TrimEnd()
+                if ($t.Length -eq 0) { continue }
+                $details += ("  " + $t)
+            }
+        }
+        if ($cap.stderr) {
+            $details += "Stderr:"
+            foreach ($line in ($cap.stderr -split "`r?`n")) {
+                if ($line -eq $null) { continue }
+                $t = ("" + $line).TrimEnd()
+                if ($t.Length -eq 0) { continue }
+                $details += ("  " + $t)
+            }
+        }
+    }
+
+    # Ensure a stable JSON surface for bug reports: aerogpu.dbgctl_selftest.
+    if (-not $report.aerogpu) { $report.aerogpu = @{} }
+    $report.aerogpu.dbgctl_selftest = @{
+        expected_path_template = $data.expected_path_template
+        expected_path = $data.expected_path
+        path = $data.path
+        exit_code = $data.exit_code
+        stdout = $data.stdout
+        stderr = $data.stderr
+    }
+
+    Add-Check "aerogpu_dbgctl_selftest" "AeroGPU dbgctl selftest (optional diagnostics)" $dbgStatus $summary $data $details
+} catch {
+    Add-Check "aerogpu_dbgctl_selftest" "AeroGPU dbgctl selftest (optional diagnostics)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Smoke test: audio ---

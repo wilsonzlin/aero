@@ -14,11 +14,18 @@ class VerifyDbgctlOptionTests(unittest.TestCase):
         self.assertIn("RunDbgctl", text)
         self.assertIn("[switch]$RunDbgctl", text)
 
+        # Optional selftest switch exists.
+        self.assertIn("RunDbgctlSelftest", text)
+        self.assertIn("[switch]$RunDbgctlSelftest", text)
+
         # Expected packaged media path is referenced (template string used by the script).
         self.assertIn(
             r"drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe",
             text,
         )
+
+        # Selftest invocation is referenced.
+        self.assertIn("--selftest", text)
 
 
 if __name__ == "__main__":
