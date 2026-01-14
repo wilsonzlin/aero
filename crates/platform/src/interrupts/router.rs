@@ -811,9 +811,6 @@ impl PlatformInterrupts {
             .find(|lapic| lapic.apic_id() == apic_id)
             .map(|lapic| lapic.as_ref())
     }
-    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
-        self.lapics.iter().map(|lapic| lapic.as_ref())
-    }
     fn set_gsi_level_internal(&mut self, gsi: u32, level: bool) {
         if let Some(slot) = self.gsi_level.get_mut(gsi as usize) {
             *slot = level;
