@@ -543,7 +543,7 @@ export class WebHidBroker {
     const dropped = this.#outputSendDroppedByDevice.get(deviceId) ?? 0;
     const pending = this.#pendingDeviceSends.get(deviceId)?.length ?? 0;
     console.warn(
-      `[webhid] Dropping HID output/feature sends for deviceId=${deviceId} (pending=${pending} maxPendingDeviceSends=${this.#maxPendingSendsPerDevice} dropped=${dropped})`,
+      `[webhid] Dropping queued HID report tasks for deviceId=${deviceId} (pending=${pending} maxPendingDeviceSends=${this.#maxPendingSendsPerDevice} dropped=${dropped})`,
     );
   }
 
@@ -1254,7 +1254,7 @@ export class WebHidBroker {
       }
     });
     if (!ok) {
-      const res: HidFeatureReportResultMessage = { ...base, ok: false, error: "Too many pending HID sends for this device." };
+      const res: HidFeatureReportResultMessage = { ...base, ok: false, error: "Too many pending HID report tasks for this device." };
       this.#postToWorker(worker, res);
     }
   }

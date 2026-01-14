@@ -1180,7 +1180,7 @@ describe("hid/WebHidBroker", () => {
   });
 
   it("bounds pending per-device output sends when sendReport stalls", async () => {
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const limit = 3;
       const manager = new WebHidPassthroughManager({ hid: null });
