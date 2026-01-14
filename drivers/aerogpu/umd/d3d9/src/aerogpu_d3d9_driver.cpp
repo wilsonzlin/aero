@@ -18041,7 +18041,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
     return trace.ret(E_OUTOFMEMORY);
   }
 
-  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
+  // Ensure there is enough room for the draw packet and for restoring the app's
+  // stream/index bindings after the draw. Patch draws temporarily bind scratch
+  // UP buffers and must restore the D3D9-visible bindings before returning.
+  const size_t restore_bytes = align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4) +
+                               align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
+  const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
+  if (!ensure_cmd_space(dev, draw_bytes + restore_bytes)) {
     return trace.ret(E_OUTOFMEMORY);
   }
   hr = track_draw_state_locked(dev);
@@ -18308,7 +18314,13 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
     return trace.ret(E_OUTOFMEMORY);
   }
 
-  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
+  // Ensure there is enough room for the draw packet and for restoring the app's
+  // stream/index bindings after the draw. Patch draws temporarily bind scratch
+  // UP buffers and must restore the D3D9-visible bindings before returning.
+  const size_t restore_bytes = align_up(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding), 4) +
+                               align_up(sizeof(aerogpu_cmd_set_index_buffer), 4);
+  const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
+  if (!ensure_cmd_space(dev, draw_bytes + restore_bytes)) {
     return trace.ret(E_OUTOFMEMORY);
   }
   hr = track_draw_state_locked(dev);

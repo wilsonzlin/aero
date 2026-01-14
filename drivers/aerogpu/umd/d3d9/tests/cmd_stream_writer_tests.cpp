@@ -15046,11 +15046,16 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
     D3DDDI_HADAPTER hAdapter{};
     D3DDDI_HDEVICE hDevice{};
     D3DDDI_HRESOURCE hVb{};
+    D3DDDI_HRESOURCE hIb{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_vb = false;
+    bool has_ib = false;
 
     ~Cleanup() {
+      if (has_ib && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hIb);
+      }
       if (has_vb && device_funcs.pfnDestroyResource) {
         device_funcs.pfnDestroyResource(hDevice, hVb);
       }
@@ -15094,6 +15099,9 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetIndices != nullptr, "SetIndices must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnDrawRectPatch != nullptr, "DrawRectPatch must be available")) {
@@ -15193,6 +15201,53 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
 
+  // Bind an app-provided index buffer so we can validate that DrawRectPatch
+  // restores it after temporarily binding the scratch UP index buffer.
+  const uint16_t app_indices[3] = {0, 1, 2};
+  D3D9DDIARG_CREATERESOURCE create_ib{};
+  create_ib.type = 0;
+  create_ib.format = 0;
+  create_ib.width = 0;
+  create_ib.height = 0;
+  create_ib.depth = 0;
+  create_ib.mip_levels = 1;
+  create_ib.usage = 0;
+  create_ib.pool = 0;
+  create_ib.size = sizeof(app_indices);
+  create_ib.hResource.pDrvPrivate = nullptr;
+  create_ib.pSharedHandle = nullptr;
+  create_ib.pKmdAllocPrivateData = nullptr;
+  create_ib.KmdAllocPrivateDataSize = 0;
+  create_ib.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_ib);
+  if (!Check(hr == S_OK, "CreateResource(app index buffer)")) {
+    return false;
+  }
+  cleanup.hIb = create_ib.hResource;
+  cleanup.has_ib = true;
+
+  lock.hResource = create_ib.hResource;
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(IB)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock(IB) returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, app_indices, sizeof(app_indices));
+
+  unlock.hResource = create_ib.hResource;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(IB)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, create_ib.hResource, kD3dFmtIndex16, 0);
+  if (!Check(hr == S_OK, "SetIndices")) {
+    return false;
+  }
+
   // Force a non-trianglelist cached topology so the patch draw must emit a set-topology command.
   auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   if (!Check(dev != nullptr, "device pointer")) {
@@ -15214,6 +15269,21 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
 
   hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect);
   if (!Check(hr == S_OK, "DrawRectPatch")) {
+    return false;
+  }
+
+  auto* vb_res = reinterpret_cast<Resource*>(create_vb.hResource.pDrvPrivate);
+  auto* ib_res = reinterpret_cast<Resource*>(create_ib.hResource.pDrvPrivate);
+  if (!Check(vb_res != nullptr, "VB resource pointer")) {
+    return false;
+  }
+  if (!Check(ib_res != nullptr, "IB resource pointer")) {
+    return false;
+  }
+  if (!Check(dev->streams[0].vb == vb_res, "DrawRectPatch restores stream source 0")) {
+    return false;
+  }
+  if (!Check(dev->index_buffer == ib_res, "DrawRectPatch restores index buffer")) {
     return false;
   }
 
@@ -15254,12 +15324,59 @@ bool TestDrawRectPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
 
+  const auto* vb_upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(vb_upload.hdr);
+  const auto* ib_upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(ib_upload.hdr);
+  const uint32_t expected_vb_upload = 4u * sizeof(Vertex); // (segs_u+1)*(segs_v+1) vertices for segs=1
+  const uint32_t expected_ib_upload = static_cast<uint32_t>(AlignUp(12u, 4u)); // 6 u16 indices (aligned)
+  if (!Check(vb_upload_cmd->size_bytes == expected_vb_upload, "UP VB upload size matches tessellated vertex data")) {
+    return false;
+  }
+  if (!Check(ib_upload_cmd->size_bytes == expected_ib_upload, "UP IB upload size matches tessellated index data (aligned)")) {
+    return false;
+  }
+
   const CmdLoc set_ib = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_INDEX_BUFFER);
   if (!Check(set_ib.hdr != nullptr, "set_index_buffer emitted before draw")) {
     return false;
   }
   const auto* set_ib_cmd = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(set_ib.hdr);
-  return Check(set_ib_cmd->buffer == up_ib_handle, "patch draw binds UP IB");
+  if (!Check(set_ib_cmd->buffer == up_ib_handle, "patch draw binds UP IB")) {
+    return false;
+  }
+
+  // Validate the restore commands after the draw.
+  const CmdLoc restore_ib = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!Check(restore_ib.hdr != nullptr, "set_index_buffer restore emitted")) {
+    return false;
+  }
+  if (!Check(restore_ib.offset > draw.offset, "set_index_buffer restore occurs after draw")) {
+    return false;
+  }
+  const auto* restore_ib_cmd = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(restore_ib.hdr);
+  if (!Check(restore_ib_cmd->buffer == ib_res->handle, "patch draw restores app IB binding")) {
+    return false;
+  }
+
+  const CmdLoc restore_vb = FindLastOpcode(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS);
+  if (!Check(restore_vb.hdr != nullptr, "set_vertex_buffers restore emitted")) {
+    return false;
+  }
+  if (!Check(restore_vb.offset > draw.offset, "set_vertex_buffers restore occurs after draw")) {
+    return false;
+  }
+  const auto* restore_vb_cmd = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(restore_vb.hdr);
+  if (!Check(restore_vb_cmd->start_slot == 0 && restore_vb_cmd->buffer_count == 1, "set_vertex_buffers restore binds slot 0")) {
+    return false;
+  }
+  const auto* binding = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+      reinterpret_cast<const uint8_t*>(restore_vb_cmd) + sizeof(*restore_vb_cmd));
+  if (!Check(binding->buffer == vb_res->handle, "patch draw restores app VB binding")) {
+    return false;
+  }
+  if (!Check(binding->stride_bytes == sizeof(Vertex), "patch draw restores VB stride")) {
+    return false;
+  }
+  return Check(binding->offset_bytes == 0, "patch draw restores VB offset");
 }
 
 bool TestDrawRectPatchTex1ValidatesStrideAndPreservesTexcoords() {
@@ -15515,11 +15632,16 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
     D3DDDI_HADAPTER hAdapter{};
     D3DDDI_HDEVICE hDevice{};
     D3DDDI_HRESOURCE hVb{};
+    D3DDDI_HRESOURCE hIb{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_vb = false;
+    bool has_ib = false;
 
     ~Cleanup() {
+      if (has_ib && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hIb);
+      }
       if (has_vb && device_funcs.pfnDestroyResource) {
         device_funcs.pfnDestroyResource(hDevice, hVb);
       }
@@ -15659,6 +15781,53 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
 
+  // Bind an app-provided index buffer so we can validate that DrawTriPatch
+  // restores it after temporarily binding the scratch UP index buffer.
+  const uint16_t app_indices[3] = {0, 1, 2};
+  D3D9DDIARG_CREATERESOURCE create_ib{};
+  create_ib.type = 0;
+  create_ib.format = 0;
+  create_ib.width = 0;
+  create_ib.height = 0;
+  create_ib.depth = 0;
+  create_ib.mip_levels = 1;
+  create_ib.usage = 0;
+  create_ib.pool = 0;
+  create_ib.size = sizeof(app_indices);
+  create_ib.hResource.pDrvPrivate = nullptr;
+  create_ib.pSharedHandle = nullptr;
+  create_ib.pKmdAllocPrivateData = nullptr;
+  create_ib.KmdAllocPrivateDataSize = 0;
+  create_ib.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_ib);
+  if (!Check(hr == S_OK, "CreateResource(app index buffer)")) {
+    return false;
+  }
+  cleanup.hIb = create_ib.hResource;
+  cleanup.has_ib = true;
+
+  lock.hResource = create_ib.hResource;
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(IB)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock(IB) returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, app_indices, sizeof(app_indices));
+
+  unlock.hResource = create_ib.hResource;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(IB)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, create_ib.hResource, kD3dFmtIndex16, 0);
+  if (!Check(hr == S_OK, "SetIndices")) {
+    return false;
+  }
+
   auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
@@ -15679,6 +15848,21 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
 
   hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri);
   if (!Check(hr == S_OK, "DrawTriPatch")) {
+    return false;
+  }
+
+  auto* vb_res = reinterpret_cast<Resource*>(create_vb.hResource.pDrvPrivate);
+  auto* ib_res = reinterpret_cast<Resource*>(create_ib.hResource.pDrvPrivate);
+  if (!Check(vb_res != nullptr, "VB resource pointer")) {
+    return false;
+  }
+  if (!Check(ib_res != nullptr, "IB resource pointer")) {
+    return false;
+  }
+  if (!Check(dev->streams[0].vb == vb_res, "DrawTriPatch restores stream source 0")) {
+    return false;
+  }
+  if (!Check(dev->index_buffer == ib_res, "DrawTriPatch restores index buffer")) {
     return false;
   }
 
@@ -15719,12 +15903,59 @@ bool TestDrawTriPatchEmitsDrawIndexedAndUploadsScratchVb() {
     return false;
   }
 
+  const auto* vb_upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(vb_upload.hdr);
+  const auto* ib_upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(ib_upload.hdr);
+  const uint32_t expected_vb_upload = 3u * sizeof(Vertex); // segs=1 produces 3 vertices
+  const uint32_t expected_ib_upload = static_cast<uint32_t>(AlignUp(6u, 4u)); // 3 u16 indices (aligned)
+  if (!Check(vb_upload_cmd->size_bytes == expected_vb_upload, "UP VB upload size matches tessellated vertex data")) {
+    return false;
+  }
+  if (!Check(ib_upload_cmd->size_bytes == expected_ib_upload, "UP IB upload size matches tessellated index data (aligned)")) {
+    return false;
+  }
+
   const CmdLoc set_ib = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_INDEX_BUFFER);
   if (!Check(set_ib.hdr != nullptr, "set_index_buffer emitted before draw")) {
     return false;
   }
   const auto* set_ib_cmd = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(set_ib.hdr);
-  return Check(set_ib_cmd->buffer == up_ib_handle, "tri patch draw binds UP IB");
+  if (!Check(set_ib_cmd->buffer == up_ib_handle, "tri patch draw binds UP IB")) {
+    return false;
+  }
+
+  // Validate the restore commands after the draw.
+  const CmdLoc restore_ib = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!Check(restore_ib.hdr != nullptr, "set_index_buffer restore emitted")) {
+    return false;
+  }
+  if (!Check(restore_ib.offset > draw.offset, "set_index_buffer restore occurs after draw")) {
+    return false;
+  }
+  const auto* restore_ib_cmd = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(restore_ib.hdr);
+  if (!Check(restore_ib_cmd->buffer == ib_res->handle, "tri patch restores app IB binding")) {
+    return false;
+  }
+
+  const CmdLoc restore_vb = FindLastOpcode(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS);
+  if (!Check(restore_vb.hdr != nullptr, "set_vertex_buffers restore emitted")) {
+    return false;
+  }
+  if (!Check(restore_vb.offset > draw.offset, "set_vertex_buffers restore occurs after draw")) {
+    return false;
+  }
+  const auto* restore_vb_cmd = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(restore_vb.hdr);
+  if (!Check(restore_vb_cmd->start_slot == 0 && restore_vb_cmd->buffer_count == 1, "set_vertex_buffers restore binds slot 0")) {
+    return false;
+  }
+  const auto* binding = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+      reinterpret_cast<const uint8_t*>(restore_vb_cmd) + sizeof(*restore_vb_cmd));
+  if (!Check(binding->buffer == vb_res->handle, "tri patch restores app VB binding")) {
+    return false;
+  }
+  if (!Check(binding->stride_bytes == sizeof(Vertex), "tri patch restores VB stride")) {
+    return false;
+  }
+  return Check(binding->offset_bytes == 0, "tri patch restores VB offset");
 }
 
 bool TestDrawRectPatchTex1UploadsTexcoords() {
