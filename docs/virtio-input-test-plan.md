@@ -226,6 +226,8 @@ QEMU bring-up requires an installable driver package directory containing:
 - `aero_virtio_input.inf`
 - `aero_virtio_input.sys`
 - `aero_virtio_input.cat` (recommended; required for signature verification)
+- (optional, tablet / absolute pointer) `aero_virtio_tablet.inf`
+- (optional, tablet / absolute pointer) `aero_virtio_tablet.cat`
 
 See the canonical driver README for the full build + signing workflow and CI output paths:
 
@@ -254,6 +256,10 @@ qemu-system-x86_64 \
 Notes:
 
 - `x-pci-revision=0x01` is required for the **Aero Win7 contract v1** (`REV_01`) drivers to bind.
+- Stock QEMU virtio-input devices often report non-Aero `ID_NAME` strings (for example `QEMU Virtio Keyboard`).
+  The in-tree Aero virtio-input driver is strict by default and may refuse to start (Code 10 / `STATUS_NOT_SUPPORTED`)
+  unless you enable compat mode (`CompatIdName=1`) in the guest or use a contract-compliant virtio-input device model.
+  See `drivers/windows7/virtio-input/docs/virtio-input-notes.md`.
 
 ### 3.2 Install the test certificate + driver in the Win7 guest
 
