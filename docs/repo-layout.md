@@ -61,10 +61,11 @@ See [`docs/adr/0007-rust-crate-naming.md`](./adr/0007-rust-crate-naming.md).
 There are multiple GPU “protocols” in-tree from different phases of bring-up. New work intended
 for the Windows 7 WDDM graphics path should target the canonical AeroGPU ABI in:
 
-- `drivers/aerogpu/protocol/*` (C headers, source of truth)
-- `emulator/protocol` (Rust/TypeScript mirror)
-- `crates/aero-devices-gpu/` (shared device-side implementation: regs/ring/executor + portable PCI wrapper)
-- `crates/emulator/src/devices/pci/aerogpu.rs` (legacy/sandbox emulator integration surface)
+ - `drivers/aerogpu/protocol/*` (C headers, source of truth)
+ - `emulator/protocol` (Rust/TypeScript mirror)
+ - `crates/aero-machine/src/aerogpu.rs` (canonical machine MVP wiring for `A3A0:0001`; BAR0 regs + BAR1 VRAM/legacy decode)
+ - `crates/aero-devices-gpu/` (shared device-side implementation: regs/ring/executor + portable PCI wrapper)
+ - `crates/emulator/src/devices/pci/aerogpu.rs` (legacy/sandbox emulator integration surface)
 
 Some legacy/prototype GPU ABIs have existed during bring-up and are **not** the Win7/WDDM driver
 contract.
