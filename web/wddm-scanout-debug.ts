@@ -207,7 +207,7 @@ async function main() {
   //
   // We also disable VRAM for this diagnostic page: the goal is to validate scanout
   // state + pitch + BGRX->RGBA alpha semantics without needing BAR1-backed surfaces.
-  const baseSegments = allocateSharedMemorySegments({ guestRamMiB: 8, vramMiB: 0 });
+  const baseSegments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: 0 });
 
   // Small shared framebuffer used only for the legacy path in this diagnostic page.
   const strideBytes = WIDTH * 4;
