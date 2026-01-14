@@ -31,6 +31,7 @@ const WEBUSB_ROOT_PORT: usize = 1;
 const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WEBHID_SNAPSHOT_DEVICES: usize = 1024;
 const MAX_USB_STRING_DESCRIPTOR_UTF16_UNITS: usize = 126;
+const MAX_WEBHID_OUTPUT_REPORTS_PER_DRAIN: usize = 64;
 const MAX_WEBHID_FEATURE_REPORT_REQUESTS_PER_DRAIN: usize = 256;
 
 const UHCI_RUNTIME_DEVICE_ID: [u8; 4] = *b"UHRT";
@@ -526,14 +527,32 @@ impl UhciRuntime {
         Ok(())
     }
 
+    /// Drain pending HID SET_REPORT (Output/Feature) passthrough reports from all attached WebHID-backed
+    /// passthrough devices.
+    ///
+    /// Returns `Array<{ deviceId, reportType, reportId, data }>` where `data` is the report payload
+    /// bytes without the report ID prefix. Returns `null` when idle to keep worker-side polling
+    /// allocation-free.
+    ///
+    /// This method intentionally caps the number of drained reports per call so the guest cannot
+    /// force unbounded JS allocations/copies, and so backpressure can be applied by leaving reports
+    /// queued in the device model.
     pub fn webhid_drain_output_reports(&mut self) -> JsValue {
         // Keep the hot poll path allocation-free when idle by only allocating the JS array once we
         // observe the first pending report.
         let mut out: Option<Array> = None;
+        let mut remaining = MAX_WEBHID_OUTPUT_REPORTS_PER_DRAIN;
         for (&device_id, state) in self.webhid_devices.iter_mut() {
-            while let Some(report) = state.dev.pop_output_report() {
+            while remaining > 0 {
+                let Some(report) = state.dev.pop_output_report() else {
+                    break;
+                };
                 let arr = out.get_or_insert_with(Array::new);
                 arr.push(&webhid_output_report_to_js(device_id, report));
+                remaining -= 1;
+            }
+            if remaining == 0 {
+                break;
             }
         }
         out.map(|arr| arr.into()).unwrap_or(JsValue::NULL)
