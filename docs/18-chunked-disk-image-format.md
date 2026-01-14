@@ -258,8 +258,8 @@ This repo includes a reference publisher CLI at [`tools/image-chunker/`](../tool
 
 For CI and deployment validation, the same tool also provides `aero-image-chunker verify` to
 re-download a published `manifest.json` + `chunks/*.bin` and validate schema, chunk sizes, and
-optional per-chunk checksums end-to-end (supports both S3-backed verification and direct HTTP
-verification via `--manifest-url` for public/CDN-hosted images).
+optional per-chunk checksums end-to-end (supports S3-backed verification, direct HTTP verification
+via `--manifest-url` for public/CDN-hosted images, and local verification via `--manifest-file`).
 
 Note on input formats:
 
