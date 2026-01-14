@@ -70,17 +70,19 @@ fn aerogpu_cmd_bind_group_cache_does_not_reuse_stale_texture_on_handle_reuse() {
         const PS: u32 = 11;
         const IL: u32 = 20;
 
+        // D3D11 default rasterizer state culls backfaces with a clockwise front-face winding.
+        // Keep vertices in clockwise order so the fullscreen triangle isn't culled.
         let vertices: [VertexPos3Tex2; 3] = [
             VertexPos3Tex2 {
                 pos: [-1.0, -1.0, 0.0],
                 tex: [0.0, 0.0],
             },
             VertexPos3Tex2 {
-                pos: [3.0, -1.0, 0.0],
+                pos: [-1.0, 3.0, 0.0],
                 tex: [0.0, 0.0],
             },
             VertexPos3Tex2 {
-                pos: [-1.0, 3.0, 0.0],
+                pos: [3.0, -1.0, 0.0],
                 tex: [0.0, 0.0],
             },
         ];
