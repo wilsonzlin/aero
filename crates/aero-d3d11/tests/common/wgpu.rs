@@ -15,11 +15,11 @@ pub async fn create_device_queue_with_downlevel(
         let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
             .ok()
             .map(|v| v.is_empty())
-            .unwrap_or(true);
+        .unwrap_or(true);
 
         if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+            let dir = std::env::temp_dir()
+                .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
             std::env::set_var("XDG_RUNTIME_DIR", &dir);
@@ -31,8 +31,8 @@ pub async fn create_device_queue_with_downlevel(
         backends: if cfg!(target_os = "linux") {
             wgpu::Backends::GL
         } else {
-            // Prefer "native" backends; this avoids noisy platform warnings from initializing
-            // GL/WAYLAND stacks in headless CI environments.
+            // Prefer "native" backends; this avoids noisy platform warnings from
+            // initializing GL/WAYLAND stacks in headless CI environments.
             wgpu::Backends::PRIMARY
         },
         ..Default::default()
