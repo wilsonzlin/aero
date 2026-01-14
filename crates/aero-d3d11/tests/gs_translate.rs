@@ -2708,6 +2708,56 @@ fn sm4_gs_f16tof32_applies_operand_modifier_after_unpacking_half_bits() {
 }
 
 #[test]
+fn sm4_gs_f16tof32_sat_clamps_after_operand_modifier() {
+    // `f16tof32_sat` clamps the final f32 result to 0..1. Ensure this happens *after* applying the
+    // source operand modifier (which must also be applied after unpacking half bits).
+    let mut tokens = base_gs_tokens();
+
+    // mov r0.xyzw, l(1,0,0,0)
+    let mut mov_r0 = vec![opcode_token(OPCODE_MOV, 0)];
+    mov_r0.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov_r0.extend_from_slice(&imm32_vec4([1.0f32.to_bits(), 0, 0, 0]));
+    mov_r0[0] = opcode_token(OPCODE_MOV, mov_r0.len() as u32);
+    tokens.extend_from_slice(&mov_r0);
+
+    // f32tof16 r1.xyzw, r0.xyzw
+    tokens.push(opcode_token(OPCODE_F32TOF16, 5));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+
+    // f16tof32_sat r2.xyzw, -r1.xyzw
+    //
+    // Extended opcode token (type 0) with saturate bit set at bit 13.
+    // Note: the source operand uses an extra operand-extension dword for the neg modifier.
+    tokens.push(opcode_token(OPCODE_F16TOF32, 7) | OPCODE_EXTENDED_BIT);
+    tokens.push(1u32 << 13);
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src_swizzle_modifier(
+        OPERAND_TYPE_TEMP,
+        1,
+        Swizzle::XYZW.0,
+        1,
+    ));
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert_wgsl_validates(&wgsl);
+    assert!(
+        wgsl.contains("clamp((-(vec4<f32>(unpack2x16float"),
+        "expected f16tof32_sat to clamp after applying operand modifier:\n{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("-(clamp((vec4<f32>(unpack2x16float"),
+        "expected f16tof32_sat not to clamp before applying operand modifier:\n{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("vec4<u32>(0u) -"),
+        "expected f16tof32 operand modifier not to be applied in the u32 domain:\n{wgsl}"
+    );
+}
+
+#[test]
 fn gs_translate_supports_setp_and_predicated_emit_cut() {
     const D3D_NAME_PRIMITIVE_ID: u32 = 7;
 
