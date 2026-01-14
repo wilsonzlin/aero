@@ -2799,9 +2799,7 @@ TransDesc = "Transitional Device"
         assert!(msg.contains("transitional virtio-pci"), "{msg}");
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn inf_text_decoding_supports_utf16le_without_bom() -> Result<()> {
         let tmp = tempfile::tempdir().expect("create tempdir");
         let path = tmp.path().join("test.inf");
@@ -2840,6 +2838,26 @@ AddService = TestSvc, 0x00000002, Service_Inst
 
         let hwids = parse_inf_active_pci_hwids(&text);
         assert!(hwids.contains(r"PCI\VEN_1234&DEV_5678"));
+        Ok(())
+    }
+
+    #[test]
+    fn normalized_inf_lines_for_alias_diff_treats_unexpected_preamble_as_functional() -> Result<()> {
+        let inf = r#"
+This line is not an INF comment
+[Version]
+Signature="$Windows NT$"
+"#;
+
+        let normalized = normalized_inf_lines_for_alias_diff(inf, /* ignore_models */ false)?;
+        assert_eq!(
+            normalized,
+            vec![
+                "This line is not an INF comment",
+                "[version]",
+                r#"Signature="$Windows NT$""#,
+            ]
+        );
         Ok(())
     }
 
