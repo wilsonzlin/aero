@@ -118,7 +118,7 @@ hidtest.exe --list --json
 
 The JSON output is a single array on stdout. Each entry has:
 
-- `index`, `path`, `vid`, `pid`, `isVirtio`, `usagePage`, `usage`, `kind`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`
+- `index`, `path`, `vid`, `pid`, `ver`, `isVirtio`, `usagePage`, `usage`, `kind`, `manufacturer`, `product`, `serial`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`
 
 Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch):
 
@@ -271,8 +271,9 @@ machine-readable JSON object on stdout:
 - `StatusQActive` — whether the driver is currently sending LED events on statusq
 
 The JSON output (for `--state-json`, `--interrupt-info-json`, and `--counters-json`) also includes the selected HID
-interface metadata (`index`, `path`, `vid`/`pid`, `usagePage`/`usage`, and report byte lengths/descriptor lengths), plus
-`desiredAccess` / `writeAccess` to show whether the tool managed to open the HID interface read/write.
+interface metadata (`index`, `path`, `vid`/`pid`/`ver`, `usagePage`/`usage`, and report byte lengths/descriptor lengths), plus
+`manufacturer`/`product`/`serial` strings when available. It also includes `desiredAccess` / `writeAccess` to show whether
+the tool managed to open the HID interface read/write.
 
 ### Counters interpretation
 

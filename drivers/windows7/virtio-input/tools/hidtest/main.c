@@ -1071,6 +1071,12 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
     ULONG mask;
     size_t i;
     int first;
+    WCHAR manufacturer[256];
+    WCHAR product[256];
+    WCHAR serial[256];
+    int manufacturer_valid = 0;
+    int product_valid = 0;
+    int serial_valid = 0;
     struct {
         ULONG bit;
         const WCHAR *name;
@@ -1096,6 +1102,21 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
     }
     have_version = (avail >= sizeof(ULONG) * 2);
 
+    if (dev && dev->handle != INVALID_HANDLE_VALUE && dev->handle != NULL) {
+        if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
+            manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+            manufacturer_valid = 1;
+        }
+        if (HidD_GetProductString(dev->handle, product, sizeof(product))) {
+            product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+            product_valid = 1;
+        }
+        if (HidD_GetSerialNumberString(dev->handle, serial, sizeof(serial))) {
+            serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+            serial_valid = 1;
+        }
+    }
+
     wprintf(L"{\n");
 
     /* Selected HID interface metadata (helps correlate output when multiple devices are present). */
@@ -1119,6 +1140,34 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
     wprintf(L"  \"pid\": ");
     if (dev && dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"ver\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VersionNumber);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"manufacturer\": ");
+    if (manufacturer_valid) {
+        json_print_string_w(manufacturer);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"product\": ");
+    if (product_valid) {
+        json_print_string_w(product);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"serial\": ");
+    if (serial_valid) {
+        json_print_string_w(serial);
     } else {
         wprintf(L"null");
     }
@@ -1398,6 +1447,12 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
     DWORD avail;
     int have_size;
     int have_version;
+    WCHAR manufacturer[256];
+    WCHAR product[256];
+    WCHAR serial[256];
+    int manufacturer_valid = 0;
+    int product_valid = 0;
+    int serial_valid = 0;
 
     if (info == NULL) {
         fwprintf(stderr, L"null interrupt info\n");
@@ -1412,6 +1467,21 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
         }
     }
     have_version = (avail >= sizeof(ULONG) * 2);
+
+    if (dev && dev->handle != INVALID_HANDLE_VALUE && dev->handle != NULL) {
+        if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
+            manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+            manufacturer_valid = 1;
+        }
+        if (HidD_GetProductString(dev->handle, product, sizeof(product))) {
+            product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+            product_valid = 1;
+        }
+        if (HidD_GetSerialNumberString(dev->handle, serial, sizeof(serial))) {
+            serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+            serial_valid = 1;
+        }
+    }
 
     wprintf(L"{\n");
 
@@ -1436,6 +1506,34 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
     wprintf(L"  \"pid\": ");
     if (dev && dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"ver\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VersionNumber);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"manufacturer\": ");
+    if (manufacturer_valid) {
+        json_print_string_w(manufacturer);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"product\": ");
+    if (product_valid) {
+        json_print_string_w(product);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"serial\": ");
+    if (serial_valid) {
+        json_print_string_w(serial);
     } else {
         wprintf(L"null");
     }
@@ -2050,10 +2148,29 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
 
     int have_size = 0;
     int have_version = 0;
+    WCHAR manufacturer[256];
+    WCHAR product[256];
+    WCHAR serial[256];
+    int manufacturer_valid = 0;
+    int product_valid = 0;
+    int serial_valid = 0;
 
     if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
         fwprintf(stderr, L"Invalid device handle\n");
         return 1;
+    }
+
+    if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
+        manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+        manufacturer_valid = 1;
+    }
+    if (HidD_GetProductString(dev->handle, product, sizeof(product))) {
+        product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+        product_valid = 1;
+    }
+    if (HidD_GetSerialNumberString(dev->handle, serial, sizeof(serial))) {
+        serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+        serial_valid = 1;
     }
 
     if (!query_vioinput_counters_blob(dev, &buf, &bytes)) {
@@ -2124,6 +2241,34 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     wprintf(L"  \"pid\": ");
     if (dev->attr_valid) {
         wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"ver\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VersionNumber);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"manufacturer\": ");
+    if (manufacturer_valid) {
+        json_print_string_w(manufacturer);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"product\": ");
+    if (product_valid) {
+        json_print_string_w(product);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"serial\": ");
+    if (serial_valid) {
+        json_print_string_w(serial);
     } else {
         wprintf(L"null");
     }
@@ -2905,6 +3050,12 @@ static int list_hid_devices_json(void)
         int is_consumer = 0;
         int is_tablet = 0;
         const wchar_t *kind = NULL;
+        WCHAR manufacturer[256];
+        WCHAR product[256];
+        WCHAR serial[256];
+        int manufacturer_valid = 0;
+        int product_valid = 0;
+        int serial_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -2956,6 +3107,19 @@ static int list_hid_devices_json(void)
 
             report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
             hid_report_desc_valid = query_hid_descriptor_report_length(handle, &hid_report_desc_len);
+
+            if (HidD_GetManufacturerString(handle, manufacturer, sizeof(manufacturer))) {
+                manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+                manufacturer_valid = 1;
+            }
+            if (HidD_GetProductString(handle, product, sizeof(product))) {
+                product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+                product_valid = 1;
+            }
+            if (HidD_GetSerialNumberString(handle, serial, sizeof(serial))) {
+                serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+                serial_valid = 1;
+            }
 
             CloseHandle(handle);
         } else {
@@ -3016,6 +3180,12 @@ static int list_hid_devices_json(void)
         } else {
             wprintf(L"null");
         }
+        wprintf(L",\"ver\":");
+        if (attr_valid) {
+            wprintf(L"%u", (unsigned)attr.VersionNumber);
+        } else {
+            wprintf(L"null");
+        }
         wprintf(L",\"isVirtio\":");
         if (attr_valid) {
             wprintf(is_virtio ? L"true" : L"false");
@@ -3037,6 +3207,24 @@ static int list_hid_devices_json(void)
         wprintf(L",\"kind\":");
         if (kind != NULL) {
             json_print_string_w(kind);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"manufacturer\":");
+        if (manufacturer_valid) {
+            json_print_string_w(manufacturer);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"product\":");
+        if (product_valid) {
+            json_print_string_w(product);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"serial\":");
+        if (serial_valid) {
+            json_print_string_w(serial);
         } else {
             wprintf(L"null");
         }
