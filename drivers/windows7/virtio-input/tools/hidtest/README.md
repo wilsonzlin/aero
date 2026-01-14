@@ -27,6 +27,9 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - virtio-input Consumer Control/media keys report (`ReportID=3`)
   - virtio-input tablet (absolute pointer) report (`ReportID=4`)
 - Can query/reset the virtio-input driver diagnostic counters (`--counters`, `--counters-json`, `--reset-counters`).
+- Can query a virtio-input driver state snapshot (PnP state + statusq/LED config) via:
+  - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_STATE)`
+  - `hidtest.exe --state` / `hidtest.exe --state-json`
 - Can query a virtio-input interrupt diagnostics snapshot (MSI-X vs INTx, vector routing) via:
   - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO)`
   - `hidtest.exe --interrupt-info` / `hidtest.exe --interrupt-info-json`
@@ -256,11 +259,13 @@ Query virtio-input driver state / interrupt routing snapshot:
 
 ```bat
 hidtest.exe --keyboard --state
+hidtest.exe --keyboard --state-json
 hidtest.exe --keyboard --interrupt-info
 hidtest.exe --keyboard --interrupt-info-json
 ```
 
-`--state` prints basic driver/PnP state plus the keyboard LED/statusq fields:
+`--state` prints basic driver/PnP state plus the keyboard LED/statusq fields. `--state-json` prints the same data as a
+machine-readable JSON object on stdout:
 
 - `KeyboardLedSupportedMask` — EV_BITS(EV_LED) support mask (0 means EV_LED not advertised / LED output disabled)
 - `StatusQActive` — whether the driver is currently sending LED events on statusq

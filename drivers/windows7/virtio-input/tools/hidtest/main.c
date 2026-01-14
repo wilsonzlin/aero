@@ -325,6 +325,7 @@ typedef struct OPTIONS {
     int selftest;
     int json;
     int query_state;
+    int query_state_json;
     int query_interrupt_info;
     int query_counters;
     int reset_counters;
@@ -1059,6 +1060,127 @@ static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
     } else {
         wprintf(L"  StatusQActive:     <missing>\n");
     }
+}
+
+static void print_vioinput_state_json(const VIOINPUT_STATE *st, DWORD bytes)
+{
+    DWORD avail;
+    int have_size;
+    int have_version;
+    ULONG mask;
+    size_t i;
+    int first;
+    struct {
+        ULONG bit;
+        const WCHAR *name;
+    } bits[] = {
+        {0x01, L"Num"},
+        {0x02, L"Caps"},
+        {0x04, L"Scroll"},
+        {0x08, L"Compose"},
+        {0x10, L"Kana"},
+    };
+
+    if (st == NULL) {
+        fwprintf(stderr, L"null state\n");
+        return;
+    }
+
+    avail = bytes;
+    have_size = (avail >= sizeof(ULONG));
+    if (have_size) {
+        if (st->Size != 0 && st->Size < avail) {
+            avail = st->Size;
+        }
+    }
+    have_version = (avail >= sizeof(ULONG) * 2);
+
+    wprintf(L"{\n");
+    wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
+    if (have_size && st->Size != 0) {
+        wprintf(L"  \"Size\": %lu,\n", st->Size);
+    } else {
+        wprintf(L"  \"Size\": null,\n");
+    }
+    if (have_version) {
+        wprintf(L"  \"Version\": %lu,\n", st->Version);
+    } else {
+        wprintf(L"  \"Version\": null,\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_STATE, DeviceKind) + sizeof(ULONG)) {
+        wprintf(L"  \"DeviceKind\": \"%ls\",\n", vioinput_device_kind_to_string(st->DeviceKind));
+        wprintf(L"  \"DeviceKindValue\": %lu,\n", st->DeviceKind);
+    } else {
+        wprintf(L"  \"DeviceKind\": null,\n");
+        wprintf(L"  \"DeviceKindValue\": null,\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_STATE, PciRevisionId) + sizeof(ULONG)) {
+        wprintf(L"  \"PciRevisionId\": %lu,\n", st->PciRevisionId);
+    } else {
+        wprintf(L"  \"PciRevisionId\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, PciSubsystemDeviceId) + sizeof(ULONG)) {
+        wprintf(L"  \"PciSubsystemDeviceId\": %lu,\n", st->PciSubsystemDeviceId);
+    } else {
+        wprintf(L"  \"PciSubsystemDeviceId\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, HardwareReady) + sizeof(ULONG)) {
+        wprintf(L"  \"HardwareReady\": %lu,\n", st->HardwareReady);
+    } else {
+        wprintf(L"  \"HardwareReady\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, InD0) + sizeof(ULONG)) {
+        wprintf(L"  \"InD0\": %lu,\n", st->InD0);
+    } else {
+        wprintf(L"  \"InD0\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, HidActivated) + sizeof(ULONG)) {
+        wprintf(L"  \"HidActivated\": %lu,\n", st->HidActivated);
+    } else {
+        wprintf(L"  \"HidActivated\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, VirtioStarted) + sizeof(ULONG)) {
+        wprintf(L"  \"VirtioStarted\": %lu,\n", st->VirtioStarted);
+    } else {
+        wprintf(L"  \"VirtioStarted\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, NegotiatedFeatures) + sizeof(st->NegotiatedFeatures)) {
+        wprintf(L"  \"NegotiatedFeatures\": \"0x%016llX\",\n", (unsigned long long)st->NegotiatedFeatures);
+    } else {
+        wprintf(L"  \"NegotiatedFeatures\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, StatusQDropOnFull) + sizeof(ULONG)) {
+        wprintf(L"  \"StatusQDropOnFull\": %lu,\n", st->StatusQDropOnFull);
+    } else {
+        wprintf(L"  \"StatusQDropOnFull\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, KeyboardLedSupportedMask) + sizeof(ULONG)) {
+        mask = st->KeyboardLedSupportedMask & 0x1Ful;
+        wprintf(L"  \"KeyboardLedSupportedMask\": %lu,\n", mask);
+        wprintf(L"  \"KeyboardLedSupported\": [");
+        first = 1;
+        for (i = 0; i < (sizeof(bits) / sizeof(bits[0])); i++) {
+            if ((mask & bits[i].bit) != 0) {
+                if (!first) {
+                    wprintf(L", ");
+                }
+                first = 0;
+                wprintf(L"\"%ls\"", bits[i].name);
+            }
+        }
+        wprintf(L"],\n");
+    } else {
+        wprintf(L"  \"KeyboardLedSupportedMask\": null,\n");
+        wprintf(L"  \"KeyboardLedSupported\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, StatusQActive) + sizeof(ULONG)) {
+        wprintf(L"  \"StatusQActive\": %lu\n", st->StatusQActive);
+    } else {
+        wprintf(L"  \"StatusQActive\": null\n");
+    }
+    wprintf(L"}\n");
 }
 
 static void print_vioinput_interrupt_info(const VIOINPUT_INTERRUPT_INFO *info, DWORD bytes)
@@ -1880,6 +2002,7 @@ static void print_usage(void)
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
     wprintf(L"             [--state]\n");
+    wprintf(L"             [--state-json]\n");
     wprintf(L"             [--interrupt-info]\n");
     wprintf(L"             [--interrupt-info-json]\n");
     wprintf(L"             [--counters]\n");
@@ -1911,6 +2034,7 @@ static void print_usage(void)
     wprintf(L"  --duration SECS Exit report read loop after SECS seconds\n");
     wprintf(L"  --count N       Exit report read loop after reading N reports\n");
     wprintf(L"  --state         Query virtio-input driver state via IOCTL_VIOINPUT_QUERY_STATE and exit\n");
+    wprintf(L"  --state-json    Query virtio-input driver state and print as JSON\n");
     wprintf(L"  --interrupt-info\n");
     wprintf(L"                 Query virtio-input interrupt diagnostics via IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO and exit\n");
     wprintf(L"  --interrupt-info-json\n");
@@ -5482,6 +5606,13 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--state-json") == 0) {
+            opt.query_state = 1;
+            opt.query_state_json = 1;
+            opt.quiet = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--interrupt-info") == 0) {
             opt.query_interrupt_info = 1;
             continue;
@@ -6056,7 +6187,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
-        if (opt.query_counters_json || opt.query_interrupt_info_json) {
+        if (opt.query_state_json || opt.query_counters_json || opt.query_interrupt_info_json) {
             fwprintf(stderr, L"No matching HID devices found.\n");
         } else {
             wprintf(L"No matching HID devices found.\n");
@@ -6101,13 +6232,21 @@ int wmain(int argc, wchar_t **argv)
 
         buf = NULL;
         if (!query_vioinput_state_blob(dev.handle, &buf, &bytes) || buf == NULL) {
-            print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_STATE)");
+            if (opt.query_state_json) {
+                print_last_error_file_w(stderr, L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_STATE)");
+            } else {
+                print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_STATE)");
+            }
             free_selected_device(&dev);
             return 1;
         }
 
         st = (const VIOINPUT_STATE*)buf;
-        print_vioinput_state(st, bytes);
+        if (opt.query_state_json) {
+            print_vioinput_state_json(st, bytes);
+        } else {
+            print_vioinput_state(st, bytes);
+        }
         free(buf);
         free_selected_device(&dev);
         return 0;
