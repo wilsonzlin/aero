@@ -2441,7 +2441,7 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           return finish(E_INVALIDARG);
         }
 
-        const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(dst->dxgi_format);
+        const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, dst->dxgi_format);
         if (aer_fmt == AEROGPU_FORMAT_INVALID) {
           return finish(E_NOTIMPL);
         }
