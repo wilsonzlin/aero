@@ -2958,7 +2958,46 @@ function Try-EmitAeroVirtioBlkCountersMarker {
 
   $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
   $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
-  if ($null -eq $line) { return }
+  if ($null -eq $line) {
+    # Backward compatible fallback: older guest selftests emitted the counters on the virtio-blk per-test marker
+    # rather than the dedicated virtio-blk-counters marker.
+    $blkPrefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
+    $blkLine = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $blkPrefix -SerialLogPath $SerialLogPath
+    if ($null -eq $blkLine) { return }
+
+    $blkFields = @{}
+    foreach ($tok in $blkLine.Split("|")) {
+      $idx = $tok.IndexOf("=")
+      if ($idx -le 0) { continue }
+      $k = $tok.Substring(0, $idx).Trim()
+      $v = $tok.Substring($idx + 1).Trim()
+      if (-not [string]::IsNullOrEmpty($k)) {
+        $blkFields[$k] = $v
+      }
+    }
+
+    $mapping = @{
+      abort_srb        = "abort"
+      reset_device_srb = "reset_device"
+      reset_bus_srb    = "reset_bus"
+      pnp_srb          = "pnp"
+      ioctl_reset      = "ioctl_reset"
+    }
+
+    $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO"
+    $sawAny = $false
+    foreach ($src in @("abort_srb", "reset_device_srb", "reset_bus_srb", "pnp_srb", "ioctl_reset")) {
+      if ($blkFields.ContainsKey($src)) {
+        $dst = [string]$mapping[$src]
+        $out += "|$dst=$(Sanitize-AeroMarkerValue $blkFields[$src])"
+        $sawAny = $true
+      }
+    }
+    if ($sawAny) {
+      Write-Host $out
+    }
+    return
+  }
 
   $toks = $line.Split("|")
   $status = "INFO"

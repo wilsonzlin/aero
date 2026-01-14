@@ -9358,7 +9358,11 @@ def main() -> int:
             blk_test_line=virtio_blk_marker_line,
             blk_counters_line=virtio_blk_counters_marker_line,
         )
-        _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
+        _emit_virtio_blk_counters_host_marker(
+            tail,
+            blk_counters_line=virtio_blk_counters_marker_line,
+            blk_test_line=virtio_blk_marker_line,
+        )
         _emit_virtio_blk_miniport_flags_host_marker(
             tail, marker_line=virtio_blk_miniport_flags_marker_line
         )
@@ -12284,7 +12288,7 @@ def _emit_virtio_blk_io_host_marker(tail: bytes, *, blk_test_line: Optional[str]
 
 
 def _emit_virtio_blk_counters_host_marker(
-    tail: bytes, *, blk_counters_line: Optional[str] = None
+    tail: bytes, *, blk_counters_line: Optional[str] = None, blk_test_line: Optional[str] = None
 ) -> None:
     """
     Best-effort: emit a host-side marker mirroring the guest's virtio-blk recovery/reset/abort counters.
@@ -12304,6 +12308,31 @@ def _emit_virtio_blk_counters_host_marker(
             tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
         )
     if marker_line is None:
+        # Backward compatible fallback: older guest selftests emitted the counters on the virtio-blk
+        # per-test marker rather than the dedicated virtio-blk-counters marker.
+        if blk_test_line is None:
+            blk_test_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+        if blk_test_line is None:
+            return
+        fields = _parse_marker_kv_fields(blk_test_line)
+        mapping = {
+            "abort_srb": "abort",
+            "reset_device_srb": "reset_device",
+            "reset_bus_srb": "reset_bus",
+            "pnp_srb": "pnp",
+            "ioctl_reset": "ioctl_reset",
+        }
+        mapped: dict[str, str] = {}
+        for src, dst in mapping.items():
+            if src in fields:
+                mapped[dst] = fields[src]
+        if not mapped:
+            return
+        parts = ["AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO"]
+        for k in ("abort", "reset_device", "reset_bus", "pnp", "ioctl_reset"):
+            if k in mapped:
+                parts.append(f"{k}={_sanitize_marker_value(mapped[k])}")
+        print("|".join(parts))
         return
 
     toks = marker_line.split("|")
