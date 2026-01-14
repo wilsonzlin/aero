@@ -93,6 +93,7 @@ hub** (inbox Win7 drivers).
 For the full-system `Machine` wrapper, synthetic USB HID injection is available via:
 
 - Keyboard (USB HID usage IDs, Usage Page 0x07): `Machine.inject_usb_hid_keyboard_usage(usage, pressed)`
+- Consumer Control (USB HID usage IDs, Usage Page 0x0C): `Machine.inject_usb_hid_consumer_usage(usage, pressed)`
 - Mouse:
   - motion: `Machine.inject_usb_hid_mouse_move(dx, dy)` (`dy > 0` = down)
   - buttons: `Machine.inject_usb_hid_mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
@@ -103,6 +104,7 @@ For the full-system `Machine` wrapper, synthetic USB HID injection is available 
 In the production worker runtime, input is typically translated into USB HID reports using the WASM export `UsbHidBridge`:
 
 - Keyboard (USB HID usage IDs, Usage Page 0x07): `UsbHidBridge.keyboard_event(usage, pressed)`
+- Consumer Control (USB HID usage IDs, Usage Page 0x0C): `UsbHidBridge.consumer_event(usage, pressed)`
 - Mouse:
   - motion: `UsbHidBridge.mouse_move(dx, dy)` (`dy > 0` = down)
   - buttons: `UsbHidBridge.mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
