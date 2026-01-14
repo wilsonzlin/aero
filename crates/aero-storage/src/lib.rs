@@ -84,7 +84,7 @@ pub use backend::StdFileBackend;
 pub use backend::{MemBackend, ReadOnlyBackend, StorageBackend};
 pub use cache::{BlockCacheStats, BlockCachedDisk};
 pub use cow::AeroCowDisk;
-pub use disk::{RawDisk, ReadOnlyDisk, VirtualDisk, SECTOR_SIZE};
+pub use disk::{RawDisk, ReadOnlyDisk, VirtualDisk, VirtualDiskSend, SECTOR_SIZE};
 pub use error::{DiskError, Result};
 pub use formats::{detect_format, DiskFormat, DiskImage};
 pub use qcow2::Qcow2Disk;

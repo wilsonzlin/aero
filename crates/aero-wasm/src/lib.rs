@@ -3181,19 +3181,6 @@ pub enum MouseButtons {
 #[cfg(any(target_arch = "wasm32", test))]
 const AEROSPARSE_HEADER_SIZE_BYTES: usize = 64;
 
-// `aero_storage::AeroCowDisk` requires its overlay backend to be `Send` on native targets, but
-// intentionally omits that bound on wasm32 (OPFS/JS-backed storage is often `!Send`). Mirror that
-// policy here without depending on `aero_storage`'s internal `VirtualDiskSend` helper trait.
-#[cfg(all(any(target_arch = "wasm32", test), not(target_arch = "wasm32")))]
-trait StorageBackendSend: Send {}
-#[cfg(all(any(target_arch = "wasm32", test), not(target_arch = "wasm32")))]
-impl<T: Send> StorageBackendSend for T {}
-
-#[cfg(all(any(target_arch = "wasm32", test), target_arch = "wasm32"))]
-trait StorageBackendSend {}
-#[cfg(all(any(target_arch = "wasm32", test), target_arch = "wasm32"))]
-impl<T> StorageBackendSend for T {}
-
 #[cfg(any(target_arch = "wasm32", test))]
 fn open_or_create_cow_disk<Base, OverlayBackend>(
     base: Base,
@@ -3202,7 +3189,9 @@ fn open_or_create_cow_disk<Base, OverlayBackend>(
 ) -> aero_storage::Result<aero_storage::AeroCowDisk<Base, OverlayBackend>>
 where
     Base: aero_storage::VirtualDisk,
-    OverlayBackend: aero_storage::StorageBackend + StorageBackendSend,
+    // `aero_storage::AeroCowDisk` wants its overlay backend to be `Send` on native targets, but not
+    // on wasm32 (OPFS/JS-backed storage is often `!Send`). `VirtualDiskSend` captures that policy.
+    OverlayBackend: aero_storage::StorageBackend + aero_storage::VirtualDiskSend,
 {
     if overlay_block_size_bytes == 0 {
         return Err(aero_storage::DiskError::Io(
