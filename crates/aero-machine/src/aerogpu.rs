@@ -1111,7 +1111,16 @@ impl AeroGpuMmioDevice {
         if !self.bus_master_enabled() {
             // Mirror device DMA gating: without BME, the device must not perform DMA (fence page
             // updates). Queue the completion and apply it once DMA is permitted again.
-            self.pending_backend_fence_completions.push_back(fence);
+            // `push_back` may allocate; reserve fallibly to avoid aborting on OOM.
+            if self.pending_backend_fence_completions.try_reserve(1).is_ok() {
+                self.pending_backend_fence_completions.push_back(fence);
+            } else {
+                // If we cannot queue completions, fall back to tracking the completion directly.
+                // Fence progress is still DMA-gated because fence processing is disabled while BME
+                // is clear.
+                self.record_error(pci::AerogpuErrorCode::Backend, fence);
+                self.mark_backend_completed_fence(fence);
+            }
             return;
         }
 
@@ -2119,6 +2128,16 @@ impl AeroGpuMmioDevice {
         };
 
         if desc.signal_fence > last_fence {
+            // `push_back` may allocate; reserve fallibly to avoid aborting on OOM. If we cannot
+            // extend the pending fence queue, fail closed by flushing existing fences and
+            // completing this fence immediately.
+            if self.pending_fence_completions.try_reserve(1).is_err() {
+                self.record_error(pci::AerogpuErrorCode::Backend, desc.signal_fence);
+                self.flush_pending_fences();
+                self.complete_fence(desc.signal_fence, wants_irq);
+                return;
+            }
+
             self.pending_fence_completions
                 .push_back(PendingFenceCompletion {
                     fence_value: desc.signal_fence,
