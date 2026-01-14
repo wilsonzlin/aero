@@ -27,7 +27,7 @@ The WASM-facing `Machine` wrapper exposes **explicit** input injection methods f
 
 - **PS/2 via i8042** (legacy; always works)
 - **virtio-input** (paravirtualized; requires the Aero Win7 virtio-input driver; opt-in at construction time)
-- **synthetic USB HID devices behind UHCI** (keyboard + mouse + gamepad; opt-in at construction time)
+- **synthetic USB HID devices behind UHCI** (keyboard + mouse + gamepad + consumer-control; opt-in at construction time)
 
 To opt into the additional backends from JS, construct the machine via:
 
@@ -86,8 +86,9 @@ These calls are only meaningful once the guest driver has finished initializatio
 
 #### USB HID (synthetic devices behind UHCI)
 
-In the production browser runtime, browser keyboard/mouse/gamepad input can be exposed to the guest as
-**synthetic USB HID devices behind the UHCI external hub** (inbox Win7 drivers).
+In the production browser runtime, browser keyboard/mouse/gamepad input (including consumer-control
+“media keys”) can be exposed to the guest as **synthetic USB HID devices behind the UHCI external
+hub** (inbox Win7 drivers).
 
 For the full-system `Machine` wrapper, synthetic USB HID injection is available via:
 
@@ -97,6 +98,7 @@ For the full-system `Machine` wrapper, synthetic USB HID injection is available 
   - buttons: `Machine.inject_usb_hid_mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `Machine.inject_usb_hid_mouse_wheel(delta)` (`delta > 0` = wheel up)
 - Gamepad: `Machine.inject_usb_hid_gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
+- Consumer Control (media keys, Usage Page 0x0C): `Machine.inject_usb_hid_consumer_usage(usage, pressed)`
 
 In the production worker runtime, input is typically translated into USB HID reports using the WASM export `UsbHidBridge`:
 
@@ -106,6 +108,7 @@ In the production worker runtime, input is typically translated into USB HID rep
   - buttons: `UsbHidBridge.mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `UsbHidBridge.mouse_wheel(delta)` (`delta > 0` = wheel up)
 - Gamepad: `UsbHidBridge.gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
+- Consumer Control (media keys, Usage Page 0x0C): `UsbHidBridge.consumer_event(usage, pressed)`
 
 See [`USB HID (Optional)`](#usb-hid-optional) for the guest-visible UHCI external hub topology + reserved ports.
 
@@ -894,9 +897,12 @@ Source-of-truth constants live in:
 
 #### Does the canonical `aero_machine::Machine` auto-attach these devices?
 
-No. In the canonical full-system VM, `MachineConfig.enable_uhci` only attaches the UHCI controller (PCI `00:01.2`).
-There is currently no `MachineConfig` flag that auto-attaches an external hub or synthetic HID devices; native hosts
-that want this topology should attach a hub + devices explicitly using `Machine.usb_attach_root` / `Machine.usb_attach_path`.
+Yes, when `MachineConfig.enable_synthetic_usb_hid = true` (or when constructing via
+`aero-wasm::Machine.new_with_input_backends(..., enableSyntheticUsbHid=true)`).
+
+`MachineConfig.enable_uhci` by itself only attaches the UHCI controller (PCI `00:01.2`). Enabling
+synthetic USB HID causes the canonical machine to attach the external hub on UHCI root port 0 and
+attach the synthetic HID devices on hub ports 1..=4, matching the reserved port layout above.
 
 In the browser runtime, the I/O worker (and the worker-side UHCI runtime) attaches the external hub + synthetic devices
 according to the reserved port layout above.

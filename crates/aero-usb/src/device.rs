@@ -9,9 +9,9 @@ use aero_io_snapshot::io::state::{
 
 use crate::hid::composite::UsbCompositeHidInput;
 use crate::hid::{
-    UsbCompositeHidInputHandle, UsbHidGamepad, UsbHidGamepadHandle, UsbHidKeyboard,
-    UsbHidKeyboardHandle, UsbHidMouse, UsbHidMouseHandle, UsbHidPassthrough,
-    UsbHidPassthroughHandle,
+    UsbCompositeHidInputHandle, UsbHidConsumerControl, UsbHidConsumerControlHandle, UsbHidGamepad,
+    UsbHidGamepadHandle, UsbHidKeyboard, UsbHidKeyboardHandle, UsbHidMouse, UsbHidMouseHandle,
+    UsbHidPassthrough, UsbHidPassthroughHandle,
 };
 use crate::hub::UsbHubDevice;
 use crate::{
@@ -707,7 +707,7 @@ fn peek_snapshot_device_id(bytes: &[u8]) -> SnapshotResult<[u8; 4]> {
 fn is_known_usb_device_model_device_id(device_id: &[u8; 4]) -> bool {
     matches!(
         device_id,
-        b"UHUB" | b"UKBD" | b"UMSE" | b"UGPD" | b"UCMP" | b"HIDP" | b"WUSB"
+        b"UHUB" | b"UKBD" | b"UMSE" | b"UGPD" | b"UCON" | b"UCMP" | b"HIDP" | b"WUSB"
     )
 }
 
@@ -726,6 +726,9 @@ fn usb_device_model_snapshot_device_id(model: &dyn UsbDeviceModel) -> Option<[u8
     }
     if any.is::<UsbHidGamepadHandle>() || any.is::<UsbHidGamepad>() {
         return Some(UsbHidGamepad::DEVICE_ID);
+    }
+    if any.is::<UsbHidConsumerControlHandle>() || any.is::<UsbHidConsumerControl>() {
+        return Some(UsbHidConsumerControl::DEVICE_ID);
     }
     if any.is::<UsbCompositeHidInputHandle>() || any.is::<UsbCompositeHidInput>() {
         return Some(UsbCompositeHidInput::DEVICE_ID);
@@ -762,6 +765,7 @@ fn try_new_usb_device_model_from_snapshot(
         b"UKBD" => Ok(Some(Box::new(UsbHidKeyboardHandle::new()))),
         b"UMSE" => Ok(Some(Box::new(UsbHidMouseHandle::new()))),
         b"UGPD" => Ok(Some(Box::new(UsbHidGamepadHandle::new()))),
+        b"UCON" => Ok(Some(Box::new(UsbHidConsumerControlHandle::new()))),
         b"UCMP" => Ok(Some(Box::new(UsbCompositeHidInputHandle::new()))),
         b"HIDP" => Ok(
             UsbHidPassthroughHandle::try_new_from_snapshot(model_snapshot)?
@@ -790,6 +794,9 @@ fn save_usb_device_model_snapshot(model: &dyn UsbDeviceModel) -> Option<Vec<u8>>
     if let Some(dev) = any.downcast_ref::<UsbHidGamepadHandle>() {
         return Some(dev.save_state());
     }
+    if let Some(dev) = any.downcast_ref::<UsbHidConsumerControlHandle>() {
+        return Some(dev.save_state());
+    }
     if let Some(dev) = any.downcast_ref::<UsbCompositeHidInputHandle>() {
         return Some(dev.save_state());
     }
@@ -805,6 +812,9 @@ fn save_usb_device_model_snapshot(model: &dyn UsbDeviceModel) -> Option<Vec<u8>>
         return Some(dev.save_state());
     }
     if let Some(dev) = any.downcast_ref::<UsbHidGamepad>() {
+        return Some(dev.save_state());
+    }
+    if let Some(dev) = any.downcast_ref::<UsbHidConsumerControl>() {
         return Some(dev.save_state());
     }
     if let Some(dev) = any.downcast_ref::<UsbCompositeHidInput>() {
@@ -856,6 +866,14 @@ fn apply_usb_device_model_snapshot(
                 return dev.load_state(bytes);
             }
             if let Some(dev) = any.downcast_mut::<UsbHidGamepad>() {
+                return dev.load_state(bytes);
+            }
+        }
+        b"UCON" => {
+            if let Some(dev) = any.downcast_mut::<UsbHidConsumerControlHandle>() {
+                return dev.load_state(bytes);
+            }
+            if let Some(dev) = any.downcast_mut::<UsbHidConsumerControl>() {
                 return dev.load_state(bytes);
             }
         }
@@ -1143,6 +1161,29 @@ mod tests {
             Err(SnapshotError::InvalidFieldEncoding("usb device model mismatch")) => {}
             other => panic!("expected model mismatch error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn snapshot_restore_roundtrips_consumer_control_model_state() {
+        let mut dev = AttachedUsbDevice::new(Box::new(UsbHidConsumerControlHandle::new()));
+        let any = dev.model_mut() as &mut dyn Any;
+        let consumer = any
+            .downcast_mut::<UsbHidConsumerControlHandle>()
+            .expect("downcast consumer control handle");
+        consumer.consumer_event(0x00b5, true); // Scan Next Track
+
+        let snapshot = dev.save_state();
+        let mut restored = AttachedUsbDevice::try_new_from_snapshot(&snapshot)
+            .expect("parse snapshot")
+            .expect("snapshot should contain consumer control model snapshot");
+        restored
+            .load_state(&snapshot)
+            .expect("restore snapshot into reconstructed device");
+        assert_eq!(
+            restored.save_state(),
+            snapshot,
+            "restored consumer control device snapshot should round-trip"
+        );
     }
 
     #[test]

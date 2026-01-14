@@ -5763,6 +5763,12 @@ impl Machine {
         self.inner.inject_usb_hid_gamepad_report(a, b);
     }
 
+    /// Inject a USB HID Consumer Control usage event into the synthetic consumer-control device (if
+    /// enabled).
+    pub fn inject_usb_hid_consumer_usage(&mut self, usage: u32, pressed: bool) {
+        self.inner.inject_usb_hid_consumer_usage(usage, pressed);
+    }
+
     // -------------------------------------------------------------------------
     // Network (Option C L2 tunnel via NET_TX / NET_RX AIPC rings)
     // -------------------------------------------------------------------------

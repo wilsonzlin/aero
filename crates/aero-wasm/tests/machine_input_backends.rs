@@ -44,6 +44,18 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     let after = usb_gamepad.save_state();
     assert_ne!(before, after, "USB gamepad state should change after injection");
 
+    let usb_consumer = m
+        .debug_inner()
+        .usb_hid_consumer_control_handle()
+        .expect("consumer-control handle should exist when synthetic USB HID is enabled");
+    let before = usb_consumer.save_state();
+    m.inject_usb_hid_consumer_usage(0x00b5, true); // Scan Next Track
+    let after = usb_consumer.save_state();
+    assert_ne!(
+        before, after,
+        "USB consumer-control state should change after injection"
+    );
+
     // -----------------
     // virtio-input
     // -----------------
