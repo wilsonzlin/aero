@@ -1568,51 +1568,21 @@ impl AeroGpuMmioDevice {
             return;
         }
 
+        // Maintain a monotonically increasing fence schedule across queued (vsync-delayed) and
+        // immediate submissions. Some guest drivers may reuse fence values for best-effort internal
+        // submissions; preserve the most restrictive completion semantics for those duplicates.
         let wants_irq = (desc.flags & ring::AEROGPU_SUBMIT_FLAG_NO_IRQ) == 0;
 
-        let mut max_seen = self.completed_fence;
-        if let Some(back) = self.pending_fence_completions.back() {
-            max_seen = max_seen.max(back.fence_value);
-        }
-        if desc.signal_fence < max_seen {
+        if desc.signal_fence <= self.completed_fence {
             return;
         }
-        if desc.signal_fence == max_seen {
-            // Duplicate fence values are allowed (see `drivers/aerogpu/protocol/README.md`).
-            //
-            // Merge NO_IRQ semantics so the fence still raises an IRQ if *any* submission using
-            // that fence requested one. Also upgrade completion kind to vblank-paced if any
-            // submission with the fence contains a vsync PRESENT.
-            let back_needs_vblank_upgrade = self
-                .pending_fence_completions
-                .back()
-                .is_some_and(|back| {
-                    back.fence_value == desc.signal_fence
-                        && back.kind == PendingFenceKind::Immediate
-                });
-            // Prefer the more restrictive completion kind: if any submission wants vblank pacing,
-            // the fence must remain gated on vblank.
-            let should_upgrade_to_vblank = back_needs_vblank_upgrade
-                && !self.submission_bridge_enabled
-                && self.vblank_pacing_active()
-                && desc.cmd_gpa != 0
-                && desc.cmd_size_bytes != 0
-                && desc.cmd_size_bytes <= MAX_CMD_STREAM_SIZE_BYTES
-                && cmd_stream_has_vsync_present_reader(
-                    |gpa, buf| mem.read_physical(gpa, buf),
-                    desc.cmd_gpa,
-                    desc.cmd_size_bytes,
-                )
-                .unwrap_or(false);
 
-            if let Some(back) = self.pending_fence_completions.back_mut() {
-                if back.fence_value == desc.signal_fence {
-                    back.wants_irq |= wants_irq;
-                    if should_upgrade_to_vblank {
-                        back.kind = PendingFenceKind::Vblank;
-                    }
-                }
-            };
+        let last_fence = self
+            .pending_fence_completions
+            .back()
+            .map(|e| e.fence_value)
+            .unwrap_or(self.completed_fence);
+        if desc.signal_fence < last_fence {
             return;
         }
 
@@ -1638,29 +1608,44 @@ impl AeroGpuMmioDevice {
             PendingFenceKind::Immediate
         };
 
-        self.pending_fence_completions
-            .push_back(PendingFenceCompletion {
-                fence_value: desc.signal_fence,
-                wants_irq,
-                kind,
-            });
+        if desc.signal_fence > last_fence {
+            self.pending_fence_completions
+                .push_back(PendingFenceCompletion {
+                    fence_value: desc.signal_fence,
+                    wants_irq,
+                    kind,
+                });
 
-        // Fence completion policy:
-        // - If an in-process backend is installed, fence completion is driven by backend
-        //   completions (see `poll_backend_completions`).
-        // - If the submission bridge is enabled, fence completion is driven by the external
-        //   executor via `complete_fence_from_backend`.
-        // - Otherwise, preserve legacy bring-up behavior: treat fences as immediately completed so
-        //   the guest always makes forward progress.
-        //
-        // When the submission bridge is enabled, only wait for the external executor if we have a
-        // valid descriptor and successfully captured a submission payload. If capture fails (or the
-        // descriptor is malformed), complete the fence immediately so a buggy guest cannot
-        // deadlock itself.
-        if self.backend.is_none()
-            && (!self.submission_bridge_enabled || !valid_desc || !queued_for_external)
-        {
-            self.backend_completed_fences.insert(desc.signal_fence);
+            // Fence completion policy:
+            // - If an in-process backend is installed, fence completion is driven by backend
+            //   completions (see `poll_backend_completions`).
+            // - If the submission bridge is enabled, fence completion is driven by the external
+            //   executor via `complete_fence_from_backend`.
+            // - Otherwise, preserve legacy bring-up behavior: treat fences as immediately completed
+            //   so the guest always makes forward progress.
+            //
+            // When the submission bridge is enabled, only wait for the external executor if we
+            // have a valid descriptor and successfully captured a submission payload. If capture
+            // fails (or the descriptor is malformed), complete the fence immediately so a buggy
+            // guest cannot deadlock itself.
+            if self.backend.is_none()
+                && (!self.submission_bridge_enabled || !valid_desc || !queued_for_external)
+            {
+                self.backend_completed_fences.insert(desc.signal_fence);
+            }
+        } else {
+            // Duplicate fence value: merge into the most recently queued fence entry. This
+            // preserves correct vblank pacing and IRQ semantics when a guest driver reuses a fence
+            // for internal submissions.
+            if let Some(back) = self.pending_fence_completions.back_mut() {
+                if back.fence_value == desc.signal_fence {
+                    back.wants_irq |= wants_irq;
+                    if back.kind == PendingFenceKind::Immediate && kind == PendingFenceKind::Vblank
+                    {
+                        back.kind = PendingFenceKind::Vblank;
+                    }
+                }
+            }
         }
     }
 

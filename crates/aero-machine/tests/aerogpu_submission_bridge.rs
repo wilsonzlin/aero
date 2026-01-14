@@ -536,3 +536,167 @@ fn aerogpu_submission_bridge_vsync_present_fence_completes_on_host_completion() 
     );
     assert_eq!(completed_fence, signal_fence);
 }
+
+#[test]
+fn aerogpu_submission_bridge_duplicate_fence_does_not_block_later_fences() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 16 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        // Keep the machine minimal and deterministic for this unit test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.aerogpu_enable_submission_bridge();
+
+    let bdf = PciBdf::new(0, 0x07, 0);
+    let bar0 = u64::from(cfg_read(&mut m, bdf, 0x10, 4) & !0xFu32);
+    assert_ne!(bar0, 0);
+
+    // Enable PCI Bus Mastering so the device is allowed to DMA into guest memory.
+    let mut command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    command |= 1 << 2; // COMMAND.BME
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command));
+
+    let ring_gpa = 0x10000u64;
+    let cmd0_gpa = 0x30000u64;
+    let cmd1_gpa = 0x31000u64;
+    let cmd2_gpa = 0x32000u64;
+
+    // Two command streams that reuse the same signal fence. The first present is not vsynced; the
+    // second is. With the submission bridge enabled, vsync pacing is the host's responsibility,
+    // but the device model must still merge duplicate fence semantics so later fences are not
+    // permanently blocked.
+    let cmd0 = {
+        let mut writer = AerogpuCmdWriter::new();
+        writer.present(0, 0);
+        writer.finish()
+    };
+    let cmd1 = {
+        let mut writer = AerogpuCmdWriter::new();
+        writer.present(0, AEROGPU_PRESENT_FLAG_VSYNC);
+        writer.finish()
+    };
+    let cmd2 = {
+        let mut writer = AerogpuCmdWriter::new();
+        writer.present(0, 0);
+        writer.finish()
+    };
+    m.write_physical(cmd0_gpa, &cmd0);
+    m.write_physical(cmd1_gpa, &cmd1);
+    m.write_physical(cmd2_gpa, &cmd2);
+
+    // Ring header (three entries, head=0 tail=3).
+    let entry_count = 8u32;
+    let entry_stride_bytes = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
+    let ring_size_bytes =
+        ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
+
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
+    m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
+    m.write_physical_u32(ring_gpa + 12, entry_count);
+    m.write_physical_u32(ring_gpa + 16, entry_stride_bytes);
+    m.write_physical_u32(ring_gpa + 20, 0);
+    m.write_physical_u32(ring_gpa + 24, 0); // head
+    m.write_physical_u32(ring_gpa + 28, 3); // tail
+
+    let signal_fence = 1u64;
+    let fence2 = 2u64;
+    let desc0_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
+    let desc1_gpa = desc0_gpa + u64::from(entry_stride_bytes);
+    let desc2_gpa = desc1_gpa + u64::from(entry_stride_bytes);
+
+    // Descriptor 0 (non-vsync present).
+    m.write_physical_u32(desc0_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc0_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_PRESENT); // flags
+    m.write_physical_u32(desc0_gpa + 8, 0); // context_id
+    m.write_physical_u32(desc0_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
+    m.write_physical_u64(desc0_gpa + 16, cmd0_gpa);
+    m.write_physical_u32(desc0_gpa + 24, cmd0.len() as u32); // cmd_size_bytes
+    m.write_physical_u32(desc0_gpa + 28, 0);
+    m.write_physical_u64(desc0_gpa + 32, 0); // alloc_table_gpa
+    m.write_physical_u32(desc0_gpa + 40, 0); // alloc_table_size_bytes
+    m.write_physical_u32(desc0_gpa + 44, 0);
+    m.write_physical_u64(desc0_gpa + 48, signal_fence);
+    m.write_physical_u64(desc0_gpa + 56, 0);
+
+    // Descriptor 1 (vsync present) reusing the same fence value.
+    m.write_physical_u32(desc1_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc1_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_PRESENT); // flags
+    m.write_physical_u32(desc1_gpa + 8, 0); // context_id
+    m.write_physical_u32(desc1_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
+    m.write_physical_u64(desc1_gpa + 16, cmd1_gpa);
+    m.write_physical_u32(desc1_gpa + 24, cmd1.len() as u32); // cmd_size_bytes
+    m.write_physical_u32(desc1_gpa + 28, 0);
+    m.write_physical_u64(desc1_gpa + 32, 0); // alloc_table_gpa
+    m.write_physical_u32(desc1_gpa + 40, 0); // alloc_table_size_bytes
+    m.write_physical_u32(desc1_gpa + 44, 0);
+    m.write_physical_u64(desc1_gpa + 48, signal_fence);
+    m.write_physical_u64(desc1_gpa + 56, 0);
+
+    // Descriptor 2 (new fence value behind the duplicate fence).
+    m.write_physical_u32(desc2_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc2_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_PRESENT); // flags
+    m.write_physical_u32(desc2_gpa + 8, 0); // context_id
+    m.write_physical_u32(desc2_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
+    m.write_physical_u64(desc2_gpa + 16, cmd2_gpa);
+    m.write_physical_u32(desc2_gpa + 24, cmd2.len() as u32); // cmd_size_bytes
+    m.write_physical_u32(desc2_gpa + 28, 0);
+    m.write_physical_u64(desc2_gpa + 32, 0); // alloc_table_gpa
+    m.write_physical_u32(desc2_gpa + 40, 0); // alloc_table_size_bytes
+    m.write_physical_u32(desc2_gpa + 44, 0);
+    m.write_physical_u64(desc2_gpa + 48, fence2);
+    m.write_physical_u64(desc2_gpa + 56, 0);
+
+    // Program BAR0 registers and enable scanout/vblank scheduling.
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
+        (ring_gpa >> 32) as u32,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES),
+        ring_size_bytes,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
+        pci::AEROGPU_RING_CONTROL_ENABLE,
+    );
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+
+    // Doorbell consumes the ring and queues both submissions.
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
+    m.process_aerogpu();
+    assert_eq!(m.aerogpu_drain_submissions().len(), 3);
+
+    // Host reports completion for the duplicated fence.
+    m.aerogpu_complete_fence(signal_fence);
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, signal_fence);
+
+    // Host reports completion for the later fence; it must not be blocked by a stale duplicate
+    // fence entry.
+    m.aerogpu_complete_fence(fence2);
+    let completed_fence = read_mmio_u64(
+        &mut m,
+        bar0,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO,
+        pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI,
+    );
+    assert_eq!(completed_fence, fence2);
+}
