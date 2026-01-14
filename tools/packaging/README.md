@@ -248,6 +248,24 @@ SOURCE_DATE_EPOCH=0 cargo run --release --locked \
   --volume-id AEROVIRTIO_WIN7_0_0_0
 ```
 
+### ISO listing helper (`aero_iso_ls`)
+
+For tooling that needs to *inspect* ISO contents (for example, `tools/driver-iso/verify_iso.py`),
+the packager workspace also provides a small helper that lists file paths from the ISO’s Joliet tree:
+
+- Binary: `aero_iso_ls`
+- Input: an ISO path (`--iso`)
+- Output: one absolute path per line (e.g. `/win7/amd64/viostor/viostor.inf`)
+
+Example:
+
+```bash
+cargo run --release --locked \
+  --manifest-path tools/packaging/aero_packager/Cargo.toml \
+  --bin aero_iso_ls -- \
+  --iso /path/to/out.iso
+```
+
 ### `manifest.json` input hashes (provenance)
 
 `manifest.json` includes an `inputs` section recording hashes for the **packaging spec** and the
