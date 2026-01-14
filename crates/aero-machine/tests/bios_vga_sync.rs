@@ -394,6 +394,7 @@ fn bios_vbe_sync_mode_and_custom_lfb_base() {
         ram_size_bytes: 64 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         vga_lfb_base: Some(custom_lfb_base),
         enable_serial: false,
         enable_i8042: false,
