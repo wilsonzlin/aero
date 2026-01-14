@@ -15291,6 +15291,8 @@ mod tests {
             headless.vbe_lfb_base(),
             u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
         );
+        // When VGA is disabled, `aero-machine` should not request a BIOS LFB base override.
+        assert_eq!(headless.bios.config().vbe_lfb_base, None);
 
         // When VGA is enabled, the BIOS should report the configured MMIO-mapped base.
         let lfb_base = 0xE100_0000;
@@ -15307,6 +15309,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(vga.vbe_lfb_base(), u64::from(lfb_base));
+        assert_eq!(vga.bios.config().vbe_lfb_base, Some(lfb_base));
     }
 
     #[test]
