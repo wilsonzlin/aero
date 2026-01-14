@@ -1277,10 +1277,10 @@ impl NvmeController {
         }
         let qid = (cmd.cdw10 & 0xffff) as u16;
         if qid == 0 {
-            return (NvmeStatus::INVALID_QID, 0);
+            return (NvmeStatus::INVALID_FIELD, 0);
         }
         if self.io_sqs.remove(&qid).is_none() {
-            return (NvmeStatus::INVALID_QID, 0);
+            return (NvmeStatus::INVALID_FIELD, 0);
         }
         // Clear any pending doorbell update so recreating the queue can't accidentally pick up an
         // old tail value.
@@ -1296,10 +1296,10 @@ impl NvmeController {
         }
         let qid = (cmd.cdw10 & 0xffff) as u16;
         if qid == 0 {
-            return (NvmeStatus::INVALID_QID, 0);
+            return (NvmeStatus::INVALID_FIELD, 0);
         }
         if !self.io_cqs.contains_key(&qid) {
-            return (NvmeStatus::INVALID_QID, 0);
+            return (NvmeStatus::INVALID_FIELD, 0);
         }
         // NVMe requires SQs to be deleted before the CQ they target.
         if self.io_sqs.values().any(|sq| sq.cqid == qid) {
@@ -4461,7 +4461,7 @@ mod tests {
     }
 
     #[test]
-    fn admin_delete_io_queues_nonexistent_returns_invalid_qid() {
+    fn admin_delete_io_queues_nonexistent_returns_invalid_field() {
         let disk = TestDisk::new(1024);
         let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
 
@@ -4480,7 +4480,7 @@ mod tests {
             cdw15: 0,
         };
         let (status, _) = ctrl.cmd_delete_io_sq(del_sq);
-        assert_eq!(status, NvmeStatus::INVALID_QID);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
 
         let del_cq = NvmeCommand {
             opc: 0x04,
@@ -4497,7 +4497,7 @@ mod tests {
             cdw15: 0,
         };
         let (status, _) = ctrl.cmd_delete_io_cq(del_cq);
-        assert_eq!(status, NvmeStatus::INVALID_QID);
+        assert_eq!(status, NvmeStatus::INVALID_FIELD);
     }
 
     #[test]
