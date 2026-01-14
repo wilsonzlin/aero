@@ -290,6 +290,7 @@ fn said_machine_rust_only_runs_machine_tests() -> Result<(), Box<dyn std::error:
         "--locked",
         "machine_uhci",
         "uhci_snapshot",
+        "machine_uhci_snapshot_roundtrip",
         "uhci_usb_topology_api",
         "machine_usb_attach_at_path",
         "machine_ehci",
@@ -300,6 +301,7 @@ fn said_machine_rust_only_runs_machine_tests() -> Result<(), Box<dyn std::error:
         "machine_uhci_synthetic_usb_hid_gamepad",
         "machine_uhci_synthetic_usb_hid_reports",
         "machine_xhci",
+        "machine_xhci_snapshot",
         "xhci_snapshot",
         "machine_xhci_usb_attach_at_path",
     ] {
