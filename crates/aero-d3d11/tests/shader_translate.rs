@@ -2389,6 +2389,11 @@ fn translates_f32tof16_via_pack2x16float_masking_low_16_bits() {
         "expected f32tof16 lowering to mask low 16 bits:\n{}",
         translated.wgsl
     );
+    assert!(
+        translated.wgsl.contains(", 0.0)) & 0xffffu"),
+        "expected f32tof16 lowering to pack per-component half bits (second lane = 0.0):\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]
@@ -2435,6 +2440,11 @@ fn translates_f16tof32_via_unpack2x16float() {
     assert!(
         translated.wgsl.contains("& 0xffffu"),
         "expected f16tof32 lowering to mask low 16 bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("& 0xffffu).x"),
+        "expected f16tof32 to unpack the low half of each lane via unpack2x16float(...).x:\n{}",
         translated.wgsl
     );
 }
@@ -2486,6 +2496,11 @@ fn translates_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
     assert!(
         translated.wgsl.contains("& 0xffffu"),
         "expected f16tof32 lowering to mask low 16 bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("& 0xffffu).x"),
+        "expected f16tof32 to unpack the low half of each lane via unpack2x16float(...).x:\n{}",
         translated.wgsl
     );
     assert!(
