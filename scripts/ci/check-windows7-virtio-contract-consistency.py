@@ -24,6 +24,7 @@ import difflib
 import json
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Iterable, Mapping
@@ -996,6 +997,76 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
         )
 
 
+def _self_test_validate_win7_virtio_inf_msi_settings() -> None:
+    bad = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT]
+CopyFiles = Foo
+
+; This AddReg is not referenced by the install section above.
+[Unused]
+AddReg = Dummy
+
+[Dummy]
+HKR, "Foo", "Bar", 0x00010001, 1
+
+[MsiReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+"""
+
+    good = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT]
+CopyFiles = Foo
+
+[Install.NT.HW]
+AddReg = MsiReg
+
+[MsiReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        bad_path = Path(td) / "bad.inf"
+        bad_path.write_text(bad, encoding="utf-8")
+        bad_errors = validate_win7_virtio_inf_msi_settings("virtio-net", bad_path)
+        if not bad_errors:
+            fail(
+                "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly passed when MSI AddReg section was not install-referenced"
+            )
+
+        good_path = Path(td) / "good.inf"
+        good_path.write_text(good, encoding="utf-8")
+        good_errors = validate_win7_virtio_inf_msi_settings("virtio-net", good_path)
+        if good_errors:
+            fail(
+                format_error(
+                    "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly failed for a well-formed sample INF:",
+                    good_errors,
+                )
+            )
+
+
 def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> list[str]:
     """
     Ensure a canonical Win7 virtio INF keeps MSI/MSI-X opt-in settings.
@@ -1052,10 +1123,9 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
     interrupt_key_lines = scan.interrupt_management_key_lines
     msi_supported_entries = scan.msi_supported
     msg_limit_entries = scan.message_number_limit
-    if referenced_addreg_sections:
-        interrupt_key_lines = tuple(o for o in interrupt_key_lines if _is_in_referenced_addreg_section(o.line_no))
-        msi_supported_entries = tuple(o for o in msi_supported_entries if _is_in_referenced_addreg_section(o.line_no))
-        msg_limit_entries = tuple(o for o in msg_limit_entries if _is_in_referenced_addreg_section(o.line_no))
+    interrupt_key_lines = tuple(o for o in interrupt_key_lines if _is_in_referenced_addreg_section(o.line_no))
+    msi_supported_entries = tuple(o for o in msi_supported_entries if _is_in_referenced_addreg_section(o.line_no))
+    msg_limit_entries = tuple(o for o in msg_limit_entries if _is_in_referenced_addreg_section(o.line_no))
 
     if not interrupt_key_lines:
         errors.append(
@@ -2319,6 +2389,7 @@ def main() -> None:
     errors: list[str] = []
 
     _self_test_scan_inf_msi_interrupt_settings()
+    _self_test_validate_win7_virtio_inf_msi_settings()
 
     w7_md = read_text(W7_VIRTIO_CONTRACT_MD)
     windows_md = read_text(WINDOWS_DEVICE_CONTRACT_MD)
