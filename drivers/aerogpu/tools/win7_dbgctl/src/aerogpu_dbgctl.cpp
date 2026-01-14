@@ -1129,6 +1129,9 @@ typedef struct EscapeThreadCtx {
 typedef struct EscapeWorker {
   HANDLE request_event;
   volatile EscapeThreadCtx *ctx;
+  EscapeThreadCtx ctx_storage;
+  void *buf_storage;
+  UINT buf_storage_capacity;
 } EscapeWorker;
 
 static EscapeWorker *g_escape_worker = NULL;
@@ -1199,8 +1202,19 @@ static EscapeWorker *CreateEscapeWorker() {
     return NULL;
   }
 
+  worker->ctx_storage.done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!worker->ctx_storage.done_event) {
+    CloseHandle(worker->request_event);
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  worker->buf_storage = NULL;
+  worker->buf_storage_capacity = 0;
+
   HANDLE thread = CreateThread(NULL, 0, EscapeWorkerThreadProc, worker, 0, NULL);
   if (!thread) {
+    CloseHandle(worker->ctx_storage.done_event);
     CloseHandle(worker->request_event);
     HeapFree(GetProcessHeap(), 0, worker);
     return NULL;
@@ -1230,6 +1244,9 @@ static NTSTATUS SendAerogpuEscapeEx(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapte
   // escape call. Many dbgctl commands (e.g. watch-fence) can issue thousands of escapes and would
   // otherwise be prohibitively slow.
   //
+  // It also reuses a persistent heap buffer for the escape packet so bulk operations like
+  // `--dump-last-submit` and large GPA dumps do not do per-chunk allocations.
+  //
   // If the call times out, leak the context (the worker thread may be blocked inside the kernel
   // thunk) and set a global so we avoid calling D3DKMTCloseAdapter. Future calls will lazily spin
   // up a new worker thread.
@@ -1249,51 +1266,45 @@ static NTSTATUS SendAerogpuEscapeEx(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapte
   }
   LeaveCriticalSection(&g_escape_worker_cs);
 
-  EscapeThreadCtx *ctx = (EscapeThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx));
-  if (!ctx) {
-    return STATUS_INSUFFICIENT_RESOURCES;
+  if (bufSize > worker->buf_storage_capacity || !worker->buf_storage) {
+    void *newBuf = NULL;
+    if (worker->buf_storage) {
+      newBuf = HeapReAlloc(GetProcessHeap(), 0, worker->buf_storage, (SIZE_T)bufSize);
+    } else {
+      newBuf = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)bufSize);
+    }
+    if (!newBuf) {
+      return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    worker->buf_storage = newBuf;
+    worker->buf_storage_capacity = bufSize;
   }
 
-  void *bufCopy = HeapAlloc(GetProcessHeap(), 0, bufSize);
-  if (!bufCopy) {
-    HeapFree(GetProcessHeap(), 0, ctx);
-    return STATUS_INSUFFICIENT_RESOURCES;
-  }
-  memcpy(bufCopy, buf, bufSize);
+  // Prepare the request payload in worker-owned memory (safe to leak on timeout).
+  memcpy(worker->buf_storage, buf, bufSize);
+  ResetEvent(worker->ctx_storage.done_event);
 
-  ctx->f = f;
-  ctx->hAdapter = hAdapter;
-  ctx->flags_value = flagsValue;
-  ctx->buf = bufCopy;
-  ctx->bufSize = bufSize;
-  ctx->status = 0;
-  ctx->done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
-  if (!ctx->done_event) {
-    HeapFree(GetProcessHeap(), 0, bufCopy);
-    HeapFree(GetProcessHeap(), 0, ctx);
-    return STATUS_INSUFFICIENT_RESOURCES;
-  }
+  worker->ctx_storage.f = f;
+  worker->ctx_storage.hAdapter = hAdapter;
+  worker->ctx_storage.flags_value = flagsValue;
+  worker->ctx_storage.buf = worker->buf_storage;
+  worker->ctx_storage.bufSize = bufSize;
+  worker->ctx_storage.status = 0;
 
-  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, ctx, NULL) != NULL) {
+  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
     // Unexpected: another escape is already in-flight on the worker. This should not happen
     // in normal dbgctl usage (single-threaded), but handle defensively.
-    CloseHandle(ctx->done_event);
-    HeapFree(GetProcessHeap(), 0, bufCopy);
-    HeapFree(GetProcessHeap(), 0, ctx);
     return STATUS_INVALID_DEVICE_STATE;
   }
   SetEvent(worker->request_event);
 
-  DWORD w = WaitForSingleObject(ctx->done_event, g_escape_timeout_ms);
+  DWORD w = WaitForSingleObject(worker->ctx_storage.done_event, g_escape_timeout_ms);
   if (w == WAIT_OBJECT_0) {
     // Worker completed; safe to copy results back and clean up.
-    const NTSTATUS st = ctx->status;
+    const NTSTATUS st = worker->ctx_storage.status;
     if (NT_SUCCESS(st)) {
-      memcpy(buf, ctx->buf, bufSize);
+      memcpy(buf, worker->buf_storage, bufSize);
     }
-    CloseHandle(ctx->done_event);
-    HeapFree(GetProcessHeap(), 0, ctx->buf);
-    HeapFree(GetProcessHeap(), 0, ctx);
     return st;
   }
 
