@@ -62,13 +62,15 @@ supports *sector-aligned* byte offsets and lengths.
 
 ## Interrupts
 
-- Legacy INTx signalling is modelled via `NvmeController::intx_level`.
-- The PCI wrapper (`NvmePciDevice`) also supports a single-vector MSI capability. When the guest
-  enables MSI and the platform attaches an `aero_platform::interrupts::msi::MsiTrigger` sink via
-  `NvmePciDevice::set_msi_target`, NVMe completions trigger MSI deliveries instead of asserting
-  INTx.
-- MSI-X is also supported with a single table entry backed by BAR0; when MSI-X is enabled and an
-  MSI sink is attached, completions trigger MSI-X deliveries instead of asserting INTx.
+- Legacy INTx signalling is modelled via `NvmeController::intx_level` and exposed via
+  `NvmePciDevice::irq_level()`.
+- The PCI wrapper (`NvmePciDevice`) supports message-signaled interrupts when the platform attaches
+  an `aero_platform::interrupts::msi::MsiTrigger` sink via `NvmePciDevice::set_msi_target`:
+  - **MSI**: single-vector (`MsiCapability`).
+  - **MSI-X**: BAR0-backed table + PBA (single vector; table entry 0).
+- When MSI-X is enabled it is used in preference to MSI; when neither is enabled (or no MSI sink is
+  attached), the device falls back to legacy INTx.
+- MSI-X table/PBA programming state is preserved across snapshot/restore.
 
 ## Best-effort semantics
 
