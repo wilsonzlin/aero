@@ -317,6 +317,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test xhci_enum_smoke \
   --test xhci_controller_webusb_ep0 \
   --test xhci_doorbell0 \
+  --test xhci_stop_endpoint_unschedules \
   --test xhci_usbcmd_run_gates_transfers \
   --test xhci_webusb_passthrough
 # Full USB suite:
