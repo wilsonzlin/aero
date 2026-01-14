@@ -41,7 +41,7 @@ fn verify_block(
                 then_block,
                 else_block,
             } => {
-                verify_cond(cond)?;
+                verify_cond(cond, stage)?;
                 verify_block(then_block, stage, depth + 1, loop_depth)?;
                 if let Some(else_block) = else_block {
                     verify_block(else_block, stage, depth + 1, loop_depth)?;
@@ -73,7 +73,7 @@ fn verify_block(
                         message: "breakc outside of a loop".to_owned(),
                     });
                 }
-                verify_cond(cond)?;
+                verify_cond(cond, stage)?;
             }
             Stmt::Discard { src } => {
                 if stage != ShaderStage::Pixel {
@@ -81,7 +81,7 @@ fn verify_block(
                         message: "discard/texkill is only valid in pixel shaders".to_owned(),
                     });
                 }
-                verify_src(src)?;
+                verify_src(src, stage)?;
             }
         }
     }
@@ -155,7 +155,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
                     message: "derivative instructions are only valid in pixel shaders".to_owned(),
                 });
             }
-            verify_src(src)?;
+            verify_src(src, stage)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::Mova {
@@ -168,7 +168,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
                     message: "mova destination is not an address register".to_owned(),
                 });
             }
-            verify_src(src)?;
+            verify_src(src, stage)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::Add {
@@ -252,8 +252,8 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             n: _,
             modifiers,
         } => {
-            verify_src(src0)?;
-            verify_src(src1)?;
+            verify_src(src0, stage)?;
+            verify_src(src1, stage)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::Select {
@@ -263,9 +263,9 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             src_lt,
             modifiers,
         } => {
-            verify_src(cond)?;
-            verify_src(src_ge)?;
-            verify_src(src_lt)?;
+            verify_src(cond, stage)?;
+            verify_src(src_ge, stage)?;
+            verify_src(src_lt, stage)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::Dp2Add {
@@ -275,9 +275,9 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             src2,
             modifiers,
         } => {
-            verify_src(src0)?;
-            verify_src(src1)?;
-            verify_src(src2)?;
+            verify_src(src0, stage)?;
+            verify_src(src1, stage)?;
+            verify_src(src2, stage)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::Mad {
@@ -287,9 +287,9 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             src2,
             modifiers,
         } => {
-            verify_src(src0)?;
-            verify_src(src1)?;
-            verify_src(src2)?;
+            verify_src(src0, stage)?;
+            verify_src(src1, stage)?;
+            verify_src(src2, stage)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::Lrp {
@@ -299,9 +299,9 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             src2,
             modifiers,
         } => {
-            verify_src(src0)?;
-            verify_src(src1)?;
-            verify_src(src2)?;
+            verify_src(src0, stage)?;
+            verify_src(src1, stage)?;
+            verify_src(src2, stage)?;
             verify_modifiers(modifiers)?;
         }
         IrOp::SinCos {
@@ -311,12 +311,12 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             src2,
             modifiers,
         } => {
-            verify_src(src)?;
+            verify_src(src, stage)?;
             if let Some(src1) = src1 {
-                verify_src(src1)?;
+                verify_src(src1, stage)?;
             }
             if let Some(src2) = src2 {
-                verify_src(src2)?;
+                verify_src(src2, stage)?;
             }
             verify_modifiers(modifiers)?;
         }
@@ -340,7 +340,7 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
                     message: "texldb/Bias texture sampling is only valid in pixel shaders".to_owned(),
                 });
             }
-            verify_src(coord)?;
+            verify_src(coord, stage)?;
             match kind {
                 TexSampleKind::Grad => {
                     let ddx = ddx.as_ref().ok_or_else(|| VerifyError {
@@ -349,8 +349,8 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
                     let ddy = ddy.as_ref().ok_or_else(|| VerifyError {
                         message: "texldd/Grad texture sampling is missing ddy operand".to_owned(),
                     })?;
-                    verify_src(ddx)?;
-                    verify_src(ddy)?;
+                    verify_src(ddx, stage)?;
+                    verify_src(ddy, stage)?;
                 }
                 TexSampleKind::ImplicitLod { .. } | TexSampleKind::Bias | TexSampleKind::ExplicitLod => {
                     if ddx.is_some() || ddy.is_some() {
@@ -383,17 +383,17 @@ fn verify_modifiers(mods: &crate::sm3::ir::InstModifiers) -> Result<(), VerifyEr
     Ok(())
 }
 
-fn verify_cond(cond: &Cond) -> Result<(), VerifyError> {
+fn verify_cond(cond: &Cond, stage: ShaderStage) -> Result<(), VerifyError> {
     match cond {
-        Cond::NonZero { src } => verify_src(src),
+        Cond::NonZero { src } => verify_src(src, stage),
         Cond::Compare { op, src0, src1 } => {
             if matches!(op, CompareOp::Unknown(_)) {
                 return Err(VerifyError {
                     message: format!("unknown comparison op in condition: {op:?}"),
                 });
             }
-            verify_src(src0)?;
-            verify_src(src1)?;
+            verify_src(src0, stage)?;
+            verify_src(src1, stage)?;
             Ok(())
         }
         Cond::Predicate { pred } => {
@@ -407,11 +407,27 @@ fn verify_cond(cond: &Cond) -> Result<(), VerifyError> {
     }
 }
 
-fn verify_src(src: &Src) -> Result<(), VerifyError> {
+fn verify_src(src: &Src, stage: ShaderStage) -> Result<(), VerifyError> {
     if matches!(src.modifier, SrcModifier::Unknown(_)) {
         return Err(VerifyError {
             message: "unknown source modifier in IR".to_owned(),
         });
+    }
+    if src.reg.file == RegFile::MiscType {
+        if stage != ShaderStage::Pixel {
+            return Err(VerifyError {
+                message: "MiscType (vPos/vFace) inputs are only supported in pixel shaders"
+                    .to_owned(),
+            });
+        }
+        if src.reg.index > 1 {
+            return Err(VerifyError {
+                message: format!(
+                    "unsupported MiscType input misc{} (only misc0=vPos and misc1=vFace are supported)",
+                    src.reg.index
+                ),
+            });
+        }
     }
     Ok(())
 }
