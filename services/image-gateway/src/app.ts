@@ -271,23 +271,34 @@ function formatChunkObjectName(chunkIndex: number): string {
   return String(chunkIndex).padStart(CHUNK_INDEX_WIDTH, "0");
 }
 
-function parseChunkIndexParam(raw: string): number {
+function parseChunkObjectNameParam(raw: string): string {
   const match = raw.match(/^(\d+)(?:\.bin)?$/);
   if (!match) {
     throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
   }
-  const chunkIndex = Number.parseInt(match[1]!, 10);
+  const digits = match[1]!;
+  // Defensive bound: avoid building pathological S3 keys from attacker-controlled huge path
+  // segments. Keep aligned with the chunked format spec (`chunkIndexWidth <= 32`).
+  if (digits.length > 32) {
+    throw new ApiError(400, "chunkIndex is too long", "BAD_REQUEST");
+  }
+
+  // If the caller used the `.bin` form, preserve the digit width as-is to support variable
+  // `chunkIndexWidth` manifests (e.g. `00.bin`..`99.bin`).
+  if (raw.endsWith(".bin")) return digits;
+
+  // For the numeric form (`/chunks/42`), continue to use the gateway's canonical width.
+  const chunkIndex = Number.parseInt(digits, 10);
   if (!Number.isFinite(chunkIndex) || !Number.isInteger(chunkIndex) || chunkIndex < 0) {
     throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
   }
-  return chunkIndex;
+  return formatChunkObjectName(chunkIndex);
 }
 
-function getChunkObjectKey(record: ImageRecord, chunkIndex: number): string | undefined {
+function getChunkObjectKey(record: ImageRecord, chunkObjectName: string): string | undefined {
   const prefix = getChunkedBasePrefix(record);
   if (prefix === undefined) return undefined;
-  const name = formatChunkObjectName(chunkIndex);
-  return `${prefix}chunks/${name}.bin`;
+  return `${prefix}chunks/${chunkObjectName}.bin`;
 }
 
 function buildChunkedCacheControl(config: Config): string {
@@ -888,8 +899,8 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
-    const chunkIndex = parseChunkIndexParam(params.chunkIndex);
-    const key = getChunkObjectKey(record, chunkIndex);
+    const chunkObjectName = parseChunkObjectNameParam(params.chunkIndex);
+    const key = getChunkObjectKey(record, chunkObjectName);
     if (!key) {
       throw new ApiError(404, "Chunked image not available", "NOT_FOUND");
     }
@@ -968,8 +979,8 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
-    const chunkIndex = parseChunkIndexParam(params.chunkIndex);
-    const key = getChunkObjectKey(record, chunkIndex);
+    const chunkObjectName = parseChunkObjectNameParam(params.chunkIndex);
+    const key = getChunkObjectKey(record, chunkObjectName);
     if (!key) {
       throw new ApiError(404, "Chunked image not available", "NOT_FOUND");
     }
