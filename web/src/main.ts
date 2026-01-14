@@ -5493,15 +5493,55 @@ function renderMicrophonePanel(): HTMLElement {
 
         const sanitizeTrackInfo = (value: unknown): Record<string, unknown> | null => {
           if (!value || typeof value !== "object") return null;
-          const out = { ...(value as Record<string, unknown>) } as Record<string, unknown>;
-          for (const key of ["deviceId", "groupId"]) {
-            const v = out[key];
-            if (typeof v === "string" && v.length) {
-              out[`${key}Hash`] = fnv1a32Hex(deviceIdEncoder.encode(v));
-              delete out[key];
+
+          const seen = new WeakMap<object, unknown>();
+          const collectStrings = (v: unknown, out: string[]): void => {
+            if (typeof v === "string") {
+              out.push(v);
+              return;
             }
-          }
-          return out;
+            if (Array.isArray(v)) {
+              for (const item of v) collectStrings(item, out);
+              return;
+            }
+            if (v && typeof v === "object") {
+              for (const item of Object.values(v as Record<string, unknown>)) {
+                collectStrings(item, out);
+              }
+            }
+          };
+
+          const sanitize = (v: unknown): unknown => {
+            if (!v || typeof v !== "object") return v;
+            if (Array.isArray(v)) return v.map(sanitize);
+
+            const obj = v as Record<string, unknown>;
+            const cached = seen.get(obj);
+            if (cached) return cached;
+
+            const out: Record<string, unknown> = {};
+            seen.set(obj, out);
+            for (const [key, val] of Object.entries(obj)) {
+              if (key === "deviceId" || key === "groupId") {
+                const strings: string[] = [];
+                collectStrings(val, strings);
+                const hashes = Array.from(
+                  new Set(strings.filter((s) => typeof s === "string" && s.length).map((s) => fnv1a32Hex(deviceIdEncoder.encode(s)))),
+                );
+                if (hashes.length === 1) {
+                  out[`${key}Hash`] = hashes[0];
+                } else if (hashes.length > 1) {
+                  out[`${key}Hashes`] = hashes;
+                }
+                continue;
+              }
+              out[key] = sanitize(val);
+            }
+            return out;
+          };
+
+          const out = sanitize(value);
+          return out && typeof out === "object" && !Array.isArray(out) ? (out as Record<string, unknown>) : null;
         };
         const dbg = mic.getDebugInfo();
         const deviceIdHash = deviceSelect.value ? fnv1a32Hex(deviceIdEncoder.encode(deviceSelect.value)) : null;
