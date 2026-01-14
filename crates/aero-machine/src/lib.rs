@@ -409,13 +409,14 @@ pub struct MachineConfig {
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_xhci: bool,
     /// Whether to attach an external USB hub behind the UHCI root hub and populate it with a fixed
-    /// set of synthetic USB HID devices (keyboard + mouse + gamepad).
+    /// set of synthetic USB HID devices (keyboard + mouse + gamepad + consumer-control).
     ///
     /// This matches the browser runtime topology described in `docs/08-input-devices.md`:
     /// - UHCI root port 0: external hub
     /// - hub port 1: USB HID keyboard
     /// - hub port 2: USB HID mouse
     /// - hub port 3: USB HID gamepad (Aero's fixed 8-byte report)
+    /// - hub port 4: USB HID consumer-control (media keys, Usage Page 0x0C)
     ///
     /// Requires [`MachineConfig::enable_uhci`].
     pub enable_synthetic_usb_hid: bool,
