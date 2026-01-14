@@ -5103,12 +5103,15 @@ function renderAudioPanel(): HTMLElement {
 
         status.textContent = "Exporting audio QA bundle…";
 
+        const hostMediaDevices = await snapshotHostMediaDevicesForExport();
+
         const metricsReport = {
           timeIso,
           build: getBuildInfoForExport(),
           userAgent: navigator.userAgent,
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
           host: snapshotHostEnvForExport(),
+          hostMediaDevices,
           ringBufferOwners: {
             audioOutput: {
               effective: workerCoordinator.getAudioRingBufferOwner(),
@@ -5208,57 +5211,10 @@ function renderAudioPanel(): HTMLElement {
 
         // Host media device inventory (best-effort). Useful for debugging microphone failures
         // (permissions, device selection, supported constraints).
-        try {
-          const media = navigator.mediaDevices;
-          if (!media) throw new Error("navigator.mediaDevices is unavailable.");
-
-          const supportedConstraints =
-            typeof media.getSupportedConstraints === "function" ? media.getSupportedConstraints() : null;
-
-          let microphonePermissionState: string | null = null;
-          try {
-            // Permissions API is not available in all browsers. Best-effort only.
-            const navAny = navigator as unknown as { permissions?: { query?: (desc: { name: string }) => Promise<unknown> } };
-            const status = await navAny.permissions?.query?.({ name: "microphone" });
-            const state = (status as { state?: unknown } | null)?.state;
-            if (typeof state === "string") microphonePermissionState = state;
-          } catch {
-            // ignore
-          }
-
-          if (typeof media.enumerateDevices !== "function") {
-            throw new Error("navigator.mediaDevices.enumerateDevices is unavailable.");
-          }
-          const devices = await media.enumerateDevices();
-
-          entries.push({
-            path: `${dir}/host-media-devices.json`,
-            data: encoder.encode(
-              JSON.stringify(
-                {
-                  timeIso,
-                  ok: true,
-                  microphonePermissionState,
-                  supportedConstraints,
-                  devices: devices.map((d) => ({
-                    kind: d.kind,
-                    label: d.label,
-                    deviceIdHash: d.deviceId ? fnv1a32Hex(encoder.encode(d.deviceId)) : "",
-                    groupIdHash: d.groupId ? fnv1a32Hex(encoder.encode(d.groupId)) : "",
-                  })),
-                },
-                null,
-                2,
-              ),
-            ),
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          entries.push({
-            path: `${dir}/host-media-devices.json`,
-            data: encoder.encode(JSON.stringify({ timeIso, ok: false, error: message }, null, 2)),
-          });
-        }
+        entries.push({
+          path: `${dir}/host-media-devices.json`,
+          data: encoder.encode(JSON.stringify({ timeIso, ...hostMediaDevices }, null, 2)),
+        });
 
         // Worker coordinator snapshot (best-effort): captures worker state/health + wasm variants.
         try {
