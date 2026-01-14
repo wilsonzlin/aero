@@ -928,6 +928,7 @@ jobs:
           blk_miniport_flags_host_marker=""
           blk_miniport_reset_recovery_host_marker=""
           qemu_stderr_line=""
+          harness_cmdline=""
           qemu_cmdline=""
           runner_line=""
           python_version_line=""
@@ -1017,6 +1018,7 @@ jobs:
               failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
               # Fallback: last explicit "ERROR:" line.
               error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
+              harness_cmdline="$(awk '/Executing harness:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
               qemu_cmdline="$(awk '/Launching QEMU:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
               runner_line="$(grep -m1 -F 'Runner:' "${harness_log}" | tr -d '\r' || true)"
               python_version_line="$(grep -m1 -F 'python3:' "${harness_log}" | tr -d '\r' || true)"
@@ -1087,6 +1089,9 @@ jobs:
             fi
             if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_stderr_line}" ]]; then
               echo "- QEMU stderr (last line): \`${qemu_stderr_line}\`"
+            fi
+            if [[ "${{ steps.harness.outcome }}" != "success" && -n "${harness_cmdline}" ]]; then
+              echo "- Harness command: \`${harness_cmdline}\`"
             fi
             if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_cmdline}" ]]; then
               echo "- QEMU command: \`${qemu_cmdline}\`"
