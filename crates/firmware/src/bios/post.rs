@@ -188,6 +188,20 @@ impl Bios {
             sector_count: Some(entry.sector_count),
         });
 
+        // Cache the El Torito boot metadata so the boot image can query it via INT 13h AH=4Bh.
+        //
+        // This is commonly used by CD boot loaders such as ISOLINUX, even when running in
+        // "no emulation" mode.
+        self.el_torito_boot_info = Some(ElToritoBootInfo {
+            media_type: ElToritoBootMediaType::NoEmulation,
+            boot_drive: self.config.boot_drive,
+            controller_index: 0,
+            boot_image_lba: Some(entry.load_rba),
+            load_segment: Some(entry.load_segment),
+            sector_count: Some(entry.sector_count),
+            boot_catalog_lba: Some(entry.boot_catalog_lba),
+        });
+
         let start_lba = u64::from(entry.load_rba)
             .checked_mul(4)
             .ok_or("El Torito boot image load past end-of-image")?;

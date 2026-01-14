@@ -2032,6 +2032,149 @@ mod tests {
     }
 
     #[test]
+    fn int13_eltorito_get_status_reflects_metadata_cached_by_post_cd_boot() {
+        const ISO_BLOCK_BYTES: usize = 2048;
+        const ISO9660_STANDARD_IDENTIFIER: &[u8; 5] = b"CD001";
+        const ISO9660_VERSION: u8 = 1;
+
+        fn write_iso_block(img: &mut [u8], iso_lba: usize, block: &[u8; ISO_BLOCK_BYTES]) {
+            let off = iso_lba * ISO_BLOCK_BYTES;
+            img[off..off + ISO_BLOCK_BYTES].copy_from_slice(block);
+        }
+
+        fn build_el_torito_boot_system_id() -> [u8; 32] {
+            let mut out = [b' '; 32];
+            out[..b"EL TORITO SPECIFICATION".len()].copy_from_slice(b"EL TORITO SPECIFICATION");
+            out
+        }
+
+        fn build_minimal_iso_no_emulation(
+            boot_catalog_lba: u32,
+            boot_image_lba: u32,
+            boot_image_blocks: &[[u8; ISO_BLOCK_BYTES]],
+            load_segment: u16,
+            sector_count: u16,
+        ) -> Vec<u8> {
+            let total_blocks = (boot_image_lba as usize)
+                .saturating_add(boot_image_blocks.len())
+                .max(32);
+            let mut img = vec![0u8; total_blocks * ISO_BLOCK_BYTES];
+
+            // Primary Volume Descriptor at LBA16 (type 1).
+            let mut pvd = [0u8; ISO_BLOCK_BYTES];
+            pvd[0] = 0x01;
+            pvd[1..6].copy_from_slice(ISO9660_STANDARD_IDENTIFIER);
+            pvd[6] = ISO9660_VERSION;
+            write_iso_block(&mut img, 16, &pvd);
+
+            // Boot Record Volume Descriptor at LBA17 (type 0).
+            let mut brvd = [0u8; ISO_BLOCK_BYTES];
+            brvd[0] = 0x00;
+            brvd[1..6].copy_from_slice(ISO9660_STANDARD_IDENTIFIER);
+            brvd[6] = ISO9660_VERSION;
+            brvd[7..39].copy_from_slice(&build_el_torito_boot_system_id());
+            brvd[0x47..0x4B].copy_from_slice(&boot_catalog_lba.to_le_bytes());
+            write_iso_block(&mut img, 17, &brvd);
+
+            // Volume Descriptor Set Terminator at LBA18 (type 255).
+            let mut term = [0u8; ISO_BLOCK_BYTES];
+            term[0] = 0xFF;
+            term[1..6].copy_from_slice(ISO9660_STANDARD_IDENTIFIER);
+            term[6] = ISO9660_VERSION;
+            write_iso_block(&mut img, 18, &term);
+
+            // Boot Catalog at `boot_catalog_lba`.
+            let mut catalog = [0u8; ISO_BLOCK_BYTES];
+            let mut validation = [0u8; 32];
+            validation[0] = 0x01; // header id
+            validation[0x1E] = 0x55;
+            validation[0x1F] = 0xAA;
+            let mut sum: u16 = 0;
+            for chunk in validation.chunks_exact(2) {
+                sum = sum.wrapping_add(u16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+            let checksum = (0u16).wrapping_sub(sum);
+            validation[0x1C..0x1E].copy_from_slice(&checksum.to_le_bytes());
+            catalog[0..32].copy_from_slice(&validation);
+
+            let mut initial = [0u8; 32];
+            initial[0] = 0x88; // bootable
+            initial[1] = 0x00; // no emulation
+            initial[2..4].copy_from_slice(&load_segment.to_le_bytes());
+            initial[6..8].copy_from_slice(&sector_count.to_le_bytes());
+            initial[8..12].copy_from_slice(&boot_image_lba.to_le_bytes());
+            catalog[32..64].copy_from_slice(&initial);
+            write_iso_block(&mut img, boot_catalog_lba as usize, &catalog);
+
+            for (i, block) in boot_image_blocks.iter().enumerate() {
+                write_iso_block(&mut img, boot_image_lba as usize + i, block);
+            }
+
+            img
+        }
+
+        let boot_catalog_lba = 20u32;
+        let boot_image_lba = 21u32;
+        let load_segment = 0x9000u16;
+        let sector_count = 8u16;
+        let boot_image_blocks = [[0x11u8; ISO_BLOCK_BYTES], [0x22u8; ISO_BLOCK_BYTES]];
+        let img = build_minimal_iso_no_emulation(
+            boot_catalog_lba,
+            boot_image_lba,
+            &boot_image_blocks,
+            load_segment,
+            sector_count,
+        );
+
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut cpu = CpuState::new(CpuMode::Real);
+        let mut mem = TestMemory::new(16 * 1024 * 1024);
+        let mut disk = InMemoryDisk::new(img);
+
+        bios.post(&mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(
+            bios.el_torito_boot_info,
+            Some(ElToritoBootInfo {
+                media_type: ElToritoBootMediaType::NoEmulation,
+                boot_drive: 0xE0,
+                controller_index: 0,
+                boot_catalog_lba: Some(boot_catalog_lba),
+                boot_image_lba: Some(boot_image_lba),
+                load_segment: Some(load_segment),
+                sector_count: Some(sector_count),
+            })
+        );
+
+        // Query disk emulation status (AH=4Bh AL=01h).
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+        cpu.gpr[gpr::RDI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0xE0;
+        cpu.gpr[gpr::RAX] = 0x4B01;
+        mem.write_u8(0x0500, 0x13);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+
+        assert_eq!(mem.read_u8(0x0500), 0x13);
+        assert_eq!(mem.read_u8(0x0501), 0x00); // no emulation
+        assert_eq!(mem.read_u8(0x0502), 0xE0); // boot drive
+        assert_eq!(mem.read_u8(0x0503), 0x00); // controller index
+        assert_eq!(mem.read_u32(0x0504), boot_image_lba);
+        assert_eq!(mem.read_u32(0x0508), boot_catalog_lba);
+        assert_eq!(mem.read_u16(0x050C), load_segment);
+        assert_eq!(mem.read_u16(0x050E), sector_count);
+        assert_eq!(mem.read_u8(0x0510), 0);
+        assert_eq!(mem.read_u8(0x0511), 0);
+        assert_eq!(mem.read_u8(0x0512), 0);
+    }
+
+    #[test]
     fn int13_chs_read_floppy_maps_head1_sector1_to_lba18() {
         // 1.44MiB floppy = 2880 sectors. Cylinder 0, head 1, sector 1 corresponds to LBA 18.
         let mut bios = Bios::new(super::super::BiosConfig::default());

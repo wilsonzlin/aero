@@ -37,6 +37,8 @@ const DEFAULT_SECTOR_COUNT: u16 = 4;
 /// Fields needed to load and jump to a no-emulation El Torito boot image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct BootImageInfo {
+    /// 2048-byte logical block address of the boot catalog in the ISO.
+    pub(super) boot_catalog_lba: u32,
     /// Real-mode segment where the boot image should be loaded/executed.
     pub(super) load_segment: u16,
     /// Number of 512-byte virtual sectors to load.
@@ -160,7 +162,7 @@ fn parse_boot_catalog(
                     continue;
                 }
 
-                return parse_boot_entry(entry);
+                return parse_boot_entry(entry, boot_catalog_lba);
             }
             // Extension/unknown entries: ignore for robustness.
             _ => continue,
@@ -193,7 +195,7 @@ fn validate_catalog_validation_entry(entry: &[u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn parse_boot_entry(entry: &[u8]) -> Result<BootImageInfo, &'static str> {
+fn parse_boot_entry(entry: &[u8], boot_catalog_lba: u32) -> Result<BootImageInfo, &'static str> {
     if entry.len() != 32 {
         return Err("Invalid El Torito boot catalog");
     }
@@ -231,6 +233,7 @@ fn parse_boot_entry(entry: &[u8]) -> Result<BootImageInfo, &'static str> {
     let load_rba = u32::from_le_bytes(entry[8..12].try_into().unwrap());
 
     Ok(BootImageInfo {
+        boot_catalog_lba,
         load_segment,
         sector_count,
         load_rba,
@@ -355,6 +358,7 @@ mod tests {
         assert_eq!(
             parsed.image,
             BootImageInfo {
+                boot_catalog_lba,
                 load_segment: 0x07C0,
                 sector_count: 4,
                 load_rba: boot_image_lba,
@@ -507,6 +511,7 @@ mod tests {
         assert_eq!(
             parsed.image,
             BootImageInfo {
+                boot_catalog_lba,
                 load_segment: DEFAULT_LOAD_SEGMENT,
                 sector_count: 4,
                 load_rba: boot_image_lba,
