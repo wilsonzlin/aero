@@ -24,11 +24,16 @@ fn packaging_fails_on_non_utf8_driver_paths() -> anyhow::Result<()> {
     // Create an additional file with a non-UTF8 filename (valid on Linux/Unix but not Windows).
     // This must fail packaging rather than being silently mangled into a UTF-8 package path.
     let invalid_name = OsString::from_vec(vec![b'b', b'a', b'd', 0xFF, b'.', b'b', b'i', b'n']);
+    // Place it under a UTF-8 subdirectory so the previous (buggy) behavior would have produced a
+    // *non-empty* mangled package path (e.g. `subdir`) instead of failing later on an empty path.
+    // This specifically guards against silent path dropping/collisions.
     let invalid_path = drivers_tmp
         .path()
         .join("x86")
         .join("testdrv")
+        .join("subdir")
         .join(invalid_name);
+    fs::create_dir_all(invalid_path.parent().unwrap())?;
     fs::write(&invalid_path, b"bad\n")?;
 
     let spec_dir = tempfile::tempdir()?;
@@ -61,7 +66,7 @@ fn packaging_fails_on_non_utf8_driver_paths() -> anyhow::Result<()> {
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("non-UTF8") && msg.contains("testdrv"),
+        msg.contains("non-UTF8") && msg.contains("testdrv") && msg.contains("\\xFF"),
         "unexpected error: {msg}"
     );
 
@@ -78,9 +83,15 @@ fn packaging_fails_on_non_utf8_guest_tools_paths() -> anyhow::Result<()> {
     let guest_tools_tmp = tempfile::tempdir()?;
     copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
 
-    // Inject a file with a non-UTF8 filename under guest-tools/config/.
+    // Inject a file with a non-UTF8 filename under guest-tools/config/ (in a UTF-8 subdirectory so
+    // the old behavior would have produced a mangled-but-valid package path).
     let invalid_name = OsString::from_vec(vec![b'b', b'a', b'd', 0xFF, b'.', b't', b'x', b't']);
-    let invalid_path = guest_tools_tmp.path().join("config").join(invalid_name);
+    let invalid_path = guest_tools_tmp
+        .path()
+        .join("config")
+        .join("subdir")
+        .join(invalid_name);
+    fs::create_dir_all(invalid_path.parent().unwrap())?;
     fs::write(&invalid_path, b"bad\n")?;
 
     let spec_path = testdata.join("spec.json");
