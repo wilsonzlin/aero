@@ -945,6 +945,80 @@ fn ata_lba48_oversized_dma_read_is_rejected_without_starting_dma() {
 }
 
 #[test]
+fn ata_lba48_sector_count_zero_is_rejected_without_starting_dma() {
+    // Sector count=0 encodes 65536 sectors for 48-bit transfers. Ensure this does not get treated
+    // as a 0-length transfer, and instead trips the oversized-transfer guard when our max buffer is
+    // smaller than 32MiB.
+    if (MAX_IDE_DATA_BUFFER_BYTES / SECTOR_SIZE) >= 65536 {
+        return;
+    }
+
+    let capacity = 65536u64 * SECTOR_SIZE as u64;
+    let disk = ZeroDisk { capacity };
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 512-byte segment, end-of-table (we should never reach DMA execution).
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer. If DMA incorrectly runs, we'd observe it changing.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+    // Start bus master (direction = to memory).
+    ioports.write(bm_base, 1, 0x09);
+
+    // Issue READ DMA EXT with sector_count=0 (high byte=0, low byte=0).
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0);
+    for reg in 3..=5 {
+        ioports.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+        ioports.write(PRIMARY_PORTS.cmd_base + reg, 1, 0);
+    }
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x25); // READ DMA EXT
+
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "sector_count=0 DMA EXT command should abort and raise an IRQ immediately"
+    );
+
+    // DMA engine should not have progressed.
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0);
+
+    // Even if we tick, there should be no DMA request to service.
+    ide.borrow_mut().tick(&mut mem);
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0);
+
+    let status = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(status & 0x80, 0, "BSY should be clear");
+    assert_eq!(status & 0x08, 0, "DRQ should be clear (no DMA transfer)");
+    assert_ne!(status & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert!(out.iter().all(|&b| b == 0xFF));
+}
+
+#[test]
 fn ata_lba48_oversized_dma_write_is_rejected_without_allocating_buffer() {
     let sectors = (MAX_IDE_DATA_BUFFER_BYTES / SECTOR_SIZE) as u32 + 1;
     if sectors > 65536 {
@@ -1937,6 +2011,70 @@ fn prd_byte_count_zero_encodes_64kib_transfer() {
     let mut out = vec![0u8; capacity as usize];
     mem.read_physical(read_buf, &mut out);
     assert_eq!(out, pattern);
+}
+
+#[test]
+fn ata_sector_count_zero_encodes_256_sectors_for_dma_read() {
+    // ATA 28-bit sector_count=0 encodes 256 sectors.
+    let sectors: u64 = 256;
+    let capacity = sectors * SECTOR_SIZE as u64;
+
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut pattern = vec![0u8; capacity as usize];
+    for (i, b) in pattern.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(3).wrapping_add(0x17);
+    }
+    disk.write_sectors(0, &pattern).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Need enough space for the PRD table plus a 128KiB destination buffer.
+    let mut mem = Bus::new(0x40_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x4000u64;
+
+    // PRD table: four 32KiB segments, end-of-table on the last entry.
+    for i in 0..4u64 {
+        let entry_addr = prd_addr + i * 8;
+        mem.write_u32(entry_addr, (dma_buf + i * 0x8000) as u32);
+        mem.write_u16(entry_addr + 4, 0x8000);
+        mem.write_u16(entry_addr + 6, if i == 3 { 0x8000 } else { 0 });
+    }
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer; without DMA we'd see all 0xFF.
+    mem.write_physical(dma_buf, &vec![0xFFu8; capacity as usize]);
+
+    // READ DMA (LBA 0, sector_count=0 => 256 sectors).
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    let mut out = vec![0u8; capacity as usize];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, pattern);
+
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
 }
 
 #[derive(Debug)]
