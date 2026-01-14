@@ -504,6 +504,11 @@ export class RawWebGl2Presenter implements Presenter {
     gl.disable(gl.BLEND);
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.DITHER);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
     // Deterministic presentation: we do manual sRGB encoding in the blit shader, so ensure
     // fixed-function framebuffer sRGB conversion (when present) is disabled to avoid double-gamma.
     const srgbWriteControl = gl.getExtension('EXT_sRGB_write_control') as { FRAMEBUFFER_SRGB_EXT?: number } | null;
