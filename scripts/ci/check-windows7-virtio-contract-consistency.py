@@ -1122,6 +1122,25 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
 """
 
+    good_header_comments = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT.HW] ; trailing comment after section header should be tolerated
+AddReg = MsiReg
+
+[MsiReg] ; another header comment
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+"""
+
     with tempfile.TemporaryDirectory() as td:
         bad_path = Path(td) / "bad.inf"
         bad_path.write_text(bad, encoding="utf-8")
@@ -1148,6 +1167,17 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
         if not wrong_flags_errors:
             fail(
                 "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly passed for an INF with non-DWORD MSISupported flags"
+            )
+
+        header_comments_path = Path(td) / "header-comments.inf"
+        header_comments_path.write_text(good_header_comments, encoding="utf-8")
+        header_comment_errors = validate_win7_virtio_inf_msi_settings("virtio-net", header_comments_path)
+        if header_comment_errors:
+            fail(
+                format_error(
+                    "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly failed for an INF with trailing section header comments:",
+                    header_comment_errors,
+                )
             )
 
 
@@ -1314,7 +1344,9 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
     for line_no, raw in enumerate(text.splitlines(), start=1):
         if raw.lstrip().startswith(";"):
             continue
-        m = re.match(r"^\s*\[(?P<section>[^\]]+)\]\s*$", raw)
+        # Section headers can legally include trailing comments (`[Foo] ; comment`).
+        header = _strip_inf_inline_comment(raw).strip()
+        m = re.match(r"^\s*\[(?P<section>[^\]]+)\]\s*$", header)
         if m:
             current_section = m.group("section").strip()
             key = current_section.lower()
