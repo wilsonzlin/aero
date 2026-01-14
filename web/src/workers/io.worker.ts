@@ -1927,7 +1927,7 @@ function maybeInitUhciDevice(): void {
 }
 
 function wireXhciHidTopologyBridge(): void {
-  const bridge = xhciControllerBridge as unknown;
+  const bridge = xhciControllerBridge;
   if (!bridge) {
     xhciHidTopologyBridgeSource = null;
     if (xhciHidTopologyBridge !== null) {
