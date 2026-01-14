@@ -361,7 +361,7 @@ pub struct GsPrepassTranslation {
 ///   - `DrawIndexedIndirectArgs` fields at offset 0 so the render pass can call
 ///     `draw_indexed_indirect` with the same buffer+offset.
 /// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
-/// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read)
+/// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read_write)
 /// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
 ///   model (`@binding(BINDING_BASE_CBUFFER + slot)`)
 pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
@@ -384,7 +384,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
 /// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
 /// - `@group(0) @binding(2)` indirect args + counters (`GsPrepassState`, read_write)
 /// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
-/// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read)
+/// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read_write)
 /// - `@group(3)` referenced `b#` constant buffers (`cb#[]`) following the shared executor binding
 ///   model (`@binding(BINDING_BASE_CBUFFER + slot)`)
 pub fn translate_gs_module_to_wgsl_compute_prepass(
@@ -1258,8 +1258,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
         }
     }
 
-    // Ensure we always declare at least o0, plus any registers referenced by the requested packed
-    // expanded-vertex layout. This allows missing GS outputs to default to `vec4<f32>(0.0)` via the
+    // Ensure we always declare at least o0, plus any output registers referenced by the requested
+    // varying locations. This allows missing GS outputs to default to `vec4<f32>(0.0)` via the
     // zero-initialized output register file.
     max_output_reg = max_output_reg.max(0);
     if let Some(max_varying) = varyings.iter().copied().max() {
@@ -1382,7 +1382,11 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("@group(0) @binding(1) var<storage, read_write> out_indices: U32Buffer;");
     w.line("@group(0) @binding(2) var<storage, read_write> out_state: GsPrepassState;");
     w.line("@group(0) @binding(4) var<uniform> params: GsPrepassParams;");
-    w.line("@group(0) @binding(5) var<storage, read> gs_inputs: Vec4F32Buffer;");
+    // Note: The executor packs multiple storage allocations into the same backing buffer via
+    // `ExpansionScratchAllocator`. WebGPU treats STORAGE_READ_WRITE as an exclusive usage at the
+    // *buffer* granularity within a dispatch, so if any slice of the backing buffer is bound
+    // read/write (our outputs/counters), any other slice must also be bound read/write.
+    w.line("@group(0) @binding(5) var<storage, read_write> gs_inputs: Vec4F32Buffer;");
     w.line("");
 
     // D3D stage-ex resources (GS/HS/DS) live in group 3 so we can stay within WebGPU's baseline
