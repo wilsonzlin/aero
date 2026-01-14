@@ -744,6 +744,179 @@ static void TestMsixZeroQueuesConfigOnly(void)
     UninstallCommonCfgQueueVectorWindowHooks();
 }
 
+static void TestMsixPrepareHardwareMessageCountZeroFails(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR rawDesc;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR transDesc;
+    WDFCMRESLIST__ rawList;
+    WDFCMRESLIST__ transList;
+    NTSTATUS st;
+
+    dev = WdfTestCreateDevice();
+    assert(dev != NULL);
+
+    memset(&rawDesc, 0, sizeof(rawDesc));
+    rawDesc.Type = CmResourceTypeInterrupt;
+    rawDesc.Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
+    rawDesc.u.MessageInterrupt.MessageCount = 0;
+
+    memset(&transDesc, 0, sizeof(transDesc));
+    transDesc.Type = CmResourceTypeInterrupt;
+    transDesc.Flags = CM_RESOURCE_INTERRUPT_MESSAGE;
+    transDesc.u.MessageInterrupt.MessageCount = 0;
+
+    rawList.Count = 1;
+    rawList.Descriptors = &rawDesc;
+    transList.Count = 1;
+    transList.Descriptors = &transDesc;
+
+    st = VirtioPciInterruptsPrepareHardware(
+        dev,
+        &interrupts,
+        &rawList,
+        &transList,
+        2 /* QueueCount */,
+        NULL, /* ISR status register is INTx-only. */
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+    assert(st == STATUS_DEVICE_CONFIGURATION_ERROR);
+
+    /* Ensure cleanup of any partially-initialized resources is safe. */
+    VirtioPciInterruptsReleaseHardware(&interrupts);
+    WdfTestDestroyDevice(dev);
+}
+
+static void TestPrepareHardwareMissingInterruptResourceFails(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    WDFCMRESLIST__ rawList;
+    WDFCMRESLIST__ transList;
+    NTSTATUS st;
+
+    dev = WdfTestCreateDevice();
+    assert(dev != NULL);
+
+    rawList.Count = 0;
+    rawList.Descriptors = NULL;
+    transList.Count = 0;
+    transList.Descriptors = NULL;
+
+    st = VirtioPciInterruptsPrepareHardware(
+        dev,
+        &interrupts,
+        &rawList,
+        &transList,
+        0 /* QueueCount */,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+    assert(st == STATUS_RESOURCE_TYPE_NOT_FOUND);
+
+    VirtioPciInterruptsReleaseHardware(&interrupts);
+    WdfTestDestroyDevice(dev);
+}
+
+static void TestPrepareHardwareQueueCountTooLargeFails(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR rawDesc;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR transDesc;
+    WDFCMRESLIST__ rawList;
+    WDFCMRESLIST__ transList;
+    NTSTATUS st;
+
+    dev = WdfTestCreateDevice();
+    assert(dev != NULL);
+
+    memset(&rawDesc, 0, sizeof(rawDesc));
+    rawDesc.Type = CmResourceTypeInterrupt;
+    rawDesc.Flags = 0;
+
+    memset(&transDesc, 0, sizeof(transDesc));
+    transDesc.Type = CmResourceTypeInterrupt;
+    transDesc.Flags = 0;
+
+    rawList.Count = 1;
+    rawList.Descriptors = &rawDesc;
+    transList.Count = 1;
+    transList.Descriptors = &transDesc;
+
+    st = VirtioPciInterruptsPrepareHardware(
+        dev,
+        &interrupts,
+        &rawList,
+        &transList,
+        65 /* QueueCount */,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+    assert(st == STATUS_NOT_SUPPORTED);
+
+    VirtioPciInterruptsReleaseHardware(&interrupts);
+    WdfTestDestroyDevice(dev);
+}
+
+static void TestIntxNullIsrStatusRegisterReturnsFalse(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR rawDesc;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR transDesc;
+    WDFCMRESLIST__ rawList;
+    WDFCMRESLIST__ transList;
+    NTSTATUS st;
+    BOOLEAN handled;
+
+    dev = WdfTestCreateDevice();
+    assert(dev != NULL);
+
+    memset(&rawDesc, 0, sizeof(rawDesc));
+    rawDesc.Type = CmResourceTypeInterrupt;
+    rawDesc.Flags = 0;
+
+    memset(&transDesc, 0, sizeof(transDesc));
+    transDesc.Type = CmResourceTypeInterrupt;
+    transDesc.Flags = 0;
+
+    rawList.Count = 1;
+    rawList.Descriptors = &rawDesc;
+    transList.Count = 1;
+    transList.Descriptors = &transDesc;
+
+    st = VirtioPciInterruptsPrepareHardware(
+        dev,
+        &interrupts,
+        &rawList,
+        &transList,
+        2 /* QueueCount */,
+        NULL /* IsrStatusRegister */,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.Mode == VirtioPciInterruptModeIntx);
+
+    ResetRegisterReadInstrumentation();
+    handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
+    assert(handled == FALSE);
+    assert(WdfTestReadRegisterUcharCount == 0);
+    assert(interrupts.u.Intx.Interrupt->DpcQueueCalls == 0);
+
+    VirtioPciInterruptsReleaseHardware(&interrupts);
+    WdfTestDestroyDevice(dev);
+}
+
 static void TestMsixLimitedVectorRouting(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -1900,6 +2073,10 @@ int main(void)
     TestDiagnosticCounters();
     TestMsixDispatchAndRouting();
     TestMsixZeroQueuesConfigOnly();
+    TestMsixPrepareHardwareMessageCountZeroFails();
+    TestPrepareHardwareMissingInterruptResourceFails();
+    TestPrepareHardwareQueueCountTooLargeFails();
+    TestIntxNullIsrStatusRegisterReturnsFalse();
     TestMsixLimitedVectorRouting();
     TestMsixLimitedVectorProgramming();
     TestMsixLimitedVectorQuiesceResumeVectors();
