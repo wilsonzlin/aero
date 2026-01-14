@@ -180,6 +180,8 @@ The Python harness prints:
 
 Note: `--print-qemu` and `--print-qemu-cmd` are accepted as aliases for `--dry-run`.
 
+Note: `-PrintQemuArgs` is accepted as an alias for `-DryRun`.
+
 ### Virtio-net link flap regression test (host-side QMP `set_link`)
 
 To deterministically exercise virtio-net **link status change handling** (including config interrupts),
