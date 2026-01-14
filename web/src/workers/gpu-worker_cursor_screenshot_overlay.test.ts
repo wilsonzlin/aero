@@ -893,7 +893,8 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     }
 
     const scanoutPaddr = 0x1000;
-    const cursorVramOffset = 0x2000;
+    // Use an unaligned VRAM base for the cursor to force the byte-fallback swizzle path.
+    const cursorVramOffset = 0x2001;
     if (cursorVramOffset + 4 > views.vramU8.byteLength) {
       throw new Error("vram buffer too small for cursor pixel");
     }
