@@ -53,3 +53,15 @@ fn create_shader_dxbc_legacy_reserved0_remains_zero() {
 
 // Note: Pixel shaders must use the legacy `stage = PIXEL` encoding; `stage_ex` is intentionally
 // non-zero-only and cannot represent the DXBC program-type 0 value.
+#[test]
+#[should_panic(expected = "stage_ex (Geometry) may only be encoded when shader_stage==COMPUTE")]
+fn create_shader_dxbc_with_stage_ex_panics_for_non_compute_stages() {
+    let mut w = AerogpuCmdWriter::new();
+    w.create_shader_dxbc_with_stage_ex(
+        1,
+        AerogpuShaderStage::Pixel,
+        &[0x00],
+        Some(AerogpuShaderStageEx::Geometry),
+    );
+    let _ = w.finish();
+}
