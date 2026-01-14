@@ -13,6 +13,7 @@ import {
   opfsGetDir,
   opfsGetDisksDir,
   opfsGetRemoteCacheDir,
+  DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES,
   type DiskBackend,
   type DiskFormat,
   type DiskImageMetadata,
@@ -100,6 +101,13 @@ function assertValidOpfsRemoteChunkSize(value: number, field: string): void {
   }
   if (value > OPFS_REMOTE_CHUNK_MAX_BYTES) {
     throw new Error(`${field} must be <= ${OPFS_REMOTE_CHUNK_MAX_BYTES} bytes`);
+  }
+}
+
+function assertValidCacheLimitBytes(value: unknown, field: string): asserts value is number | null {
+  if (value === null) return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative safe integer or null`);
   }
 }
 
@@ -699,6 +707,11 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         typeof payload.overlayBlockSizeBytes === "number" && Number.isFinite(payload.overlayBlockSizeBytes) && payload.overlayBlockSizeBytes > 0
           ? payload.overlayBlockSizeBytes
           : RANGE_STREAM_CHUNK_SIZE;
+
+      const cacheLimitBytesRaw = payload.cacheLimitBytes as unknown;
+      const cacheLimitBytes =
+        cacheLimitBytesRaw === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : (cacheLimitBytesRaw as number | null);
+      assertValidCacheLimitBytes(cacheLimitBytes, "cacheLimitBytes");
       if (cacheBackend === "idb") {
         if (chunkSizeBytes % 512 !== 0 || !isPowerOfTwo(chunkSizeBytes)) {
           throw new Error("chunkSizeBytes must be a power of two and a multiple of 512");
@@ -755,6 +768,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           fileName: cacheFileName,
           overlayFileName,
           overlayBlockSizeBytes,
+          cacheLimitBytes,
         },
       };
 
@@ -826,6 +840,11 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
         }
         meta.cache.overlayBlockSizeBytes = next;
+      }
+      if (payload.cacheLimitBytes !== undefined) {
+        const next = payload.cacheLimitBytes as unknown;
+        assertValidCacheLimitBytes(next, "cacheLimitBytes");
+        meta.cache.cacheLimitBytes = next;
       }
       if (meta.cache.backend === "opfs") {
         assertValidOpfsRemoteChunkSize(meta.cache.chunkSizeBytes, "chunkSizeBytes");

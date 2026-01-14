@@ -1,4 +1,4 @@
-import type { DiskBackend, DiskFormat, DiskKind } from "./metadata";
+import { DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES, type DiskBackend, type DiskFormat, type DiskKind } from "./metadata";
 
 export type RemoteDiskValidator =
   | { kind: "etag"; value: string }
@@ -37,6 +37,14 @@ export type DiskOverlaySnapshot = {
 
 export type DiskCacheSnapshot = {
   fileName: string;
+  /**
+   * Persistent cache size limit for remote delivery.
+   *
+   * - `null`: unbounded (no eviction)
+   * - `0`: disable caching entirely
+   * - positive number: bounded cache size
+   */
+  cacheLimitBytes: number | null;
 };
 
 export type LocalDiskBackendSnapshot = {
@@ -274,7 +282,13 @@ function validateOverlaySnapshot(v: unknown, path: string, expectedDiskSizeBytes
 function validateCacheSnapshot(v: unknown, path: string): DiskCacheSnapshot {
   const obj = requireRecord(v, path);
   const fileName = requireBoundedString(obj.fileName, `${path}.fileName`, { nonEmpty: true });
-  return { fileName };
+
+  // Backward compatibility: older snapshots omitted `cacheLimitBytes`. Treat it as the default
+  // bounded cache size (currently 512 MiB).
+  const raw = (obj as { cacheLimitBytes?: unknown }).cacheLimitBytes;
+  const cacheLimitBytes =
+    raw === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : raw === null ? null : requireSafeInteger(raw, `${path}.cacheLimitBytes`, { min: 0 });
+  return { fileName, cacheLimitBytes };
 }
 
 function validateRemoteBaseSnapshot(v: unknown, path: string): RemoteDiskBaseSnapshot {

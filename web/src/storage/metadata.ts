@@ -17,6 +17,7 @@ export const OPFS_METADATA_FILE = "metadata.json";
 export const OPFS_REMOTE_CACHE_DIR = "remote-cache";
 
 export const METADATA_VERSION = 2;
+export const DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES = 512 * 1024 * 1024; // 512 MiB
 
 // Defensive bound: OPFS metadata can become corrupt/attacker-controlled; avoid reading/parsing
 // arbitrarily large JSON blobs.
@@ -116,6 +117,14 @@ export type RemoteDiskImageMetadata = {
     fileName: string;
     overlayFileName: string;
     overlayBlockSizeBytes: number;
+    /**
+     * Persistent cache size limit for remote disk delivery.
+     *
+     * - `undefined` (default): {@link DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES}
+     * - `null`: unbounded (no eviction; subject to browser storage quota)
+     * - `0`: disable caching entirely (always fetch from network)
+     */
+    cacheLimitBytes?: number | null;
   };
 };
 
@@ -147,7 +156,16 @@ export function upgradeDiskMetadata(record: unknown): DiskImageMetadata | undefi
   if (!record || typeof record !== "object") return undefined;
   const r = record as Partial<DiskImageMetadata> & { source?: unknown };
 
-  if (r.source === "remote") return r as RemoteDiskImageMetadata;
+  if (r.source === "remote") {
+    const remote = r as RemoteDiskImageMetadata;
+    // Backfill default remote cache limit for older metadata that predated `cacheLimitBytes`.
+    // `undefined` means "use default limit".
+    const cache = (remote as Partial<RemoteDiskImageMetadata>).cache as RemoteDiskImageMetadata["cache"] | undefined;
+    if (cache && (cache as { cacheLimitBytes?: unknown }).cacheLimitBytes === undefined) {
+      cache.cacheLimitBytes = DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES;
+    }
+    return remote;
+  }
   if (r.source === "local") return r as LocalDiskImageMetadata;
 
   // v1 records had no `source` field. Treat them as local disks.
@@ -175,7 +193,7 @@ export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerS
 
   if (version !== 1 && version !== METADATA_VERSION) return { state: emptyState(), migrated: false };
 
-  const migrated = version === 1;
+  let migrated = version === 1;
 
   const out: DiskManagerState = {
     version: METADATA_VERSION,
@@ -186,6 +204,17 @@ export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerS
   const disks = raw.disks;
   if (disks && typeof disks === "object") {
     for (const [key, value] of Object.entries(disks as Record<string, unknown>)) {
+      // v2 -> v2+backfill: older remote disk records may be missing `cache.cacheLimitBytes`.
+      // If we detect a missing field, treat this as a migration so OPFS metadata.json can be
+      // rewritten with explicit defaults.
+      if (!migrated && value && typeof value === "object") {
+        const maybe = value as { source?: unknown; cache?: unknown };
+        if (maybe.source === "remote" && maybe.cache && typeof maybe.cache === "object") {
+          if (!("cacheLimitBytes" in (maybe.cache as object))) {
+            migrated = true;
+          }
+        }
+      }
       const upgraded = upgradeDiskMetadata(value);
       if (upgraded) out.disks[upgraded.id || key] = upgraded;
     }

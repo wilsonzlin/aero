@@ -10,6 +10,7 @@ import {
   type RuntimeDiskSnapshot,
 } from "./runtime_disk_snapshot";
 import { remoteRangeDeliveryType } from "./remote_cache_manager";
+import { DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES } from "./metadata";
 
 function encodeJson(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
@@ -63,6 +64,7 @@ function sampleSnapshot(): RuntimeDiskSnapshot {
           },
           cache: {
             fileName: "remote.cache.aerospar",
+            cacheLimitBytes: DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES,
           },
         },
       },
@@ -98,6 +100,17 @@ describe("runtime disk snapshot payload", () => {
 
   it("rejects missing disks array", () => {
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson({ version: 1, nextHandle: 1 }))).toThrow(/disks/);
+  });
+
+  it("defaults remote cacheLimitBytes when missing (backward compatibility)", () => {
+    const snapshot = sampleSnapshot() as any;
+    delete snapshot.disks[1].backend.cache.cacheLimitBytes;
+
+    const decoded = deserializeRuntimeDiskSnapshot(encodeJson(snapshot));
+    expect(decoded.disks[1]?.backend).toMatchObject({
+      kind: "remote",
+      cache: { cacheLimitBytes: DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES },
+    });
   });
 
   it("rejects disk entry with non-integer handle", () => {

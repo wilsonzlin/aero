@@ -2,7 +2,17 @@ import "../../test/fake_indexeddb_auto.ts";
 
 import { describe, expect, it } from "vitest";
 
-import { DISK_MANAGER_DB_NAME, METADATA_VERSION, clearIdb, idbReq, idbTxDone, openDiskManagerDb, upgradeDiskManagerStateJson, upgradeDiskMetadata } from "./metadata";
+import {
+  DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES,
+  DISK_MANAGER_DB_NAME,
+  METADATA_VERSION,
+  clearIdb,
+  idbReq,
+  idbTxDone,
+  openDiskManagerDb,
+  upgradeDiskManagerStateJson,
+  upgradeDiskMetadata,
+} from "./metadata";
 
 describe("disk metadata schema migration", () => {
   it("upgrades OPFS metadata.json v1 -> v2 in-memory", () => {
@@ -58,6 +68,74 @@ describe("disk metadata schema migration", () => {
     expect(upgraded!.source).toBe("local");
     if (upgraded!.source !== "local") throw new Error("expected local disk");
     expect(upgraded).toMatchObject({ id: "d2", backend: "idb", fileName: "d2.img" });
+  });
+
+  it("backfills remote disk cacheLimitBytes default when missing", () => {
+    const legacyRemote = {
+      source: "remote",
+      id: "r1",
+      name: "Remote",
+      kind: "cd",
+      format: "iso",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+      remote: {
+        imageId: "img1",
+        version: "v1",
+        delivery: "range",
+        urls: { url: "https://example.invalid/disk.iso" },
+      },
+      cache: {
+        chunkSizeBytes: 1024,
+        backend: "opfs",
+        fileName: "cache.aerospar",
+        overlayFileName: "overlay.aerospar",
+        overlayBlockSizeBytes: 1024,
+      },
+    };
+
+    const upgraded = upgradeDiskMetadata(legacyRemote);
+    expect(upgraded?.source).toBe("remote");
+    if (upgraded?.source !== "remote") throw new Error("expected remote disk");
+    expect(upgraded.cache.cacheLimitBytes).toBe(DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES);
+  });
+
+  it("backfills remote disk cacheLimitBytes in OPFS metadata.json and marks migrated", () => {
+    const legacyRemote = {
+      source: "remote",
+      id: "r1",
+      name: "Remote",
+      kind: "cd",
+      format: "iso",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+      remote: {
+        imageId: "img1",
+        version: "v1",
+        delivery: "range",
+        urls: { url: "https://example.invalid/disk.iso" },
+      },
+      cache: {
+        chunkSizeBytes: 1024,
+        backend: "opfs",
+        fileName: "cache.aerospar",
+        overlayFileName: "overlay.aerospar",
+        overlayBlockSizeBytes: 1024,
+      },
+    };
+
+    const v2 = {
+      version: METADATA_VERSION,
+      disks: { r1: legacyRemote },
+      mounts: {},
+    };
+
+    const { state, migrated } = upgradeDiskManagerStateJson(JSON.stringify(v2));
+    expect(migrated).toBe(true);
+    const meta = state.disks.r1;
+    expect(meta?.source).toBe("remote");
+    if (meta?.source !== "remote") throw new Error("expected remote disk");
+    expect(meta.cache.cacheLimitBytes).toBe(DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES);
   });
 
   it("upgrades existing IndexedDB records when opening the DiskManager DB", async () => {

@@ -287,6 +287,7 @@ export class DiskManager {
     kind?: DiskKind;
     format?: DiskFormat;
     cacheBackend?: DiskBackend;
+    cacheLimitBytes?: number | null;
     /**
      * Local cache chunk size.
      *
@@ -310,6 +311,7 @@ export class DiskManager {
       kind: isHddKind(options.kind) ? options.kind : undefined,
       format: isFormat(options.format) ? options.format : undefined,
       cacheBackend: options.cacheBackend,
+      cacheLimitBytes: options.cacheLimitBytes,
       chunkSizeBytes: options.chunkSizeBytes,
       cacheFileName: options.cacheFileName,
       overlayFileName: options.overlayFileName,
@@ -330,6 +332,7 @@ export class DiskManager {
       kind: DiskKind;
       format: DiskFormat;
       cacheBackend: DiskBackend;
+      cacheLimitBytes: number | null;
       chunkSizeBytes: number;
       cacheFileName: string;
       overlayFileName: string;
