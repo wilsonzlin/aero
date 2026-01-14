@@ -11764,6 +11764,33 @@ mod tests {
     }
 
     #[test]
+    fn usb_snapshot_container_omits_xhci_tags_when_state_absent() {
+        let snapshot = MachineUsbSnapshot {
+            uhci: Some(vec![1, 2, 3]),
+            uhci_ns_remainder: 1,
+            ehci: Some(vec![4, 5, 6, 7]),
+            ehci_ns_remainder: 2,
+            xhci: None,
+            // Even if the field is non-zero, USBC should omit xHCI fields when no xHCI snapshot is
+            // present.
+            xhci_ns_remainder: 123_456,
+        };
+
+        let bytes = snapshot.save_state();
+        let r = IoSnapshotReader::parse(&bytes, *b"USBC").expect("parse USBC v1.2");
+        assert!(
+            r.u64(MachineUsbSnapshot::TAG_XHCI_NS_REMAINDER)
+                .expect("read xHCI remainder tag")
+                .is_none(),
+            "xHCI remainder tag should be absent when xHCI state is absent"
+        );
+        assert!(
+            r.bytes(MachineUsbSnapshot::TAG_XHCI_STATE).is_none(),
+            "xHCI state tag should be absent when xHCI state is absent"
+        );
+    }
+
+    #[test]
     fn vga_lfb_mmio_size0_is_noop() {
         let vga = Rc::new(RefCell::new(VgaDevice::new()));
         vga.borrow_mut().vram_mut()[0] = 0xAA;
