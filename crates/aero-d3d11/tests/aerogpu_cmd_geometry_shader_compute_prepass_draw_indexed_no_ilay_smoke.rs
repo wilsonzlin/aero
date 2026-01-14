@@ -40,8 +40,9 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_no_ilay_smoke() {
         // index buffer yet, but `DRAW_INDEXED` still requires one to be bound. This test ensures we
         // can bind an index buffer *without* an input layout and still execute the prepass path
         // (important for future VS-as-compute work where shaders use only SV_VertexID).
-        // Use an adjacency topology to force the compute-prepass path. Line list adjacency consumes
-        // 4 indices per primitive, so provide a 4-index element buffer.
+        //
+        // Use an adjacency topology to force GS emulation without binding a dummy GS handle. A
+        // line-list-adj primitive consumes 4 indices.
         let indices: [u32; 4] = [0, 1, 2, 0];
 
         let mut writer = AerogpuCmdWriter::new();
