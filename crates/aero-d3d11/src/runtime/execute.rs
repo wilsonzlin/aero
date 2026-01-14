@@ -528,7 +528,22 @@ impl D3D11Runtime {
 
         // When required by the underlying wgpu backend (notably wgpu-gl), keep a CPU shadow of
         // index buffers so we can emulate primitive restart by rewriting strips into list indices.
-        let shadow = if self.emulate_strip_restart && usage.contains(BufferUsage::INDEX) {
+        //
+        // Indexed strip tests can also upload indices through a staging `CopyBufferToBuffer` into
+        // the index buffer. To keep the destination index shadow in sync, we also shadow
+        // "copy-only" buffers (buffers with no GPU pipeline usage beyond copies), since those are
+        // the typical staging path.
+        let is_copy_only = usage.intersects(BufferUsage::COPY_SRC | BufferUsage::COPY_DST)
+            && !usage.intersects(
+                BufferUsage::INDEX
+                    | BufferUsage::VERTEX
+                    | BufferUsage::UNIFORM
+                    | BufferUsage::STORAGE
+                    | BufferUsage::INDIRECT,
+            );
+        let shadow = if self.emulate_strip_restart
+            && (usage.contains(BufferUsage::INDEX) || is_copy_only)
+        {
             usize::try_from(size)
                 .ok()
                 .map(|shadow_len| vec![0u8; shadow_len])

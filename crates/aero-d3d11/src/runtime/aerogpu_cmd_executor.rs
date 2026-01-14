@@ -8301,9 +8301,10 @@ impl AerogpuD3d11Executor {
         }
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
-        // wired up yet, so for now treat HS/DS-bound draws as part of the generic compute-prepass
-        // placeholder path so apps that accidentally bind tessellation stages (or select patchlist
-        // topologies) do not crash.
+        // wired up yet, so for now HS/DS-bound draws remain on this generic compute-prepass path.
+        //
+        // We only validate that HS/DS are bound/unbound as a pair here; patchlist control point
+        // count validation happens once we decode the draw parameters below.
 
         let Some(next) = stream.iter.peek() else {
             return Ok(());
