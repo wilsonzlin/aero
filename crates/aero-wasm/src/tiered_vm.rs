@@ -1549,6 +1549,7 @@ fn page_snapshot_from_js(obj: JsValue) -> Result<PageVersionSnapshot, JsValue> {
 mod tests {
     use super::{WasmBus, WasmTieredVm, meta_from_js};
 
+    use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
     use aero_cpu_core::jit::runtime::PAGE_SHIFT;
     use aero_cpu_core::CpuBus;
     use aero_jit_x86::jit_ctx;
@@ -1931,6 +1932,118 @@ export function installAeroTieredMmioTestShims() {
         assert_eq!(
             handle2.meta.instruction_count, 2,
             "expected instruction_count to match 16-bit decode after install_handle"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_tiered_vm_commit_flag_rollback_retires_zero_instructions() {
+        installAeroTieredMmioTestShims();
+
+        // Use the same tiny real-mode loop as `wasm_tiered_vm_instruction_count_respects_cpu_bitness`
+        // (INC AX; JMP -2).
+        let mut guest = vec![0u8; 0x2000];
+        guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
+
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+        vm.reset_real_mode(0x1000);
+
+        // Install a synthetic Tier-1 block and capture the instruction_count used for retirement.
+        vm.install_tier1_block(0x1000, 0, 0x1000, 3);
+        let handle = vm
+            .dispatcher
+            .jit_mut()
+            .prepare_block(0x1000)
+            .expect("installed block must be present");
+        let expected = handle.meta.instruction_count;
+        assert!(
+            expected > 0,
+            "sanity check: expected block to retire at least one instruction"
+        );
+
+        // ---------------------------------------------------------------------
+        // Commit path: leave the commit flag set to 1.
+        // ---------------------------------------------------------------------
+        let commit_call = Closure::wrap(
+            Box::new(move |_table_index: u32, _cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+                0x1000
+            }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
+        );
+        Reflect::set(
+            &js_sys::global(),
+            &JsValue::from_str("__aero_jit_call"),
+            commit_call.as_ref(),
+        )
+        .expect("set __aero_jit_call (commit)");
+        // Keep the closure alive for the duration of the test.
+        commit_call.forget();
+
+        let tsc_before = vm.vcpu.cpu.state.msr.tsc;
+        let outcome = vm.dispatcher.step(&mut vm.vcpu);
+        let tsc_after = vm.vcpu.cpu.state.msr.tsc;
+
+        match outcome {
+            StepOutcome::Block {
+                tier: ExecutedTier::Jit,
+                instructions_retired,
+                ..
+            } => {
+                assert_eq!(instructions_retired, expected as u64);
+            }
+            other => panic!("expected JIT block outcome, got {other:?}"),
+        }
+        assert_eq!(
+            tsc_after.wrapping_sub(tsc_before),
+            expected as u64,
+            "committed JIT blocks must advance TSC by instruction_count"
+        );
+
+        // ---------------------------------------------------------------------
+        // Rollback path: clear the commit flag to 0.
+        // ---------------------------------------------------------------------
+        let rollback_call = Closure::wrap(
+            Box::new(move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+                let commit_flag_ptr = cpu_ptr
+                    .checked_add(super::COMMIT_FLAG_OFFSET)
+                    .expect("commit_flag_ptr overflow");
+                // Safety: `cpu_ptr` is a wasm linear-memory pointer into the JIT ABI buffer owned by
+                // `WasmTieredVm`. The commit flag slot is a `u32` at a stable offset.
+                unsafe {
+                    core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0);
+                }
+                0x1000
+            }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
+        );
+        Reflect::set(
+            &js_sys::global(),
+            &JsValue::from_str("__aero_jit_call"),
+            rollback_call.as_ref(),
+        )
+        .expect("set __aero_jit_call (rollback)");
+        rollback_call.forget();
+
+        let tsc_before = vm.vcpu.cpu.state.msr.tsc;
+        let outcome = vm.dispatcher.step(&mut vm.vcpu);
+        let tsc_after = vm.vcpu.cpu.state.msr.tsc;
+
+        match outcome {
+            StepOutcome::Block {
+                tier: ExecutedTier::Jit,
+                instructions_retired,
+                ..
+            } => {
+                assert_eq!(
+                    instructions_retired, 0,
+                    "rollback exits must report zero retired instructions"
+                );
+            }
+            other => panic!("expected JIT block outcome, got {other:?}"),
+        }
+        assert_eq!(
+            tsc_after, tsc_before,
+            "rollback exits must not advance TSC"
         );
     }
 
