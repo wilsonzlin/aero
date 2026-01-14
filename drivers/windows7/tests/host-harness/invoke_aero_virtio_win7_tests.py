@@ -8160,7 +8160,7 @@ def main() -> int:
         )
         _emit_virtio_net_msix_host_marker(net_msix_tail)
         _emit_virtio_input_binding_host_marker(tail, marker_line=virtio_input_binding_marker_line)
-        _emit_virtio_net_irq_host_marker(tail)
+        _emit_virtio_net_irq_host_marker(net_large_tail)
         _emit_virtio_snd_irq_host_marker(tail)
         snd_msix_tail = (
             virtio_snd_msix_marker_line.encode("utf-8") if virtio_snd_msix_marker_line is not None else tail
