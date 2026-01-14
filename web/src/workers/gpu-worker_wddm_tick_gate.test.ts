@@ -7,6 +7,7 @@ import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import {
   FRAME_PRESENTED,
+  FRAME_PRESENTING,
   FRAME_SEQ_INDEX,
   FRAME_STATUS_INDEX,
   GPU_PROTOCOL_NAME,
@@ -193,6 +194,12 @@ describe("workers/gpu-worker WDDM tick gating", () => {
       const waitResult = Atomics.wait(fbHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1, 5_000);
       expect(waitResult === "ok" || waitResult === "not-equal").toBe(true);
       expect(Atomics.load(fbHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY)).toBe(0);
+
+      // The worker may clear the legacy shared framebuffer dirty flag before it flips the
+      // frame pacing status back to PRESENTED (tick path is async). Wait until the status
+      // transitions away from PRESENTING so the assertion is not racy across Node versions.
+      const statusWait = Atomics.wait(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTING, 5_000);
+      expect(statusWait === "ok" || statusWait === "not-equal").toBe(true);
       expect(Atomics.load(frameState, FRAME_STATUS_INDEX)).toBe(FRAME_PRESENTED);
     } finally {
       await worker.terminate();
