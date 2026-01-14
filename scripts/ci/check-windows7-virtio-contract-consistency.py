@@ -4665,6 +4665,20 @@ def main() -> None:
                 require_fallback=False,
                 errors=errors,
             )
+            # Keep the strict generic fallback HWID string out of the canonical virtio-input INF
+            # entirely (even in comments) so it can't be cargo-culted back into the models sections
+            # and so repo-wide greps remain a reliable guardrail.
+            strict_hwid_hits: list[str] = []
+            for line_no, raw in enumerate(read_text(inf_path).splitlines(), start=1):
+                if strict_hwid.lower() in raw.lower():
+                    strict_hwid_hits.append(f"{inf_path.as_posix()}:{line_no}: {raw.rstrip()}")
+            if strict_hwid_hits:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: canonical virtio-input INF must not contain the strict generic fallback HWID ({strict_hwid}); fallback is available only via virtio-input.inf.disabled:",
+                        strict_hwid_hits,
+                    )
+                )
 
     # ---------------------------------------------------------------------
     # 6) INF alias drift guardrails (legacy filename aliases must stay in sync).

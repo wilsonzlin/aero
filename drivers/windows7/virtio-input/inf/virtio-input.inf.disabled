@@ -24,6 +24,7 @@
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
 ;   - Local helper: drivers/windows7/virtio-input/scripts/check-inf-alias.py
+;   - Local helper: drivers/windows7/virtio-input/scripts/verify-inf.ps1
 
 [Version]
 Signature   = "$WINDOWS NT$"
