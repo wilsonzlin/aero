@@ -488,6 +488,7 @@ pub enum MachineError {
     UhciRequiresPcPlatform,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
+    AerogpuRequiresPcPlatform,
     AerogpuConflictsWithVga,
     MultipleNicsEnabled,
 }
@@ -530,6 +531,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::VirtioNetRequiresPcPlatform => {
                 write!(f, "enable_virtio_net requires enable_pc_platform=true")
+            }
+            MachineError::AerogpuRequiresPcPlatform => {
+                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::AerogpuConflictsWithVga => {
                 write!(
@@ -3067,7 +3071,7 @@ impl Machine {
         }
         if cfg.enable_aerogpu {
             if !cfg.enable_pc_platform {
-                return Err(MachineError::AeroGpuRequiresPcPlatform);
+                return Err(MachineError::AerogpuRequiresPcPlatform);
             }
             if cfg.enable_vga {
                 return Err(MachineError::AerogpuConflictsWithVga);
@@ -3659,17 +3663,6 @@ impl Machine {
     /// Debug/testing helper: write to an I/O port.
     pub fn io_write(&mut self, port: u16, size: u8, value: u32) {
         self.io.write(port, size, value);
-    }
-
-    /// Return the physical base address of the VBE linear framebuffer (LFB) as reported by the
-    /// machine's firmware (VBE mode info `PhysBasePtr`).
-    ///
-    /// This is the canonical address guests are expected to use when mapping the VBE framebuffer.
-    ///
-    /// Note: When VGA is disabled, the firmware keeps the LFB inside conventional RAM so BIOS-only
-    /// helpers do not scribble over the canonical PCI MMIO window.
-    pub fn vbe_lfb_base(&self) -> u64 {
-        u64::from(self.bios.video.vbe.lfb_base)
     }
 
     // ---------------------------------------------------------------------

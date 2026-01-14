@@ -25,7 +25,7 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     // - an offset into AeroGPU VRAM BAR1 (Phase 2, legacy VGA/VBE integrated into AeroGPU).
     //
     // Always use the firmware-reported VBE PhysBasePtr so this test stays robust across both.
-    let base = m.vbe_lfb_base();
+    let base = u64::from(m.vbe_lfb_base());
     // Write a red pixel at (0,0) in packed 32bpp BGRX via *machine memory*.
     m.write_physical_u32(base, 0x00FF_0000);
 
