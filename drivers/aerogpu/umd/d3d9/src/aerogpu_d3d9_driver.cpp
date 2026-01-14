@@ -21869,11 +21869,18 @@ aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
 // instantiate `Device` directly (no runtime) and need to call a small subset of
 // those DDIs directly.
 //
-// Provide thin wrappers with external linkage so tests can invoke the draw
-// entrypoints and validate command stream emission behavior.
+// Provide thin wrappers with external linkage so tests can invoke key DDIs
+// directly (draw calls + minimal pipeline setup) and validate command stream
+// emission behavior.
 namespace {
 
 auto* const kDeviceSetFvfImpl = device_set_fvf;
+auto* const kDeviceCreateVertexDeclImpl = device_create_vertex_decl;
+auto* const kDeviceSetVertexDeclImpl = device_set_vertex_decl;
+auto* const kDeviceDestroyVertexDeclImpl = device_destroy_vertex_decl;
+auto* const kDeviceCreateShaderImpl = device_create_shader;
+auto* const kDeviceSetShaderImpl = device_set_shader;
+auto* const kDeviceDestroyShaderImpl = device_destroy_shader;
 auto* const kDeviceDrawPrimitiveImpl = device_draw_primitive;
 auto* const kDeviceDrawIndexedPrimitiveImpl = device_draw_indexed_primitive;
 auto* const kDeviceDrawPrimitiveUpImpl = device_draw_primitive_up;
@@ -21886,6 +21893,48 @@ auto* const kDeviceProcessVerticesImpl = device_process_vertices;
 
 HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   return kDeviceSetFvfImpl(hDevice, fvf);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
+    D3DDDI_HDEVICE hDevice,
+    const void* pDecl,
+    uint32_t decl_size,
+    D3D9DDI_HVERTEXDECL* phDecl) {
+  return kDeviceCreateVertexDeclImpl(hDevice, pDecl, decl_size, phDecl);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HVERTEXDECL hDecl) {
+  return kDeviceSetVertexDeclImpl(hDevice, hDecl);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_destroy_vertex_decl(
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HVERTEXDECL hDecl) {
+  return kDeviceDestroyVertexDeclImpl(hDevice, hDecl);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_create_shader(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    const void* pBytecode,
+    uint32_t bytecode_size,
+    D3D9DDI_HSHADER* phShader) {
+  return kDeviceCreateShaderImpl(hDevice, stage, pBytecode, bytecode_size, phShader);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_shader(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    D3D9DDI_HSHADER hShader) {
+  return kDeviceSetShaderImpl(hDevice, stage, hShader);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HSHADER hShader) {
+  return kDeviceDestroyShaderImpl(hDevice, hShader);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
