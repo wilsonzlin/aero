@@ -580,10 +580,7 @@ mod tests {
                 draw.hs_patch_constants.size,
                 draw.sizes.hs_patch_constants_bytes
             );
-            assert_eq!(
-                draw.hs_tess_factors.size,
-                draw.sizes.hs_tess_factors_bytes
-            );
+            assert_eq!(draw.hs_tess_factors.size, draw.sizes.hs_tess_factors_bytes);
             assert_eq!(draw.tess_metadata.size, draw.sizes.tess_metadata_bytes);
             assert_eq!(
                 draw.expanded_vertices.size,

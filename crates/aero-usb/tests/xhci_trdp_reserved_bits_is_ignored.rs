@@ -114,4 +114,3 @@ fn xhci_does_not_execute_transfers_when_trdp_reserved_bits_set() {
         "controller must not emit transfer events when TRDP reserved bits are set"
     );
 }
-

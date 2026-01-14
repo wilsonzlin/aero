@@ -99,7 +99,10 @@ fn aerogpu_vram_bar_does_not_exhaust_default_pci_mmio_window() {
         .expect("AeroGPU BAR1 range missing");
     assert_ne!(aerogpu_bar0.base, 0);
     assert_ne!(aerogpu_bar1.base, 0);
-    for (name, range) in [("AeroGPU BAR0", aerogpu_bar0), ("AeroGPU BAR1", aerogpu_bar1)] {
+    for (name, range) in [
+        ("AeroGPU BAR0", aerogpu_bar0),
+        ("AeroGPU BAR1", aerogpu_bar1),
+    ] {
         assert!(
             !(legacy_lfb.base < range.end_exclusive() && range.base < reserved_end),
             "{name} overlaps reserved legacy LFB range: {legacy_lfb:?} vs {range:?}"

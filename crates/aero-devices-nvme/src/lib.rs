@@ -2737,9 +2737,7 @@ mod tests {
         dev.config_mut().write(cap_offset + 0x10, 4, 0); // unmask
         dev.process(&mut mem);
 
-        let msgs = log
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let msgs = log.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].vector(), 0x45);
         drop(msgs);

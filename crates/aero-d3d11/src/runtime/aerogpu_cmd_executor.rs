@@ -5468,11 +5468,12 @@ impl AerogpuD3d11Executor {
                 },
             ];
 
-            let prepass_output_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("aerogpu_cmd geometry prepass bind group (group0 outputs)"),
-                layout: prepass_output_bgl.layout.as_ref(),
-                entries: &prepass_output_bg_entries,
-            });
+            let prepass_output_bind_group =
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd geometry prepass bind group (group0 outputs)"),
+                    layout: prepass_output_bgl.layout.as_ref(),
+                    entries: &prepass_output_bg_entries,
+                });
 
             let empty_bgl = self
                 .bind_group_layout_cache
