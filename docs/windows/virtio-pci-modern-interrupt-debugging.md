@@ -318,8 +318,8 @@ Rule of thumb:
 
 - Read back `common_cfg.msix_config` and/or `queue_msix_vector` and they are still
   `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) after the device is “running”.
-  - On Aero contract devices this means the device will fall back to INTx+ISR unless you
-    successfully reprogram MSI-X vectors.
+  - On Aero contract devices this means the device will **suppress interrupts** while MSI-X is
+    enabled (no MSI-X message and no INTx fallback) until you successfully program MSI-X vectors.
 - You can correlate this with a recent reset/status transition in your logs.
 
 **Fix**
