@@ -67,7 +67,7 @@ fn tier1_masks_16bit_effective_addresses_for_memory_stores() {
     write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
     let _ = execute_block(&ir, &mut cpu_bytes, &mut bus);
 
-    assert_eq!(&bus.mem()[0..2], &0xbee_fu16.to_le_bytes());
+    assert_eq!(&bus.mem()[0..2], &0xbeef_u16.to_le_bytes());
 }
 
 #[test]
@@ -133,4 +133,3 @@ fn tier1_masks_16bit_stack_pointer_for_push() {
     assert_eq!(out.gpr[Gpr::Rsp.as_u8() as usize], 0);
     assert_eq!(&bus.mem()[0..2], &0x3344u16.to_le_bytes());
 }
-

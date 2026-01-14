@@ -62,7 +62,7 @@ fn tier2_masks_16bit_effective_addresses_for_memory_stores() {
 
     let exit = run_function(&func, &env, &mut bus, &mut state, 8);
     assert_eq!(exit, RunExit::SideExit { next_rip: entry + 2 });
-    assert_eq!(&bus.mem()[0..2], &0xbee_fu16.to_le_bytes());
+    assert_eq!(&bus.mem()[0..2], &0xbeef_u16.to_le_bytes());
 }
 
 #[test]
@@ -127,4 +127,3 @@ fn tier2_masks_16bit_stack_pointer_for_push() {
     assert_eq!(state.cpu.gpr[Gpr::Rsp.as_u8() as usize], 0);
     assert_eq!(&bus.mem()[0..2], &0x3344u16.to_le_bytes());
 }
-
