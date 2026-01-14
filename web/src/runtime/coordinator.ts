@@ -2400,8 +2400,13 @@ export class WorkerCoordinator {
           typeof maybeComplete.requestId === "number" &&
           typeof maybeComplete.completedFence === "bigint"
         ) {
-          this.aerogpuInFlightFencesByRequestId.delete(maybeComplete.requestId);
-          this.forwardAerogpuFenceComplete(maybeComplete.completedFence);
+          const tracked = this.aerogpuInFlightFencesByRequestId.delete(maybeComplete.requestId);
+          // Ignore completions we didn't originate (e.g. if other tooling is driving the GPU worker
+          // directly). The machine's submission bridge uses deferred fences; completing unknown
+          // fences could enable bridge semantics unexpectedly and perturb guest execution.
+          if (tracked) {
+            this.forwardAerogpuFenceComplete(maybeComplete.completedFence);
+          }
           return;
         }
       }
@@ -2803,6 +2808,7 @@ export class WorkerCoordinator {
     const cpuInfo = this.workers.cpu;
     if (!cpuInfo) return;
     if (typeof fence !== "bigint") return;
+    if (fence === 0n) return;
 
     const msg: AerogpuCompleteFenceMessage = { kind: "aerogpu.complete_fence", fence };
     try {
