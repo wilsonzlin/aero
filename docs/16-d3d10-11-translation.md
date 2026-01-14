@@ -1062,8 +1062,11 @@ internal bind group at `@group(0)` (separate from the stage-scoped `@group(3)` G
 
 - `@binding(0)`: expanded vertices (read_write)
 - `@binding(1)`: expanded indices (read_write)
-- `@binding(2)`: indirect args (`DrawIndexedIndirectArgs`, read_write)
-- `@binding(3)`: atomic counters (read_write)
+- `@binding(2)`: packed state (`GsPrepassState`, read_write)
+  - `out_indirect`: `DrawIndexedIndirectArgs` at offset 0 (so the executor can feed the same buffer
+    into `draw_indexed_indirect`),
+  - `counters`: atomic counters (`vertex_count`, `index_count`, `overflow`).
+- `@binding(3)`: unused / reserved.
 - `@binding(4)`: uniform params (uniform)
 - `@binding(5)`: `gs_inputs` (`storage, read_write`; conceptually read-only)
  
