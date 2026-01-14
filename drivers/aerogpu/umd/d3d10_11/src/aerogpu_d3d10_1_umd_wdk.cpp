@@ -9496,6 +9496,14 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
     pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
     pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
   }
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
+        &CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
+            decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+    pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput =
+        &CreateGeometryShaderWithStreamOutputImpl<
+            decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput)>::Call;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
   pCreateDevice->pDeviceFuncs->pfnCreateElementLayout = &CreateElementLayout;
