@@ -26,14 +26,11 @@ use aero_gpu_trace::{
     AerogpuMemoryRangeCapture, AerogpuSubmissionCapture, TraceMeta, TraceWriteError, TraceWriter,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AeroGpuFenceCompletionMode {
-    /// Legacy bring-up behavior: submissions complete inside the executor (optionally paced by
-    /// vblank if the command stream contains a vsynced present).
-    Immediate,
-    /// Submissions remain "in flight" until `complete_fence` is called (out-of-order capable).
-    Deferred,
-}
+pub use aero_devices_gpu::executor::{
+    AeroGpuAllocTableDecodeError, AeroGpuCmdStreamDecodeError, AeroGpuCmdStreamHeader,
+    AeroGpuFenceCompletionMode, AeroGpuExecutorConfig, AeroGpuSubmission, AeroGpuSubmissionDecodeError,
+    AeroGpuSubmissionRecord,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingFenceKind {
@@ -46,90 +43,6 @@ struct PendingFenceCompletion {
     fence: u64,
     wants_irq: bool,
     kind: PendingFenceKind,
-}
-
-#[derive(Clone, Debug)]
-pub struct AeroGpuExecutorConfig {
-    pub verbose: bool,
-    pub keep_last_submissions: usize,
-    pub fence_completion: AeroGpuFenceCompletionMode,
-}
-
-impl Default for AeroGpuExecutorConfig {
-    fn default() -> Self {
-        Self {
-            verbose: false,
-            keep_last_submissions: 64,
-            fence_completion: AeroGpuFenceCompletionMode::Immediate,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct AeroGpuSubmissionRecord {
-    pub ring_head: u32,
-    pub ring_tail: u32,
-    pub submission: AeroGpuSubmission,
-    pub decode_errors: Vec<AeroGpuSubmissionDecodeError>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AeroGpuCmdStreamHeader {
-    pub magic: u32,
-    pub abi_version: u32,
-    pub size_bytes: u32,
-    pub flags: u32,
-}
-
-impl From<ProtocolCmdStreamHeader> for AeroGpuCmdStreamHeader {
-    fn from(value: ProtocolCmdStreamHeader) -> Self {
-        Self {
-            magic: value.magic,
-            abi_version: value.abi_version,
-            size_bytes: value.size_bytes,
-            flags: value.flags,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct AeroGpuSubmission {
-    pub desc: AeroGpuSubmitDesc,
-    pub alloc_table_header: Option<AeroGpuAllocTableHeader>,
-    pub allocs: Vec<AeroGpuAllocEntry>,
-    pub cmd_stream_header: Option<AeroGpuCmdStreamHeader>,
-    pub cmd_stream: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AeroGpuSubmissionDecodeError {
-    AllocTable(AeroGpuAllocTableDecodeError),
-    CmdStream(AeroGpuCmdStreamDecodeError),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AeroGpuAllocTableDecodeError {
-    InconsistentDescriptor,
-    TooLarge,
-    BadMagic,
-    BadAbiVersion,
-    SizeTooSmall,
-    SizeExceedsDescriptor,
-    BadEntryStride,
-    EntriesOutOfBounds,
-    InvalidEntry,
-    DuplicateAllocId,
-    AddressOverflow,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AeroGpuCmdStreamDecodeError {
-    InconsistentDescriptor,
-    AddressOverflow,
-    TooLarge,
-    TooSmall,
-    BadHeader,
-    StreamSizeTooLarge,
 }
 
 pub struct AeroGpuExecutor {
