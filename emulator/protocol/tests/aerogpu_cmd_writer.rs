@@ -149,6 +149,46 @@ fn cmd_writer_bind_shaders_ex_emits_append_only_extended_payload() {
 }
 
 #[test]
+fn cmd_writer_bind_shaders_ex_can_mirror_gs_into_reserved0() {
+    let mut w = AerogpuCmdWriter::new();
+    w.bind_shaders_ex_with_gs_mirror(
+        /* vs */ 11, /* ps */ 22, /* cs */ 33, /* gs */ 44, /* hs */ 55,
+        /* ds */ 66,
+    );
+    w.flush();
+
+    let buf = w.finish();
+
+    let packet_offset = AerogpuCmdStreamHeader::SIZE_BYTES;
+    let hdr = decode_cmd_hdr_le(&buf[packet_offset..]).unwrap();
+    let opcode = hdr.opcode;
+    let size_bytes = hdr.size_bytes;
+    assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
+    assert_eq!(size_bytes as usize, AerogpuCmdBindShaders::EX_SIZE_BYTES);
+
+    let reserved0 = u32::from_le_bytes(
+        buf[packet_offset + offset_of!(AerogpuCmdBindShaders, reserved0)
+            ..packet_offset + offset_of!(AerogpuCmdBindShaders, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(reserved0, 44);
+
+    let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&buf[packet_offset..]).unwrap();
+    // Avoid creating unaligned references to packed fields.
+    let reserved0 = cmd.reserved0;
+    assert_eq!(reserved0, 44);
+    assert_eq!(
+        ex,
+        Some(BindShadersEx {
+            gs: 44,
+            hs: 55,
+            ds: 66,
+        })
+    );
+}
+
+#[test]
 fn cmd_writer_bind_shaders_hs_ds_is_sugar_for_extended_packet() {
     let mut w = AerogpuCmdWriter::new();
     w.bind_shaders_hs_ds(/*hs=*/ 55, /*ds=*/ 66);

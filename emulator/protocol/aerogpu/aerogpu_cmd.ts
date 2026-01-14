@@ -1913,8 +1913,10 @@ export class AerogpuCmdWriter {
   /**
    * BIND_SHADERS using the canonical append-only ABI extension: trailing `{gs, hs, ds}` handles.
    *
-   * ABI note: the base packet layout remains unchanged (reserved0 stays 0); the extended handles are
-   * appended after the `aerogpu_cmd_bind_shaders` struct.
+   * ABI note: the base packet layout remains unchanged; the extended handles are appended after the
+   * `aerogpu_cmd_bind_shaders` struct. By default we keep `reserved0=0` to preserve strict
+   * append-only semantics, but callers may optionally mirror `gs` into `reserved0` for best-effort
+   * compatibility with legacy decoders.
    */
   bindShadersEx(
     vs: AerogpuHandle,
@@ -1923,12 +1925,13 @@ export class AerogpuCmdWriter {
     gs: AerogpuHandle,
     hs: AerogpuHandle,
     ds: AerogpuHandle,
+    mirrorGsToReserved0 = false,
   ): void {
     const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
     this.view.setUint32(base + 16, cs, true);
-    this.view.setUint32(base + 20, 0, true);
+    this.view.setUint32(base + 20, mirrorGsToReserved0 ? gs : 0, true);
     // ABI extension payload: trailing `{gs, hs, ds}`.
     this.view.setUint32(base + 24, gs, true);
     this.view.setUint32(base + 28, hs, true);
