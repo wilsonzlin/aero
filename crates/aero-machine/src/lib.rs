@@ -10,12 +10,12 @@
 //! **`aero_machine::Machine`**.
 #![forbid(unsafe_code)]
 
+mod aerogpu;
 mod guest_time;
 mod shared_disk;
 mod shared_iso_disk;
-pub mod virtual_time;
 mod vcpu_init;
-mod aerogpu;
+pub mod virtual_time;
 
 pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
@@ -1848,6 +1848,18 @@ struct AeroGpuDevice {
     attr_flip_flop: bool,
 
     // ---------------------------------------------------------------------
+    // VGA DAC / palette (0x3C6..=0x3C9)
+    // ---------------------------------------------------------------------
+    pel_mask: u8,
+    dac_write_index: u8,
+    dac_write_subindex: u8,
+    dac_write_latch: [u8; 3],
+    dac_read_index: u8,
+    dac_read_subindex: u8,
+    /// Stored as VGA-native 6-bit components (0..=63).
+    dac_palette: [[u8; 3]; 256],
+
+    // ---------------------------------------------------------------------
     // BAR0 register state (versioned ABI; minimal scanout + vblank subset)
     // ---------------------------------------------------------------------
     abi_version: u32,
@@ -1916,6 +1928,14 @@ impl AeroGpuDevice {
             attr_regs: [0; 256],
             attr_flip_flop: false,
 
+            pel_mask: 0xFF,
+            dac_write_index: 0,
+            dac_write_subindex: 0,
+            dac_write_latch: [0; 3],
+            dac_read_index: 0,
+            dac_read_subindex: 0,
+            dac_palette: [[0; 3]; 256],
+
             abi_version: agpu_pci::AEROGPU_ABI_VERSION_U32,
             features,
             irq_status: 0,
@@ -1966,6 +1986,52 @@ impl AeroGpuDevice {
         self.boot_time = Instant::now();
         self.next_vblank = None;
         self.wddm_scanout_active = false;
+
+        self.pel_mask = 0xFF;
+        self.dac_write_index = 0;
+        self.dac_write_subindex = 0;
+        self.dac_write_latch = [0; 3];
+        self.dac_read_index = 0;
+        self.dac_read_subindex = 0;
+        self.dac_palette.fill([0; 3]);
+    }
+
+    fn write_dac_data(&mut self, value: u8) {
+        let idx = self.dac_write_index as usize;
+        let component = (self.dac_write_subindex as usize) % 3;
+        self.dac_write_latch[component] = value;
+        self.dac_write_subindex = (self.dac_write_subindex + 1) % 3;
+        if self.dac_write_subindex != 0 {
+            return;
+        }
+
+        // Real VGA hardware uses a 6-bit DAC (0..=63), but a lot of software writes 8-bit values.
+        // Be permissive by detecting 8-bit mode per RGB triplet.
+        let is_8bit = self.dac_write_latch.iter().any(|&v| v > 0x3F);
+        let to_6bit = |v: u8| -> u8 {
+            if is_8bit {
+                v >> 2
+            } else {
+                v & 0x3F
+            }
+        };
+
+        let r = to_6bit(self.dac_write_latch[0]);
+        let g = to_6bit(self.dac_write_latch[1]);
+        let b = to_6bit(self.dac_write_latch[2]);
+        self.dac_palette[idx] = [r, g, b];
+        self.dac_write_index = self.dac_write_index.wrapping_add(1);
+    }
+
+    fn read_dac_data(&mut self) -> u8 {
+        let idx = self.dac_read_index as usize;
+        let component = (self.dac_read_subindex as usize).min(2);
+        let out = self.dac_palette[idx][component];
+        self.dac_read_subindex = (self.dac_read_subindex + 1) % 3;
+        if self.dac_read_subindex == 0 {
+            self.dac_read_index = self.dac_read_index.wrapping_add(1);
+        }
+        out
     }
 
     fn read_linear(buf: &[u8], offset: u64, size: usize) -> u64 {
@@ -2116,6 +2182,11 @@ impl AeroGpuDevice {
                 self.attr_flip_flop = false;
                 0xFF
             }
+            // DAC.
+            0x03C6 => self.pel_mask,
+            0x03C7 => self.dac_read_index,
+            0x03C8 => self.dac_write_index,
+            0x03C9 => self.read_dac_data(),
             _ => 0xFF,
         }
     }
@@ -2149,6 +2220,18 @@ impl AeroGpuDevice {
             // CRTC (color and mono aliases).
             0x03B4 | 0x03D4 => self.crtc_index = value,
             0x03B5 | 0x03D5 => self.crtc_regs[usize::from(self.crtc_index)] = value,
+
+            // DAC.
+            0x03C6 => self.pel_mask = value,
+            0x03C7 => {
+                self.dac_read_index = value;
+                self.dac_read_subindex = 0;
+            }
+            0x03C8 => {
+                self.dac_write_index = value;
+                self.dac_write_subindex = 0;
+            }
+            0x03C9 => self.write_dac_data(value),
 
             _ => {}
         }
@@ -4064,10 +4147,7 @@ impl Machine {
             Some(ints) => Box::new(VirtioMsixInterruptSink::new(ints.clone())),
             None => Box::new(NoopVirtioInterruptSink),
         };
-        let mut new_dev = VirtioPciDevice::new(
-            Box::new(VirtioBlk::new(disk)),
-            interrupt_sink,
-        );
+        let mut new_dev = VirtioPciDevice::new(Box::new(VirtioBlk::new(disk)), interrupt_sink);
         new_dev.load_state(&state).map_err(|e| {
             MachineError::DiskBackend(format!(
                 "failed to restore virtio-blk state after attaching disk backend: {e}"
@@ -4760,9 +4840,7 @@ impl Machine {
                         ahci_dev.config_mut().write(base + 0x0c, 2, u32::from(data));
                         ahci_dev.config_mut().write(base + 0x10, 4, mask);
                         ahci_dev.config_mut().write(base + 0x14, 4, pending);
-                        ahci_dev
-                            .config_mut()
-                            .write(base + 0x02, 2, u32::from(ctrl));
+                        ahci_dev.config_mut().write(base + 0x02, 2, u32::from(ctrl));
                     }
                 }
 
@@ -5587,10 +5665,9 @@ impl Machine {
                     ints.clone()
                 }
                 None => {
-                    let ints =
-                        Rc::new(RefCell::new(PlatformInterrupts::new_with_cpu_count(
-                            self.cfg.cpu_count,
-                        )));
+                    let ints = Rc::new(RefCell::new(PlatformInterrupts::new_with_cpu_count(
+                        self.cfg.cpu_count,
+                    )));
                     self.interrupts = Some(ints.clone());
                     ints
                 }
@@ -5705,9 +5782,9 @@ impl Machine {
                 // is routed via PCI BAR/MMIO when the PC platform is enabled, so do not map it
                 // directly here.
                 let legacy_base = aero_gpu_vga::VGA_LEGACY_MEM_START as u64;
-                let legacy_len =
-                    (aero_gpu_vga::VGA_LEGACY_MEM_END - aero_gpu_vga::VGA_LEGACY_MEM_START + 1)
-                        as u64;
+                let legacy_len = (aero_gpu_vga::VGA_LEGACY_MEM_END
+                    - aero_gpu_vga::VGA_LEGACY_MEM_START
+                    + 1) as u64;
                 self.mem.map_mmio_once(legacy_base, legacy_len, {
                     let vga = vga.clone();
                     move || {
@@ -5738,7 +5815,8 @@ impl Machine {
                         dev.borrow_mut().reset();
                     }
                     None => {
-                        self.aerogpu_mmio = Some(Rc::new(RefCell::new(AeroGpuMmioDevice::default())));
+                        self.aerogpu_mmio =
+                            Some(Rc::new(RefCell::new(AeroGpuMmioDevice::default())));
                     }
                 }
 
@@ -6667,9 +6745,9 @@ impl Machine {
                 .set_bar_base(aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX, bar5_base);
         }
         if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
-            if let Some(off) =
-                dev.config_mut()
-                    .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+            if let Some(off) = dev
+                .config_mut()
+                .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
             {
                 let base = u16::from(off);
                 dev.config_mut().write(base + 0x04, 4, addr_lo);
@@ -8852,7 +8930,10 @@ mod tests {
         // `USBC` v1.0 only contained UHCI fields. Ensure the v1.1 decoder continues accepting it
         // and defaults EHCI to empty/none.
         let mut w = SnapshotWriter::new(*b"USBC", SnapshotVersion::new(1, 0));
-        w.field_u64(MachineUsbSnapshot::TAG_UHCI_NS_REMAINDER, expected_remainder);
+        w.field_u64(
+            MachineUsbSnapshot::TAG_UHCI_NS_REMAINDER,
+            expected_remainder,
+        );
         w.field_bytes(MachineUsbSnapshot::TAG_UHCI_STATE, expected_uhci.clone());
         let bytes = w.finish();
 
