@@ -259,11 +259,19 @@ impl CodeCache {
     #[cfg(debug_assertions)]
     #[inline]
     fn debug_assert_invariants(&self) {
-        // Empty cache must have no LRU pointers and no accounting.
+        // Empty cache must have no LRU pointers and no accounting, and all nodes should be free.
         if self.map.is_empty() {
             debug_assert_eq!(self.head, None);
             debug_assert_eq!(self.tail, None);
             debug_assert_eq!(self.current_bytes, 0);
+            debug_assert_eq!(
+                self.free_list.len(),
+                self.nodes.len(),
+                "all nodes should be free when the cache is empty"
+            );
+            for node in &self.nodes {
+                debug_assert!(node.is_none(), "node slot should be free when cache is empty");
+            }
             return;
         }
 
@@ -271,24 +279,37 @@ impl CodeCache {
         let tail = self.tail.expect("non-empty cache must have tail");
 
         // Traverse the LRU list and validate prev/next links.
-        let mut visited = Vec::with_capacity(self.map.len());
+        let mut in_list = vec![false; self.nodes.len()];
         let mut cur = Some(head);
         let mut prev = None;
+        let mut list_len = 0usize;
+        let mut bytes = 0usize;
         while let Some(idx) = cur {
-            visited.push(idx);
+            debug_assert!(idx < self.nodes.len(), "LRU index out of bounds: {idx}");
+            debug_assert!(!in_list[idx], "LRU list cycle detected at idx={idx}");
+            in_list[idx] = true;
+            list_len += 1;
             debug_assert!(
-                visited.len() <= self.map.len(),
-                "LRU list cycle or extra nodes detected"
+                list_len <= self.map.len(),
+                "LRU list longer than map: {list_len} > {}",
+                self.map.len()
             );
 
             let node = self.nodes[idx].as_ref().expect("LRU node must exist");
             debug_assert_eq!(node.prev, prev, "broken LRU prev link at idx={idx}");
+            debug_assert_eq!(
+                self.map.get(&node.entry_rip),
+                Some(&idx),
+                "LRU node entry_rip {} missing/mismatched in map",
+                node.entry_rip
+            );
+            bytes = bytes.saturating_add(node.handle.meta.byte_len as usize);
             prev = Some(idx);
             cur = node.next;
         }
 
         debug_assert_eq!(
-            visited.len(),
+            list_len,
             self.map.len(),
             "LRU list length mismatch with map"
         );
@@ -297,19 +318,36 @@ impl CodeCache {
             Some(tail),
             "LRU traversal did not end at tail"
         );
+        debug_assert_eq!(
+            bytes, self.current_bytes,
+            "byte accounting mismatch: list sums to {bytes}, current_bytes is {}",
+            self.current_bytes
+        );
 
-        // Ensure all map entries refer to valid, linked nodes with consistent keys.
-        for (&rip, &idx) in &self.map {
+        // Validate free_list: no duplicates, all indices are in-bounds and refer to `None` slots.
+        let mut in_free = vec![false; self.nodes.len()];
+        for &idx in &self.free_list {
+            debug_assert!(idx < self.nodes.len(), "free_list index out of bounds: {idx}");
+            debug_assert!(!in_free[idx], "duplicate index in free_list: {idx}");
+            in_free[idx] = true;
             debug_assert!(
-                visited.contains(&idx),
-                "map contains idx {idx} that is not linked in LRU list"
+                self.nodes[idx].is_none(),
+                "free_list contains idx {idx} whose node slot is not free"
             );
-            let node = self.nodes[idx].as_ref().expect("LRU node must exist");
-            debug_assert_eq!(
-                node.entry_rip, rip,
-                "map key {rip} points to node with mismatched entry_rip {}",
-                node.entry_rip
+            debug_assert!(
+                !in_list[idx],
+                "free_list contains idx {idx} that is still linked in LRU list"
             );
+        }
+
+        // Every `None` slot must be present in `free_list`.
+        for (idx, node) in self.nodes.iter().enumerate() {
+            if node.is_none() {
+                debug_assert!(
+                    in_free[idx],
+                    "node slot {idx} is free but missing from free_list"
+                );
+            }
         }
     }
 
