@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
-use predicates::prelude::*;
+
+static REPO_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn write_fake_cargo(dir: &Path) -> PathBuf {
     if cfg!(windows) {
@@ -95,59 +96,122 @@ fn prepend_path(dir: &Path) -> OsString {
 }
 
 fn read_log(path: &Path) -> Vec<String> {
-    let log = fs::read_to_string(path).expect("read fake cargo log");
-    log.lines().map(|l| l.trim().to_string()).collect()
+    match fs::read_to_string(path) {
+        Ok(log) => log.lines().map(|l| l.trim().to_string()).collect(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => panic!("read fake cargo log: {err}"),
+    }
+}
+
+struct FileRestore {
+    path: PathBuf,
+    original: Vec<u8>,
+}
+
+impl Drop for FileRestore {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.path, &self.original);
+    }
+}
+
+fn corrupt_fixture_bytes(rel_path: &str) -> FileRestore {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask manifest dir has parent")
+        .to_path_buf();
+    let path = repo_root.join(rel_path);
+    let original = fs::read(&path).unwrap_or_else(|_| panic!("read fixture {path:?}"));
+    let mut mutated = original.clone();
+    // Flip a bit so `xtask fixtures --check` will detect drift.
+    if mutated.is_empty() {
+        mutated.push(0);
+    } else {
+        mutated[0] ^= 0x01;
+    }
+    fs::write(&path, &mutated).unwrap_or_else(|_| panic!("write fixture {path:?}"));
+    FileRestore { path, original }
 }
 
 #[test]
 fn test_all_fails_fast_when_fixtures_out_of_date() {
+    let _guard = REPO_LOCK.lock().unwrap();
+    let _restore = corrupt_fixture_bytes("tests/fixtures/boot/boot_vga_serial.bin");
+
     let tmp = tempfile::tempdir().unwrap();
     let log_path = tmp.path().join("cargo.log");
     write_fake_cargo(tmp.path());
 
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["test-all", "--skip-wasm", "--skip-ts", "--skip-e2e"])
         .env("PATH", prepend_path(tmp.path()))
         .env("FAKE_CARGO_LOG", &log_path)
-        .env("FAKE_CARGO_MODE", "fail_fixtures")
-        .assert()
-        .failure()
-        // The fixture check itself should tell users how to regenerate.
-        .stderr(predicate::str::contains("run `cargo xtask fixtures`"));
+        .output()
+        .expect("run xtask test-all");
 
-    let calls = read_log(&log_path);
-    assert_eq!(
-        calls,
-        vec!["xtask fixtures --check"],
-        "expected test-all to stop after the fixture check"
+    assert!(
+        !output.status.success(),
+        "expected test-all to fail when fixtures are out of date"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The fixture check itself should tell users how to regenerate.
+    assert!(stderr.contains("run `cargo xtask fixtures`"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("boot_vga_serial.bin"),
+        "stderr should mention the drifted fixture; got:\n{stderr}"
+    );
+
+    // `test-all` should stop after the fixture check and not invoke any `cargo` steps.
+    let calls = read_log(&log_path);
+    assert!(calls.is_empty(), "expected no cargo invocations; got: {calls:?}");
 }
 
 #[test]
 fn test_all_runs_fixture_checks_before_rust_fmt() {
+    let _guard = REPO_LOCK.lock().unwrap();
+
     let tmp = tempfile::tempdir().unwrap();
     let log_path = tmp.path().join("cargo.log");
     write_fake_cargo(tmp.path());
 
     // Force a failure after the fixture checks so we don't attempt to run real fmt/clippy/test.
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["test-all", "--skip-wasm", "--skip-ts", "--skip-e2e"])
         .env("PATH", prepend_path(tmp.path()))
         .env("FAKE_CARGO_LOG", &log_path)
         .env("FAKE_CARGO_MODE", "fail_fmt")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Rust: cargo fmt"));
+        .output()
+        .expect("run xtask test-all");
+
+    assert!(
+        !output.status.success(),
+        "expected test-all to fail at the fake fmt step"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Rust: cargo fmt"),
+        "stderr should mention the fmt step; got:\n{stderr}"
+    );
+
+    let fixtures_idx = stdout
+        .find("==> Fixtures: cargo xtask fixtures --check")
+        .expect("stdout should include fixtures check step");
+    let bios_rom_idx = stdout
+        .find("==> BIOS ROM: cargo xtask bios-rom --check")
+        .expect("stdout should include bios-rom check step");
+    let fmt_idx = stdout
+        .find("==> Rust: cargo fmt --all -- --check")
+        .expect("stdout should include rust fmt step");
+    assert!(
+        fixtures_idx < bios_rom_idx && bios_rom_idx < fmt_idx,
+        "expected fixtures -> bios-rom -> fmt order; stdout:\n{stdout}"
+    );
 
     let calls = read_log(&log_path);
-    assert!(
-        calls.len() >= 3,
-        "expected at least fixtures, bios-rom, and fmt invocations; got: {calls:?}"
-    );
-    assert_eq!(calls[0], "xtask fixtures --check");
-    assert_eq!(calls[1], "xtask bios-rom --check");
-    assert!(
-        calls.iter().any(|c| c == "fmt --all -- --check"),
-        "expected fmt check to run after fixture validation; got: {calls:?}"
+    assert_eq!(
+        calls,
+        vec!["fmt --all -- --check"],
+        "expected only the fmt invocation (the fake cargo fails there); got: {calls:?}"
     );
 }
