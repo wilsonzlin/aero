@@ -2782,9 +2782,17 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
                 AeroGpuSetScanoutEnable(adapter, 0);
             }
         } else {
-            PHYSICAL_ADDRESS zero;
-            zero.QuadPart = 0;
-            adapter->CurrentScanoutFbPa = zero;
+            /*
+             * Scanout registers are not always initialized early in boot (or after a virtual
+             * device reset). Avoid clobbering cached scanout state when we are in the middle of
+             * a post-display ownership transition: AcquirePostDisplayOwnership may rely on the
+             * cached FbPa/mode even if MMIO state is temporarily unavailable.
+             */
+            if (!adapter->PostDisplayOwnershipReleased) {
+                PHYSICAL_ADDRESS zero;
+                zero.QuadPart = 0;
+                adapter->CurrentScanoutFbPa = zero;
+            }
 
             /*
              * Be conservative: ensure scanout is disabled until dxgkrnl provides
@@ -3516,10 +3524,18 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
                 AeroGpuSetScanoutEnable(adapter, 0);
             }
         } else {
-            /* Unknown scanout state; do not report a framebuffer address. */
-            PHYSICAL_ADDRESS zero;
-            zero.QuadPart = 0;
-            adapter->CurrentScanoutFbPa = zero;
+            /*
+             * Unknown scanout state.
+             *
+             * If we are reacquiring after a post-display ownership release, keep the cached
+             * scanout FbPa/mode so we can restore scanout even if the MMIO state was reset.
+             * Otherwise, report no framebuffer address.
+             */
+            if (!adapter->PostDisplayOwnershipReleased) {
+                PHYSICAL_ADDRESS zero;
+                zero.QuadPart = 0;
+                adapter->CurrentScanoutFbPa = zero;
+            }
         }
     } else {
         /* Device isn't mapped yet (early init / teardown). */
