@@ -31,6 +31,25 @@ message).
 The binary framing described in this document applies **only** to the `udp`
 DataChannel.
 
+#### Inbound filtering / NAT behavior
+
+By default, the relay applies **inbound UDP filtering** and only forwards inbound UDP packets from
+remote address+port tuples that the guest has previously sent to:
+
+- `UDP_INBOUND_FILTER_MODE=address_and_port` (default; recommended)
+
+This behaves like a typical symmetric NAT and is safer for public deployments (it reduces exposure to
+unsolicited inbound UDP).
+
+If you need full-cone behavior (accept inbound UDP from any remote endpoint), set:
+
+- `UDP_INBOUND_FILTER_MODE=any` (**less safe**)
+
+Additional knobs:
+
+- `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT` (default: `UDP_BINDING_IDLE_TIMEOUT`) — expire inactive allowlist entries
+- `MAX_ALLOWED_REMOTES_PER_BINDING` — cap tracked remotes per guest port binding (DoS hardening)
+
 ### L2 tunnel DataChannel (`l2`)
 
 - **Label:** `l2`
