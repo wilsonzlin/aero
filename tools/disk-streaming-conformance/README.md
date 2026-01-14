@@ -154,6 +154,50 @@ Safety knobs:
 - `--max-body-bytes`: per-request read cap (manifest + chunk bodies)
 - `--max-bytes-per-chunk`: refuse to download chunks larger than this (default 8 MiB)
 
+### Running chunked mode against local MinIO (direct object URLs)
+
+You can publish a chunked image to a local MinIO/S3 endpoint using `tools/image-chunker`, then run the conformance tool directly against the public object URLs.
+
+1) Start the local object store (MinIO):
+
+```bash
+cd infra/local-object-store
+docker compose up -d
+```
+
+2) Build the chunker and publish a small test image:
+
+```bash
+cargo build --release --locked --manifest-path tools/image-chunker/Cargo.toml
+
+truncate -s 16M disk.img
+
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+
+./tools/image-chunker/target/release/aero-image-chunker publish \
+  --file ./disk.img \
+  --bucket disk-images \
+  --prefix images/demo/v1/ \
+  --image-id demo \
+  --image-version v1 \
+  --chunk-size 4194304 \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1
+```
+
+3) Run conformance against the manifest URL:
+
+```bash
+python3 tools/disk-streaming-conformance/conformance.py \
+  --mode chunked \
+  --manifest-url 'http://localhost:9000/disk-images/images/demo/v1/manifest.json' \
+  --origin 'http://localhost:5173'
+```
+
+Note: When serving directly from MinIO/S3 without a proxy/CDN layer, some best-practice headers (e.g. `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy`) may be missing, which will show up as `WARN` (and fail under `--strict`).
+
 ## CI notes
 
 - Exit code `0` = all checks passed
