@@ -187,7 +187,10 @@ impl VirtualDrive {
     /// Note: this constructor assumes the disk capacity is a multiple of 512 bytes. Prefer
     /// [`VirtualDrive::try_new_from_aero_virtual_disk`] when accepting arbitrary disks.
     pub fn new_from_aero_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> Self {
-        Self::new(512, Box::new(AeroStorageDiskAdapter::new(disk)))
+        Self::new(
+            aero_storage::SECTOR_SIZE as u32,
+            Box::new(AeroStorageDiskAdapter::new(disk)),
+        )
     }
 
     /// Like [`VirtualDrive::new_from_aero_virtual_disk`], but returns an error if the disk capacity
@@ -208,7 +211,10 @@ impl VirtualDrive {
                 ),
             ));
         }
-        Ok(Self::new(512, Box::new(AeroStorageDiskAdapter::new(disk))))
+        Ok(Self::new(
+            aero_storage::SECTOR_SIZE as u32,
+            Box::new(AeroStorageDiskAdapter::new(disk)),
+        ))
     }
 
     /// Convenience helper to wrap any concrete [`aero_storage::VirtualDisk`] as a [`VirtualDrive`].
@@ -356,7 +362,7 @@ mod tests {
 
         impl DiskBackend for ErrorBackend {
             fn len(&self) -> u64 {
-                512
+                SECTOR_SIZE as u64
             }
 
             fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> io::Result<()> {
@@ -447,7 +453,7 @@ mod tests {
 
         impl DiskBackend for PlainErrBackend {
             fn len(&self) -> u64 {
-                512
+                SECTOR_SIZE as u64
             }
 
             fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> io::Result<()> {
@@ -479,7 +485,7 @@ mod tests {
 
     #[test]
     fn try_new_from_aero_virtual_disk_rejects_unaligned_capacity() {
-        let disk = RawDisk::create(MemBackend::new(), 513).unwrap();
+        let disk = RawDisk::create(MemBackend::new(), SECTOR_SIZE as u64 + 1).unwrap();
         let err = VirtualDrive::try_new_from_aero_virtual_disk(Box::new(disk)).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
