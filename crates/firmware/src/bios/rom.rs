@@ -227,7 +227,7 @@ fn glyph_box_single(up: bool, down: bool, left: bool, right: bool) -> [u8; 8] {
     let left_mask = 0xFFu8 << (7 - v_col);
     let right_mask = 0xFFu8 >> v_col;
 
-    for y in 0usize..8 {
+    for (y, out_row) in out.iter_mut().enumerate() {
         let mut row = 0u8;
         if (up && y <= h_row) || (down && y >= h_row) {
             row |= v_bit;
@@ -240,7 +240,7 @@ fn glyph_box_single(up: bool, down: bool, left: bool, right: bool) -> [u8; 8] {
                 row |= right_mask;
             }
         }
-        out[y] = row;
+        *out_row = row;
     }
 
     out
@@ -249,9 +249,7 @@ fn glyph_box_single(up: bool, down: bool, left: bool, right: bool) -> [u8; 8] {
 fn glyph_box_double_vertical() -> [u8; 8] {
     let mut out = [0u8; 8];
     let v_bits = 0x18u8; // bits 4 and 3
-    for row in &mut out {
-        *row = v_bits;
-    }
+    out.fill(v_bits);
     out
 }
 
@@ -273,17 +271,13 @@ fn glyph_block_lower_half() -> [u8; 8] {
 
 fn glyph_block_left_half() -> [u8; 8] {
     let mut out = [0u8; 8];
-    for row in &mut out {
-        *row = 0xF0; // left 4 pixels
-    }
+    out.fill(0xF0); // left 4 pixels
     out
 }
 
 fn glyph_block_right_half() -> [u8; 8] {
     let mut out = [0u8; 8];
-    for row in &mut out {
-        *row = 0x0F; // right 4 pixels
-    }
+    out.fill(0x0F); // right 4 pixels
     out
 }
 

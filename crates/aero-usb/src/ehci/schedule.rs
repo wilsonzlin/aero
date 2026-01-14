@@ -1,3 +1,9 @@
+//! Shared EHCI schedule traversal limits + error types.
+//!
+//! The EHCI schedule structures (frame list, QHs, qTDs, etc) live in guest memory and are
+//! therefore entirely guest-controlled. The schedule engines (`schedule_async` and
+//! `schedule_periodic`) enforce strict per-tick budgets and detect cycles to keep controller work
+//! bounded even under malformed/adversarial schedules.
 /// Max number of horizontal QH links walked in the asynchronous schedule per 1ms tick.
 ///
 /// This bounds the work `tick_1ms()` can do even if the guest provides an adversarial schedule.
@@ -9,8 +15,8 @@ pub const MAX_QTD_STEPS_PER_QH: usize = 1024;
 /// Max number of periodic frame list links walked per frame.
 ///
 /// The periodic schedule can contain a mixture of QHs (interrupt) and other element types (iTD,
-/// siTD, FSTN). We treat unknown types as opaque nodes with a "next link pointer" at offset 0 and
-/// enforce a strict hop budget.
+/// siTD, FSTN). Unsupported element types are treated as opaque nodes with a "next link pointer" at
+/// offset 0 and still count against this hop budget.
 pub const MAX_PERIODIC_LINKS_PER_FRAME: usize = 1024;
 
 /// Errors produced by schedule traversal/processing.

@@ -134,17 +134,12 @@ fn render_message_to_vga_text_line0(bus: &mut dyn BiosBus, msg: &str) {
         pair[1] = VGA_TEXT_ATTR;
     }
 
-    let mut col = 0usize;
-    for &b in msg.as_bytes() {
+    for (col, &b) in msg.as_bytes().iter().take(VGA_TEXT_COLS).enumerate() {
         if b == b'\n' || b == b'\r' {
-            break;
-        }
-        if col >= VGA_TEXT_COLS {
             break;
         }
         line[col * 2] = b;
         // attribute byte already set to VGA_TEXT_ATTR
-        col += 1;
     }
 
     bus.write_physical(VGA_TEXT_BASE, &line);

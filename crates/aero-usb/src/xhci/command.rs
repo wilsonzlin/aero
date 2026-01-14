@@ -301,7 +301,7 @@ impl XhciEndpointManager {
         ptr: u64,
         dcs: bool,
     ) -> CompletionCode {
-        if ptr == 0 || (ptr % TRB_LEN as u64) != 0 {
+        if ptr == 0 || !ptr.is_multiple_of(TRB_LEN as u64) {
             return CompletionCode::ParameterError;
         }
 

@@ -320,7 +320,7 @@ impl Bios {
     fn bios_diag(&mut self, bus: &mut dyn BiosBus, msg: &str) {
         // Record the message in the TTY buffer for programmatic inspection.
         self.push_tty_bytes(msg.as_bytes());
-        let needs_newline = !msg.as_bytes().last().is_some_and(|b| *b == b'\n');
+        let needs_newline = msg.as_bytes().last().is_none_or(|b| *b != b'\n');
         if needs_newline {
             self.push_tty_byte(b'\n');
         }
@@ -350,7 +350,7 @@ impl Bios {
     ) {
         // Record the message in the TTY buffer for programmatic inspection.
         self.push_tty_bytes(msg.as_bytes());
-        let needs_newline = !msg.as_bytes().last().is_some_and(|b| *b == b'\n');
+        let needs_newline = msg.as_bytes().last().is_none_or(|b| *b != b'\n');
         if needs_newline {
             self.push_tty_byte(b'\n');
         }

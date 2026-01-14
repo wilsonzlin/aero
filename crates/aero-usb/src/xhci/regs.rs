@@ -25,7 +25,7 @@ pub const REG_CONFIG: u64 = (CAPLENGTH_BYTES as u64) + (op::CONFIG as u64);
 /// Runtime register absolute offsets (subset).
 pub const REG_MFINDEX: u64 = RTSOFF_VALUE as u64 + runtime::MFINDEX as u64;
 pub const REG_INTR0_BASE: u64 = RTSOFF_VALUE as u64 + runtime::INTERRUPTER_STRIDE as u64;
-pub const REG_INTR0_IMAN: u64 = REG_INTR0_BASE + 0x00;
+pub const REG_INTR0_IMAN: u64 = REG_INTR0_BASE;
 pub const REG_INTR0_IMOD: u64 = REG_INTR0_BASE + 0x04;
 pub const REG_INTR0_ERSTSZ: u64 = REG_INTR0_BASE + 0x08;
 pub const REG_INTR0_ERSTBA_LO: u64 = REG_INTR0_BASE + 0x10;

@@ -115,7 +115,7 @@ fn walk_link<M: MemoryBus + ?Sized>(
             return Ok(());
         }
 
-        if visited.iter().any(|&a| a == addr) {
+        if visited.contains(&addr) {
             return Err(ScheduleError::PeriodicCycle);
         }
         visited.push(addr);
@@ -178,7 +178,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
         if qtd_addr == 0 {
             return Ok(horiz);
         }
-        if visited_qtd.iter().any(|&a| a == qtd_addr) {
+        if visited_qtd.contains(&qtd_addr) {
             return Err(ScheduleError::QtdCycle);
         }
         visited_qtd.push(qtd_addr);
@@ -402,8 +402,8 @@ fn complete_qtd<M: MemoryBus + ?Sized>(
 
 fn read_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, out: &mut [u8]) {
     let mut ptrs = [0u32; 5];
-    for i in 0..5 {
-        ptrs[i] = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
+    for (i, slot) in ptrs.iter_mut().enumerate() {
+        *slot = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
     }
 
     let start_off = (ptrs[0] & 0xfff) as usize;
@@ -424,8 +424,8 @@ fn read_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, out: &mut 
 
 fn write_qtd_buffer<M: MemoryBus + ?Sized>(mem: &mut M, qtd_addr: u32, data: &[u8]) {
     let mut ptrs = [0u32; 5];
-    for i in 0..5 {
-        ptrs[i] = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
+    for (i, slot) in ptrs.iter_mut().enumerate() {
+        *slot = mem.read_u32(qtd_addr.wrapping_add(0x0c + (i as u32) * 4) as u64);
     }
 
     let start_off = (ptrs[0] & 0xfff) as usize;

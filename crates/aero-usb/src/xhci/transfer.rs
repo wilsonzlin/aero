@@ -224,7 +224,7 @@ impl XhciTransferExecutor {
                 };
 
                 match self.gather_td(mem, ep, &mut td) {
-                    GatherTdResult::Incomplete => return,
+                    GatherTdResult::Incomplete => (),
                     GatherTdResult::Ready => self.execute_td(mem, ep, td),
                     GatherTdResult::Fault { trb_ptr } => {
                         ep.halted = true;

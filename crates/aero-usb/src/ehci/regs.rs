@@ -21,7 +21,7 @@ pub const REG_HCCPARAMS: u64 = 0x08;
 pub const REG_HCSP_PORTROUTE: u64 = 0x0c;
 
 // Operational registers (absolute offsets from MMIO base).
-pub const REG_USBCMD: u64 = CAPLENGTH as u64 + 0x00;
+pub const REG_USBCMD: u64 = CAPLENGTH as u64;
 pub const REG_USBSTS: u64 = CAPLENGTH as u64 + 0x04;
 pub const REG_USBINTR: u64 = CAPLENGTH as u64 + 0x08;
 pub const REG_FRINDEX: u64 = CAPLENGTH as u64 + 0x0c;

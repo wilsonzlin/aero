@@ -239,7 +239,7 @@ fn win7_iso_el_torito_post_and_int13_cd_reads() {
     // Validate the boot image bytes were loaded where El Torito indicates.
     let load_phys = (boot.load_segment as u64) << 4;
     let mut expected = vec![0u8; boot.load_bytes];
-    let cd_sectors = (boot.load_bytes + CDROM_SECTOR_SIZE - 1) / CDROM_SECTOR_SIZE;
+    let cd_sectors = boot.load_bytes.div_ceil(CDROM_SECTOR_SIZE);
     for i in 0..cd_sectors {
         let mut sec = [0u8; CDROM_SECTOR_SIZE];
         cdrom

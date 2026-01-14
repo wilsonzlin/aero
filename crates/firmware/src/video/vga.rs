@@ -358,7 +358,7 @@ impl VgaDevice {
         // byte-at-a-time MMIO operations when the text window is backed by an emulated VGA device.
         const BYTES: usize = 0x4000 * 2;
         const CHUNK_SIZE: usize = 4096;
-        const _: () = assert!(CHUNK_SIZE % 2 == 0);
+        const _: () = assert!(CHUNK_SIZE.is_multiple_of(2));
 
         let mut chunk = [0u8; CHUNK_SIZE];
         for pair in chunk.chunks_exact_mut(2) {

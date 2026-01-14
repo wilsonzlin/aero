@@ -255,9 +255,10 @@ fn parse_hex_sha256(value: &str) -> Result<[u8; 32], ChunkedStreamingDiskError> 
         ));
     }
     let mut out = [0u8; 32];
+    let bytes = normalized.as_bytes();
     for (i, out_byte) in out.iter_mut().enumerate() {
-        let hi = normalized.as_bytes()[i * 2];
-        let lo = normalized.as_bytes()[i * 2 + 1];
+        let hi = bytes[i * 2];
+        let lo = bytes[i * 2 + 1];
         let hex_val = |b: u8| -> Option<u8> {
             match b {
                 b'0'..=b'9' => Some(b - b'0'),

@@ -218,7 +218,7 @@ impl EventRingProducer {
                 continue;
             }
             let rel = ptr - entry.base;
-            if rel % (TRB_LEN as u64) != 0 {
+            if !rel.is_multiple_of(TRB_LEN as u64) {
                 return None;
             }
             let off = (rel / (TRB_LEN as u64)) as u32;

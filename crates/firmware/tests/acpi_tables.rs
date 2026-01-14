@@ -38,6 +38,11 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
     let b0 = *bytes.get(offset)?;
     let follow_bytes = (b0 >> 6) as usize;
+    // ACPI AML PkgLength encoding:
+    // - Bits 7..=6: number of additional bytes (0-3)
+    // - If additional bytes are present, bits 5..=4 are reserved and must be 0.
+    // - The encoded length value includes the size of the PkgLength field itself
+    //   (but not the opcode byte(s) that precede it).
     let mut len: usize = (b0 & 0x3F) as usize;
     for i in 0..follow_bytes {
         let b = *bytes.get(offset + 1 + i)?;
@@ -142,11 +147,12 @@ fn find_device_body<'a>(aml: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
             if let Some((pkg_len, pkg_len_bytes)) = parse_pkg_length(aml, pkg_off) {
                 let payload_start = pkg_off + pkg_len_bytes;
                 let payload_end = payload_start.checked_add(pkg_len)?;
-                if payload_end <= aml.len() && payload_start + 4 <= payload_end {
-                    if &aml[payload_start..payload_start + 4] == name {
-                        // The payload is: NameSeg (4) + TermList.
-                        return Some(&aml[payload_start + 4..payload_end]);
-                    }
+                if payload_end <= aml.len()
+                    && payload_start + 4 <= payload_end
+                    && &aml[payload_start..payload_start + 4] == name
+                {
+                    // The payload is: NameSeg (4) + TermList.
+                    return Some(&aml[payload_start + 4..payload_end]);
                 }
             }
         }
@@ -586,8 +592,11 @@ fn dsdt_contains_pci_routing_and_resources() {
         find_subslice(aml, &imcr_opregion).is_some(),
         "DSDT AML missing IMCR SystemIO OperationRegion for ports 0x22..0x23"
     );
- 
-    assert!(aml_contains_imcr_field(aml), "DSDT AML missing IMCR Field (IMCS/IMCD)");
+
+    assert!(
+        aml_contains_imcr_field(aml),
+        "DSDT AML missing IMCR Field (IMCS/IMCD)"
+    );
 
     let pic_body = [
         &b"_PIC"[..],

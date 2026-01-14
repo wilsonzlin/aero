@@ -1054,9 +1054,10 @@ fn aml_method_osc() -> Vec<u8> {
     // capabilities buffer), effectively granting what the OS requests.
     //
     // Method (_OSC, 4, NotSerialized) { Return (Arg3) }
-    let mut body = Vec::new();
-    body.push(0xA4); // ReturnOp
-    body.push(0x6B); // Arg3Op
+    let body = vec![
+        0xA4, // ReturnOp
+        0x6B, // Arg3Op
+    ];
 
     let mut payload = Vec::new();
     payload.extend_from_slice(b"_OSC");

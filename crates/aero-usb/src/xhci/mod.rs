@@ -237,7 +237,7 @@ impl CommandCompletion {
 }
 
 /// Per-slot state tracked by the controller.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SlotState {
     enabled: bool,
     port_id: Option<u8>,
@@ -253,20 +253,6 @@ pub struct SlotState {
 
     /// Per-endpoint transfer ring cursors indexed by Endpoint Context ID (1..=31).
     transfer_rings: [Option<RingCursor>; 31],
-}
-
-impl Default for SlotState {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            port_id: None,
-            device_attached: false,
-            device_context_ptr: 0,
-            slot_context: SlotContext::default(),
-            endpoint_contexts: [EndpointContext::default(); 31],
-            transfer_rings: [None; 31],
-        }
-    }
 }
 
 impl SlotState {
@@ -1835,7 +1821,7 @@ impl XhciController {
         let supported_protocol_offset_bytes = regs::EXT_CAPS_OFFSET_BYTES + 8;
         let supported_protocol_offset_dwords = supported_protocol_offset_bytes / 4;
         let usb_legsup = (regs::EXT_CAP_ID_USB_LEGACY_SUPPORT as u32)
-            | ((supported_protocol_offset_dwords as u32) << 8)
+            | (supported_protocol_offset_dwords << 8)
             | regs::USBLEGSUP_OS_OWNED;
         caps.push(usb_legsup);
         caps.push(0);
@@ -1844,8 +1830,8 @@ impl XhciController {
         //
         // The roothub port range is 1-based, so we expose all ports as a single USB 2.0 range.
         let psic = 3u8; // low/full/high-speed entries.
+        // Next pointer: 0 => end of list.
         let header0 = (regs::EXT_CAP_ID_SUPPORTED_PROTOCOL as u32)
-            | (0u32 << 8) // next pointer (0 => end of list)
             | ((regs::USB_REVISION_2_0 as u32) << 16);
         caps.push(header0);
         caps.push(regs::PROTOCOL_NAME_USB2);
@@ -2029,7 +2015,7 @@ impl XhciController {
                 let Some(off) = offset.checked_add(i as u64) else {
                     break;
                 };
-                let byte = ((value >> (i * 8)) & 0xff) as u32;
+                let byte = (value >> (i * 8)) & 0xff;
                 self.mmio_write(mem, off, 1, byte);
             }
             return;
@@ -2477,33 +2463,31 @@ impl XhciController {
                                 UsbInResult::Stall => (CompletionCode::StallError, 0),
                                 UsbInResult::Timeout => (CompletionCode::UsbTransactionError, 0),
                             }
+                        } else if idt {
+                            let imm = trb.parameter.to_le_bytes();
+                            match device.handle_out(0, &imm[..requested_len]) {
+                                UsbOutResult::Ack => (CompletionCode::Success, requested_len),
+                                UsbOutResult::Nak => {
+                                    keep_active = true;
+                                    control_td.td_cursor = Some(ring);
+                                    break;
+                                }
+                                UsbOutResult::Stall => (CompletionCode::StallError, 0),
+                                UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
+                            }
                         } else {
-                            if idt {
-                                let imm = trb.parameter.to_le_bytes();
-                                match device.handle_out(0, &imm[..requested_len]) {
-                                    UsbOutResult::Ack => (CompletionCode::Success, requested_len),
-                                    UsbOutResult::Nak => {
-                                        keep_active = true;
-                                        control_td.td_cursor = Some(ring);
-                                        break;
-                                    }
-                                    UsbOutResult::Stall => (CompletionCode::StallError, 0),
-                                    UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
+                            let buf_ptr = trb.pointer();
+                            let mut buf = vec![0u8; requested_len];
+                            mem.read_physical(buf_ptr, &mut buf);
+                            match device.handle_out(0, &buf) {
+                                UsbOutResult::Ack => (CompletionCode::Success, requested_len),
+                                UsbOutResult::Nak => {
+                                    keep_active = true;
+                                    control_td.td_cursor = Some(ring);
+                                    break;
                                 }
-                            } else {
-                                let buf_ptr = trb.pointer();
-                                let mut buf = vec![0u8; requested_len];
-                                mem.read_physical(buf_ptr, &mut buf);
-                                match device.handle_out(0, &buf) {
-                                    UsbOutResult::Ack => (CompletionCode::Success, requested_len),
-                                    UsbOutResult::Nak => {
-                                        keep_active = true;
-                                        control_td.td_cursor = Some(ring);
-                                        break;
-                                    }
-                                    UsbOutResult::Stall => (CompletionCode::StallError, 0),
-                                    UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
-                                }
+                                UsbOutResult::Stall => (CompletionCode::StallError, 0),
+                                UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
                             }
                         };
 
@@ -2644,7 +2628,7 @@ impl XhciController {
 
     fn ep_addr_from_endpoint_id(endpoint_id: u8) -> Option<u8> {
         // Endpoint ID 0 is reserved, endpoint ID 1 is EP0 (not supported by the transfer executor).
-        if endpoint_id < 2 || endpoint_id > 31 {
+        if !(2..=31).contains(&endpoint_id) {
             return None;
         }
         let ep_num = endpoint_id / 2;

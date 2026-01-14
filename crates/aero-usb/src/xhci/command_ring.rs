@@ -33,7 +33,7 @@ const DEVICE_EP0_CTX_OFFSET: u64 = CONTEXT_SIZE;
 //
 // When copying Slot Contexts from guest-provided Input Contexts into the output Device Context we
 // must preserve controller-owned fields.
-const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_00ff;
+const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_00FF;
 
 const ICC_DROP_FLAGS_OFFSET: u64 = 0;
 const ICC_ADD_FLAGS_OFFSET: u64 = 4;
@@ -367,11 +367,11 @@ impl CommandRingProcessor {
         }
 
         let slot_id = match (1u8..=self.max_slots).find(|&id| {
-            self.slots_enabled
+            !self
+                .slots_enabled
                 .get(usize::from(id))
                 .copied()
                 .unwrap_or(false)
-                == false
         }) {
             Some(id) => id,
             None => return (CompletionCode::NoSlotsAvailableError, 0),
@@ -733,7 +733,7 @@ impl CommandRingProcessor {
         }
 
         // We must be able to touch at least Slot + EP0 contexts.
-        let min_device_ctx_len = (2 * CONTEXT_SIZE) as u64;
+        let min_device_ctx_len = 2 * CONTEXT_SIZE;
         if !self.check_range(dev_ctx_ptr, min_device_ctx_len) {
             return CompletionCode::ParameterError;
         }
@@ -744,7 +744,7 @@ impl CommandRingProcessor {
         }
 
         // Must be able to read at least ICC + Slot + EP0 contexts.
-        let min_input_ctx_len = (3 * CONTEXT_SIZE) as u64;
+        let min_input_ctx_len = 3 * CONTEXT_SIZE;
         if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
             return CompletionCode::ParameterError;
         }
@@ -816,7 +816,7 @@ impl CommandRingProcessor {
         };
 
         // We must be able to touch at least Slot + EP0 contexts.
-        let min_device_ctx_len = (2 * CONTEXT_SIZE) as u64;
+        let min_device_ctx_len = 2 * CONTEXT_SIZE;
         if !self.check_range(dev_ctx_ptr, min_device_ctx_len) {
             return CompletionCode::ParameterError;
         }
@@ -827,7 +827,7 @@ impl CommandRingProcessor {
         }
 
         // Must be able to read at least ICC + Slot + EP0 contexts.
-        let min_input_ctx_len = (3 * CONTEXT_SIZE) as u64;
+        let min_input_ctx_len = 3 * CONTEXT_SIZE;
         if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
             return CompletionCode::ParameterError;
         }
@@ -984,7 +984,7 @@ impl CommandRingProcessor {
         }
 
         // Must be able to read at least the Input Control Context + Slot Context.
-        let min_input_ctx_len = (2 * CONTEXT_SIZE) as u64;
+        let min_input_ctx_len = 2 * CONTEXT_SIZE;
         if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
             return CompletionCode::ParameterError;
         }
@@ -1046,7 +1046,7 @@ impl CommandRingProcessor {
         // We must be able to touch any contexts we drop/add in the output Device Context. Since the
         // MVP supports contexts up to index 5, require enough space for Slot + EP0 + endpoints up to
         // EP2 IN.
-        let min_device_ctx_len = (6 * CONTEXT_SIZE) as u64;
+        let min_device_ctx_len = 6 * CONTEXT_SIZE;
         if !self.check_range(dev_ctx_ptr, min_device_ctx_len) {
             return CompletionCode::ParameterError;
         }

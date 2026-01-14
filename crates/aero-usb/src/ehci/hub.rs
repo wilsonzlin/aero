@@ -396,9 +396,7 @@ impl RootHubPortSlot {
             RootHubPortSlot::Local(p) => p.device.as_ref().map(RootHubDevice::Direct),
             RootHubPortSlot::Usb2Mux { mux, port } => {
                 let mux_ref = mux.borrow();
-                if mux_ref.port_device(*port).is_none() {
-                    return None;
-                }
+                mux_ref.port_device(*port)?;
                 Some(RootHubDevice::Muxed(Ref::map(mux_ref, |m| {
                     m.port_device(*port).expect("checked is_some above")
                 })))
@@ -411,9 +409,7 @@ impl RootHubPortSlot {
             RootHubPortSlot::Local(p) => p.device.as_mut().map(RootHubDeviceMut::Direct),
             RootHubPortSlot::Usb2Mux { mux, port } => {
                 let mux_ref = mux.borrow_mut();
-                if mux_ref.port_device(*port).is_none() {
-                    return None;
-                }
+                mux_ref.port_device(*port)?;
                 Some(RootHubDeviceMut::Muxed(RefMut::map(mux_ref, |m| {
                     m.port_device_mut(*port).expect("checked is_some above")
                 })))

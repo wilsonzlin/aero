@@ -124,7 +124,7 @@ pub(crate) fn process_async_schedule<M: MemoryBus + ?Sized>(
     let mut visited_qh: Vec<u32> = Vec::with_capacity(16);
     let mut qh_addr = head;
     for _ in 0..MAX_ASYNC_QH_VISITS {
-        if visited_qh.iter().any(|&a| a == qh_addr) {
+        if visited_qh.contains(&qh_addr) {
             return Err(ScheduleError::AsyncQhCycle);
         }
         visited_qh.push(qh_addr);
@@ -142,7 +142,7 @@ pub(crate) fn process_async_schedule<M: MemoryBus + ?Sized>(
         if next == head {
             return Ok(());
         }
-        if next == qh_addr || visited_qh.iter().any(|&a| a == next) {
+        if next == qh_addr || visited_qh.contains(&next) {
             return Err(ScheduleError::AsyncQhCycle);
         }
         qh_addr = next;
@@ -251,9 +251,9 @@ impl QtdCursor {
         // back into the token field to keep guest-visible state spec-aligned.
         let cpage = self.page.min(4);
         *token = (*token & !QTD_CPAGE_MASK) | ((cpage as u32) << QTD_CPAGE_SHIFT);
-        for i in 0..5 {
+        for (i, slot) in out_bufs.iter_mut().enumerate() {
             let base = self.bufs[i] & 0xffff_f000;
-            out_bufs[i] = if i == cpage {
+            *slot = if i == cpage {
                 base | ((self.offset as u32) & 0x0fff)
             } else {
                 base
@@ -315,7 +315,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             if addr == 0 {
                 return Ok(());
             }
-            if visited_qtd.iter().any(|&a| a == addr) {
+            if visited_qtd.contains(&addr) {
                 return Err(ScheduleError::QtdCycle);
             }
             visited_qtd.push(addr);
@@ -324,7 +324,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             continue;
         }
 
-        if !visited_qtd.iter().any(|&a| a == cur_qtd) {
+        if !visited_qtd.contains(&cur_qtd) {
             visited_qtd.push(cur_qtd);
         }
 
@@ -347,7 +347,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
                 ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
                 return Ok(());
             }
-            if visited_qtd.iter().any(|&a| a == addr) {
+            if visited_qtd.contains(&addr) {
                 return Err(ScheduleError::QtdCycle);
             }
             visited_qtd.push(addr);
@@ -356,8 +356,8 @@ fn process_qh<M: MemoryBus + ?Sized>(
         }
 
         let mut overlay_bufs = [0u32; 5];
-        for i in 0..5 {
-            overlay_bufs[i] = ctx
+        for (i, slot) in overlay_bufs.iter_mut().enumerate() {
+            *slot = ctx
                 .mem
                 .read_u32(qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64);
         }
@@ -481,11 +481,11 @@ fn process_qh<M: MemoryBus + ?Sized>(
                         match dev.handle_in(endpoint, pkt_len) {
                             UsbInResult::Data(data) => {
                                 let actual = data.len().min(pkt_len);
-                                if actual != 0 {
-                                    if cursor.write_bytes(ctx.mem, &data[..actual]).is_err() {
-                                        error_bits = QTD_STS_HALT | QTD_STS_BUFERR;
-                                        break;
-                                    }
+                                if actual != 0
+                                    && cursor.write_bytes(ctx.mem, &data[..actual]).is_err()
+                                {
+                                    error_bits = QTD_STS_HALT | QTD_STS_BUFERR;
+                                    break;
                                 }
                                 remaining = remaining.saturating_sub(actual);
                                 if actual < pkt_len {
@@ -529,10 +529,10 @@ fn process_qh<M: MemoryBus + ?Sized>(
 
         let mut new_bufs = cursor.bufs;
         cursor.encode_into_overlay(&mut token, &mut new_bufs);
-        for i in 0..5 {
+        for (i, buf) in new_bufs.iter().enumerate() {
             ctx.mem.write_u32(
                 qh_addr.wrapping_add(QH_BUF0 + i as u32 * 4) as u64,
-                new_bufs[i],
+                *buf,
             );
         }
 
@@ -585,7 +585,7 @@ fn process_qh<M: MemoryBus + ?Sized>(
             ctx.mem.write_u32(qh_addr.wrapping_add(QH_CUR_QTD) as u64, 0);
             return Ok(());
         }
-        if visited_qtd.iter().any(|&a| a == addr) {
+        if visited_qtd.contains(&addr) {
             return Err(ScheduleError::QtdCycle);
         }
         visited_qtd.push(addr);

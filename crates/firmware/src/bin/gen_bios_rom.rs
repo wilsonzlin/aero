@@ -109,8 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let rom = firmware::bios::build_bios_rom();
     if rom.len() != BIOS_ROM_LEN {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             format!(
                 "generated BIOS ROM has unexpected size: {} bytes (expected {BIOS_ROM_LEN} bytes)",
                 rom.len()
@@ -119,8 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
     if rom.len() > 1024 * 1024 {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             format!(
                 "generated BIOS ROM is too large for the repo allowlist ({} bytes > 1 MiB)",
                 rom.len()
@@ -134,8 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match fs::read(&out_path) {
             Ok(existing) if existing == rom => return Ok(()),
             Ok(existing) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     format!(
                         "{} does not match the canonical generator output ({} bytes vs {} bytes).\n\
 Regenerate with: {REGEN_CMD_BIOS_ROM} (or: {REGEN_CMD}, or: {REGEN_CMD_ALT})",

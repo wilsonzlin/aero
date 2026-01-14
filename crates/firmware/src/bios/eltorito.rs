@@ -7,7 +7,7 @@ use super::{BlockDevice, DiskError};
 
 // Error strings are intentionally stable: they are surfaced via `Bios::tty_output()` when POST
 // fails, and unit tests (and humans) rely on them for debugging.
-const ERR_NO_BOOT_RECORD: &str = "no boot record volume descriptor found";
+const ERR_NO_BOOT_RECORD: &str = "Missing El Torito boot record";
 const ERR_INVALID_CATALOG: &str = "invalid boot catalog validation entry";
 const ERR_NO_BOOTABLE_ENTRY: &str = "no bootable initial/default entry";
 const ERR_READ: &str = "boot image read error";

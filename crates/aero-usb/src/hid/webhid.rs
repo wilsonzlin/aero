@@ -233,7 +233,7 @@ pub fn synthesize_report_descriptor(collections: &[HidCollectionInfo]) -> Result
 /// - If exactly one of:
 ///   - `usage == 0x06` (Keyboard), or
 ///   - `usage == 0x02` (Mouse)
-///   is present, return:
+///     is present, return:
 ///   - subclass = 0x01 (Boot), and
 ///   - protocol = 0x01 (Keyboard) or 0x02 (Mouse).
 /// - If both are present or neither is present, return `None` (do not guess).

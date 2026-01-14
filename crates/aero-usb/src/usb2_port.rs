@@ -68,9 +68,7 @@ impl Usb2PortMux {
     pub(crate) fn set_configflag_for_restore(&mut self, configflag: bool) {
         self.configflag = configflag;
         for p in &mut self.ports {
-            p.effective_owner = if !self.configflag {
-                Usb2PortOwner::Companion
-            } else if p.port_owner {
+            p.effective_owner = if !self.configflag || p.port_owner {
                 Usb2PortOwner::Companion
             } else {
                 Usb2PortOwner::Ehci
@@ -292,9 +290,7 @@ impl Usb2PortMux {
         p.load_snapshot_record(ViewKind::Ehci, view)?;
 
         // Recompute effective ownership without triggering transfer_owner/reset side effects.
-        p.effective_owner = if !self.configflag {
-            Usb2PortOwner::Companion
-        } else if p.port_owner {
+        p.effective_owner = if !self.configflag || p.port_owner {
             Usb2PortOwner::Companion
         } else {
             Usb2PortOwner::Ehci
@@ -323,9 +319,7 @@ impl Usb2PortMux {
         };
 
         let prev = p.effective_owner;
-        let next = if !self.configflag {
-            Usb2PortOwner::Companion
-        } else if p.port_owner {
+        let next = if !self.configflag || p.port_owner {
             Usb2PortOwner::Companion
         } else {
             Usb2PortOwner::Ehci

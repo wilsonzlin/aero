@@ -289,27 +289,27 @@ impl EhciController {
         // Capability register dword 0 (CAPLENGTH / HCIVERSION).
         let cap0: u32 = (CAPLENGTH as u32) | ((HCIVERSION as u32) << 16);
 
-        if offset >= REG_CAPLENGTH_HCIVERSION && offset < REG_CAPLENGTH_HCIVERSION + 4 {
+        if (REG_CAPLENGTH_HCIVERSION..REG_CAPLENGTH_HCIVERSION + 4).contains(&offset) {
             let shift = (offset - REG_CAPLENGTH_HCIVERSION) * 8;
             return (cap0 >> shift) as u8;
         }
-        if offset >= REG_HCSPARAMS && offset < REG_HCSPARAMS + 4 {
+        if (REG_HCSPARAMS..REG_HCSPARAMS + 4).contains(&offset) {
             let shift = (offset - REG_HCSPARAMS) * 8;
             return (self.hcsparams() >> shift) as u8;
         }
-        if offset >= REG_HCCPARAMS && offset < REG_HCCPARAMS + 4 {
+        if (REG_HCCPARAMS..REG_HCCPARAMS + 4).contains(&offset) {
             let shift = (offset - REG_HCCPARAMS) * 8;
             return (self.hccparams() >> shift) as u8;
         }
-        if offset >= REG_HCSP_PORTROUTE && offset < REG_HCSP_PORTROUTE + 4 {
+        if (REG_HCSP_PORTROUTE..REG_HCSP_PORTROUTE + 4).contains(&offset) {
             return 0;
         }
 
-        if offset >= REG_USBCMD && offset < REG_USBCMD + 4 {
+        if (REG_USBCMD..REG_USBCMD + 4).contains(&offset) {
             let shift = (offset - REG_USBCMD) * 8;
             return (self.regs.usbcmd >> shift) as u8;
         }
-        if offset >= REG_USBSTS && offset < REG_USBSTS + 4 {
+        if (REG_USBSTS..REG_USBSTS + 4).contains(&offset) {
             let shift = (offset - REG_USBSTS) * 8;
             // USBSTS.PSS/ASS are read-only schedule status bits. Keep them fully derived from
             // USBCMD so they cannot be latched by internal state (e.g. snapshots/tests).
@@ -328,37 +328,37 @@ impl EhciController {
             v &= USBSTS_READ_MASK;
             return (v >> shift) as u8;
         }
-        if offset >= REG_USBINTR && offset < REG_USBINTR + 4 {
+        if (REG_USBINTR..REG_USBINTR + 4).contains(&offset) {
             let shift = (offset - REG_USBINTR) * 8;
             return (self.regs.usbintr >> shift) as u8;
         }
-        if offset >= REG_FRINDEX && offset < REG_FRINDEX + 4 {
+        if (REG_FRINDEX..REG_FRINDEX + 4).contains(&offset) {
             let shift = (offset - REG_FRINDEX) * 8;
             return (self.regs.frindex >> shift) as u8;
         }
-        if offset >= REG_CTRLDSSEGMENT && offset < REG_CTRLDSSEGMENT + 4 {
+        if (REG_CTRLDSSEGMENT..REG_CTRLDSSEGMENT + 4).contains(&offset) {
             let shift = (offset - REG_CTRLDSSEGMENT) * 8;
             return (self.regs.ctrldssegment >> shift) as u8;
         }
-        if offset >= REG_PERIODICLISTBASE && offset < REG_PERIODICLISTBASE + 4 {
+        if (REG_PERIODICLISTBASE..REG_PERIODICLISTBASE + 4).contains(&offset) {
             let shift = (offset - REG_PERIODICLISTBASE) * 8;
             return (self.regs.periodiclistbase >> shift) as u8;
         }
-        if offset >= REG_ASYNCLISTADDR && offset < REG_ASYNCLISTADDR + 4 {
+        if (REG_ASYNCLISTADDR..REG_ASYNCLISTADDR + 4).contains(&offset) {
             let shift = (offset - REG_ASYNCLISTADDR) * 8;
             return (self.regs.asynclistaddr >> shift) as u8;
         }
-        if offset >= REG_CONFIGFLAG && offset < REG_CONFIGFLAG + 4 {
+        if (REG_CONFIGFLAG..REG_CONFIGFLAG + 4).contains(&offset) {
             let shift = (offset - REG_CONFIGFLAG) * 8;
             return (self.regs.configflag >> shift) as u8;
         }
 
         // EHCI extended capabilities (USB Legacy Support).
-        if offset >= REG_USBLEGSUP && offset < REG_USBLEGSUP + 4 {
+        if (REG_USBLEGSUP..REG_USBLEGSUP + 4).contains(&offset) {
             let shift = (offset - REG_USBLEGSUP) * 8;
             return (self.usblegsup >> shift) as u8;
         }
-        if offset >= REG_USBLEGCTLSTS && offset < REG_USBLEGCTLSTS + 4 {
+        if (REG_USBLEGCTLSTS..REG_USBLEGCTLSTS + 4).contains(&offset) {
             let shift = (offset - REG_USBLEGCTLSTS) * 8;
             return (self.usblegctlsts >> shift) as u8;
         }
@@ -385,56 +385,56 @@ impl EhciController {
     }
 
     fn mmio_write_u8(&mut self, offset: u64, value: u8) {
-        if offset >= REG_USBCMD && offset < REG_USBCMD + 4 {
+        if (REG_USBCMD..REG_USBCMD + 4).contains(&offset) {
             let shift = (offset - REG_USBCMD) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.regs.usbcmd & mask) | ((value as u32) << shift);
             self.write_usbcmd(v);
             return;
         }
-        if offset >= REG_USBSTS && offset < REG_USBSTS + 4 {
+        if (REG_USBSTS..REG_USBSTS + 4).contains(&offset) {
             // Masked write to avoid high-byte stores inadvertently clearing W1C bits in the low
             // byte if software performs read-modify-write sequences.
             let shift = (offset - REG_USBSTS) * 8;
             self.write_usbsts_masked((value as u32) << shift, 0xffu32 << shift);
             return;
         }
-        if offset >= REG_USBINTR && offset < REG_USBINTR + 4 {
+        if (REG_USBINTR..REG_USBINTR + 4).contains(&offset) {
             let shift = (offset - REG_USBINTR) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.regs.usbintr & mask) | ((value as u32) << shift);
             self.write_usbintr(v);
             return;
         }
-        if offset >= REG_FRINDEX && offset < REG_FRINDEX + 4 {
+        if (REG_FRINDEX..REG_FRINDEX + 4).contains(&offset) {
             let shift = (offset - REG_FRINDEX) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.regs.frindex & mask) | ((value as u32) << shift);
             self.write_frindex(v);
             return;
         }
-        if offset >= REG_CTRLDSSEGMENT && offset < REG_CTRLDSSEGMENT + 4 {
+        if (REG_CTRLDSSEGMENT..REG_CTRLDSSEGMENT + 4).contains(&offset) {
             let shift = (offset - REG_CTRLDSSEGMENT) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.regs.ctrldssegment & mask) | ((value as u32) << shift);
             self.write_ctrldssegment(v);
             return;
         }
-        if offset >= REG_PERIODICLISTBASE && offset < REG_PERIODICLISTBASE + 4 {
+        if (REG_PERIODICLISTBASE..REG_PERIODICLISTBASE + 4).contains(&offset) {
             let shift = (offset - REG_PERIODICLISTBASE) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.regs.periodiclistbase & mask) | ((value as u32) << shift);
             self.write_periodiclistbase(v);
             return;
         }
-        if offset >= REG_ASYNCLISTADDR && offset < REG_ASYNCLISTADDR + 4 {
+        if (REG_ASYNCLISTADDR..REG_ASYNCLISTADDR + 4).contains(&offset) {
             let shift = (offset - REG_ASYNCLISTADDR) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.regs.asynclistaddr & mask) | ((value as u32) << shift);
             self.write_asynclistaddr(v);
             return;
         }
-        if offset >= REG_CONFIGFLAG && offset < REG_CONFIGFLAG + 4 {
+        if (REG_CONFIGFLAG..REG_CONFIGFLAG + 4).contains(&offset) {
             let shift = (offset - REG_CONFIGFLAG) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.regs.configflag & mask) | ((value as u32) << shift);
@@ -443,7 +443,7 @@ impl EhciController {
         }
 
         // EHCI extended capabilities (USB Legacy Support).
-        if offset >= REG_USBLEGSUP && offset < REG_USBLEGSUP + 4 {
+        if (REG_USBLEGSUP..REG_USBLEGSUP + 4).contains(&offset) {
             let shift = (offset - REG_USBLEGSUP) * 8;
             let mask = !(0xffu32 << shift);
             let v = (self.usblegsup & mask) | ((value as u32) << shift);
@@ -457,7 +457,7 @@ impl EhciController {
             }
             return;
         }
-        if offset >= REG_USBLEGCTLSTS && offset < REG_USBLEGCTLSTS + 4 {
+        if (REG_USBLEGCTLSTS..REG_USBLEGCTLSTS + 4).contains(&offset) {
             let shift = (offset - REG_USBLEGCTLSTS) * 8;
             let mask = !(0xffu32 << shift);
             self.usblegctlsts = (self.usblegctlsts & mask) | ((value as u32) << shift);
