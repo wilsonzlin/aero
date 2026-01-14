@@ -1090,6 +1090,76 @@ fn vsync_present_is_gated_until_vblank_tick_immediate_mode() {
 }
 
 #[test]
+fn vsync_present_is_gated_even_without_submit_present_hint_immediate_mode() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.features |= FEATURE_VBLANK;
+    regs.scanout0.enable = true;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    // Command stream: header + Present(vsync).
+    let cmd_gpa = 0x6000u64;
+    let stream_size = (ProtocolCmdStreamHeader::SIZE_BYTES + ProtocolCmdPresent::SIZE_BYTES) as u32;
+    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, regs.abi_version);
+    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, stream_size);
+    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
+
+    let present_gpa = cmd_gpa + ProtocolCmdStreamHeader::SIZE_BYTES as u64;
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64,
+        AerogpuCmdOpcode::Present as u32,
+    );
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64,
+        ProtocolCmdPresent::SIZE_BYTES as u32,
+    );
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64,
+        0,
+    );
+    mem.write_u32(
+        present_gpa + core::mem::offset_of!(ProtocolCmdPresent, flags) as u64,
+        AEROGPU_PRESENT_FLAG_VSYNC,
+    );
+
+    // Ring with one PRESENT submission that signals fence=1, but without the submit-level PRESENT
+    // hint flag set.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, stream_size);
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 1);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    // Vsync-present fence must not complete until vblank tick, even if the KMD failed to set the
+    // submit-level PRESENT hint bit.
+    assert_eq!(regs.completed_fence, 0);
+
+    exec.process_vblank_tick(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 1);
+}
+
+#[test]
 fn vblank_irq_is_only_latched_while_enabled() {
     let mut mem = VecMemory::new(0x1000);
     let mut regs = AeroGpuRegs::default();

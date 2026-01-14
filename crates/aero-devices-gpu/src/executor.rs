@@ -453,8 +453,12 @@ impl AeroGpuExecutor {
             match self.cfg.fence_completion {
                 AeroGpuFenceCompletionMode::Immediate => {
                     let mut vsync_present = false;
-                    // Most submissions are regular render work; avoid scanning the command stream
-                    // unless the KMD marked this submission as containing a PRESENT.
+                    // Determine whether this submission contains a vsynced PRESENT command.
+                    //
+                    // Do not rely solely on `AEROGPU_SUBMIT_FLAG_PRESENT`: the contract we need for
+                    // Win7 DWM pacing is driven by the *command stream contents* (PRESENT with the
+                    // VSYNC flag), and we must be robust even if the submit-level hint bit is
+                    // missing.
                     let wants_present = (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0;
                     let cmd_stream_ok = desc.cmd_gpa != 0
                         && desc.cmd_size_bytes != 0
@@ -463,7 +467,7 @@ impl AeroGpuExecutor {
                             .iter()
                             .any(|e| matches!(e, AeroGpuSubmissionDecodeError::CmdStream(_)));
 
-                    if wants_present && cmd_stream_ok {
+                    if cmd_stream_ok {
                         let scan_result = if cmd_stream.is_empty() {
                             cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes)
                         } else {
