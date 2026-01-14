@@ -1660,6 +1660,8 @@ mod tests {
     #[test]
     fn lapics_iter_reports_all_lapics_in_stable_order() {
         let ints = PlatformInterrupts::new_with_cpu_count(4);
+        fn assert_iter_item<'a, I: Iterator<Item = &'a LocalApic>>(_: I) {}
+        assert_iter_item(ints.lapics_iter());
         let ids: Vec<u8> = ints.lapics_iter().map(|lapic| lapic.apic_id()).collect();
         assert_eq!(ids.len(), ints.cpu_count());
         assert_eq!(ids, vec![0, 1, 2, 3]);
