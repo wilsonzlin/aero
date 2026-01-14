@@ -3516,10 +3516,19 @@ mod tests {
 
         sync_keyboard_bda(&bios, &mut mem);
 
-        assert_eq!(keyboard_bda_head(&mut mem), 0x001E);
-        assert_eq!(keyboard_bda_tail(&mut mem), 0x0022);
-        assert_eq!(mem.read_u16(BDA_BASE + 0x001E), 0x1234);
-        assert_eq!(mem.read_u16(BDA_BASE + 0x0020), 0x5678);
+        assert_eq!(keyboard_bda_head(&mut mem), BDA_KEYBOARD_BUF_START);
+        assert_eq!(
+            keyboard_bda_tail(&mut mem),
+            BDA_KEYBOARD_BUF_START.wrapping_add(4)
+        );
+        assert_eq!(
+            mem.read_u16(BDA_BASE + u64::from(BDA_KEYBOARD_BUF_START)),
+            0x1234
+        );
+        assert_eq!(
+            mem.read_u16(BDA_BASE + u64::from(BDA_KEYBOARD_BUF_START.wrapping_add(2))),
+            0x5678
+        );
     }
 
     #[test]
@@ -3622,8 +3631,11 @@ mod tests {
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1234);
         // BDA should still show one key pending.
         sync_keyboard_bda(&bios, &mut mem);
-        assert_eq!(keyboard_bda_head(&mut mem), 0x001E);
-        assert_eq!(keyboard_bda_tail(&mut mem), 0x0020);
+        assert_eq!(keyboard_bda_head(&mut mem), BDA_KEYBOARD_BUF_START);
+        assert_eq!(
+            keyboard_bda_tail(&mut mem),
+            BDA_KEYBOARD_BUF_START.wrapping_add(2)
+        );
 
         // AH=01h should still see the same key (queue not drained).
         cpu.gpr[gpr::RAX] = 0x0100;
@@ -3637,8 +3649,8 @@ mod tests {
         assert_eq!(cpu.rflags & FLAG_ZF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x1234);
         sync_keyboard_bda(&bios, &mut mem);
-        assert_eq!(keyboard_bda_head(&mut mem), 0x001E);
-        assert_eq!(keyboard_bda_tail(&mut mem), 0x001E);
+        assert_eq!(keyboard_bda_head(&mut mem), BDA_KEYBOARD_BUF_START);
+        assert_eq!(keyboard_bda_tail(&mut mem), BDA_KEYBOARD_BUF_START);
 
         // Now the queue should be empty.
         cpu.gpr[gpr::RAX] = 0x1100;
