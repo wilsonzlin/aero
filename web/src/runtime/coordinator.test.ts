@@ -434,6 +434,56 @@ describe("runtime/coordinator", () => {
     coordinator.stop();
   });
 
+  it("preserves the machine CPU worker entrypoint when restartWorker('cpu') falls back to restart()", () => {
+    const coordinator = new WorkerCoordinator();
+
+    // Avoid kicking off the full worker event loops / wasm precompile in this unit test;
+    // we only care about the worker entrypoint selection.
+    (coordinator as any).eventLoop = vi.fn(async () => {});
+    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+
+    coordinator.start(
+      {
+        vmRuntime: "machine",
+        guestMemoryMiB: 1,
+        vramMiB: 1,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      },
+      {
+        platformFeatures: {
+          crossOriginIsolated: true,
+          sharedArrayBuffer: true,
+          wasmSimd: true,
+          wasmThreads: true,
+          webgpu: true,
+          webusb: false,
+          webhid: false,
+          webgl2: true,
+          opfs: true,
+          opfsSyncAccessHandle: false,
+          audioWorklet: true,
+          offscreenCanvas: true,
+          jit_dynamic_wasm: true,
+        },
+      },
+    );
+
+    const cpuWorkerBefore = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(String(cpuWorkerBefore.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.restartWorker("cpu");
+
+    const cpuWorkerAfter = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(cpuWorkerAfter).not.toBe(cpuWorkerBefore);
+    expect(String(cpuWorkerAfter.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.stop();
+  });
+
   it("treats net as restartable without requiring a full VM restart", () => {
     const coordinator = new WorkerCoordinator();
     // With `net` marked restartable, this should not call `restart()` (which
