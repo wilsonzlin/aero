@@ -15,19 +15,32 @@ fn build_minimal_dxbc() -> Vec<u8> {
 }
 
 #[test]
-fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
+fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
     pollster::block_on(async {
         let test_name = concat!(
             module_path!(),
-            "::compute_shader_ld_uav_raw_accepts_float_byte_address"
+            "::compute_shader_ld_uav_raw_uses_raw_bit_addresses"
         );
 
         // Build a compute shader:
-        // - ld_uav_raw r0, l(16.0), u0
+        // - ld_uav_raw r0, l(16), u0
         // - store_raw u1, l(0), r0
+        // - ld_uav_raw r1, l(16.0), u0
+        // - store_raw u1, l(16), r1
         //
-        // The `16.0` address is encoded as a float immediate. The translator should apply the
-        // float-to-u32 heuristic and treat it as byte offset 16 (word index 4).
+        // DXBC register lanes are untyped 32-bit values. Integer-like ops (including buffer
+        // addresses) must consume raw lane bits, not attempt to reinterpret float-typed sources as
+        // numeric integers.
+        //
+        // This test uses both:
+        // - an integer immediate `16` (raw bits 0x00000010) which should load u0.words[4..8], and
+        // - a float immediate `16.0` (raw bits 0x41800000) which is a *huge* integer address and
+        //   should therefore read out-of-bounds and produce zeros (robust buffer access).
+        let addr_bits_16 = SrcOperand {
+            kind: SrcKind::ImmediateF32([16; 4]),
+            swizzle: Swizzle::XXXX,
+            modifier: OperandModifier::None,
+        };
         let addr_f32_16 = SrcOperand {
             kind: SrcKind::ImmediateF32([16.0f32.to_bits(); 4]),
             swizzle: Swizzle::XXXX,
@@ -65,7 +78,7 @@ fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
                         mask: WriteMask::XYZW,
                         saturate: false,
                     },
-                    addr: addr_f32_16,
+                    addr: addr_bits_16.clone(),
                     uav: UavRef { slot: 0 },
                 },
                 Sm4Inst::StoreRaw {
@@ -75,6 +88,31 @@ fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
                         kind: SrcKind::Register(RegisterRef {
                             file: RegFile::Temp,
                             index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                    mask: WriteMask::XYZW,
+                },
+                Sm4Inst::LdUavRaw {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    addr: addr_f32_16,
+                    uav: UavRef { slot: 0 },
+                },
+                Sm4Inst::StoreRaw {
+                    uav: UavRef { slot: 1 },
+                    addr: addr_bits_16,
+                    value: SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
                         }),
                         swizzle: Swizzle::XYZW,
                         modifier: OperandModifier::None,
@@ -97,14 +135,8 @@ fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
             .expect("compute translation should succeed");
         let wgsl = &translated.wgsl;
         assert!(
-            // Depending on constant folding, we either see the runtime `floor()` conversion or a
-            // precomputed `16u` literal for the byte address.
-            wgsl.contains("floor(") || wgsl.contains("16u"),
-            "expected float->u32 address heuristic (or constant-folded immediate) in WGSL:\n{wgsl}"
-        );
-        assert!(
-            !wgsl.contains("0x41800000u") && !wgsl.contains("1098907648u"),
-            "float immediate address must not be treated as raw u32 bits:\n{wgsl}"
+            !wgsl.contains("floor("),
+            "expected strict raw-bit address handling (no float->u32 heuristics) in WGSL:\n{wgsl}"
         );
 
         let (device, queue, supports_compute) =
@@ -132,8 +164,12 @@ fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
             0xDDEE_FF00,
         ];
 
-        // Output UAV: 4 words (16 bytes).
-        let output_words_len: usize = 4;
+        // Output UAV: 8 words (32 bytes).
+        //
+        // Layout:
+        // - output[0..4] = load via integer immediate 16
+        // - output[4..8] = load via float immediate 16.0 (expected zeros)
+        let output_words_len: usize = 8;
 
         let input = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ld_uav_raw input buffer"),
@@ -279,7 +315,11 @@ fn compute_shader_ld_uav_raw_accepts_float_byte_address() {
         assert_eq!(words.len(), output_words_len);
 
         // The shader loads u0.words[4..8] (byte offset 16) and stores them into u1.words[0..4].
-        assert_eq!(words, &input_words[4..8]);
+        assert_eq!(&words[0..4], &input_words[4..8]);
+        // The float immediate `16.0` should be treated as raw bits (0x41800000), i.e. an
+        // out-of-bounds address. Robust buffer access should return zeros for the load, and the
+        // store should therefore write zeros into u1.words[4..8].
+        assert_eq!(&words[4..8], &[0u32; 4]);
 
         drop(bytes);
         staging.unmap();

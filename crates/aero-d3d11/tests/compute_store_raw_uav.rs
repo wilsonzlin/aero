@@ -49,12 +49,21 @@ fn compute_store_raw_writes_u32_word() {
                     value: src_imm_bits([0xdead_beefu32, 0, 0, 0]),
                     mask: WriteMask::X,
                 },
-                // Use a float immediate (`16.0`) for the byte address to exercise the
-                // float-to-u32 conversion heuristic in the translator.
+                // Store at byte offset 16 (word index 4) using an integer immediate.
+                Sm4Inst::StoreRaw {
+                    uav: UavRef { slot: 0 },
+                    addr: src_imm_bits([16; 4]),
+                    value: src_imm_bits([0xcafe_babeu32, 0, 0, 0]),
+                    mask: WriteMask::X,
+                },
+                // Use a float immediate (`16.0`) for the byte address. In DXBC this is just a raw
+                // 32-bit lane value (0x41800000), *not* an integer `16`. The translator must not
+                // apply float→int heuristics, so this write must not clobber the word written above
+                // at byte offset 16.
                 Sm4Inst::StoreRaw {
                     uav: UavRef { slot: 0 },
                     addr: src_imm_bits([16.0f32.to_bits(); 4]),
-                    value: src_imm_bits([0xcafe_babeu32, 0, 0, 0]),
+                    value: src_imm_bits([0xfeed_f00du32, 0, 0, 0]),
                     mask: WriteMask::X,
                 },
                 Sm4Inst::Ret,
@@ -65,18 +74,8 @@ fn compute_store_raw_writes_u32_word() {
             translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
         let wgsl = &translated.wgsl;
         assert!(
-            // Depending on constant folding, we either see the runtime `floor()` conversion or a
-            // precomputed `16u` literal for the byte address.
-            wgsl.contains("floor(") || wgsl.contains("16u"),
-            "expected float->u32 address heuristic (or constant-folded immediate) in WGSL:\n{wgsl}"
-        );
-        assert!(
-            !wgsl.contains("0x41800000u") && !wgsl.contains("1098907648u"),
-            "float immediate address must not be treated as raw u32 bits:\n{wgsl}"
-        );
-        assert!(
-            !wgsl.contains("0x41800000u"),
-            "expected raw float bit-pattern 0x41800000 to not be used as a byte address:\n{wgsl}"
+            !wgsl.contains("floor("),
+            "expected strict raw-bit address handling (no float->u32 heuristics) in WGSL:\n{wgsl}"
         );
 
         let (device, queue, supports_compute) =

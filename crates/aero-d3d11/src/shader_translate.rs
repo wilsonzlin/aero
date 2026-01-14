@@ -5523,14 +5523,9 @@ fn emit_instructions(
                 }
 
                 // Typed UAV stores use integer texel coordinates, similar to `ld`.
-                let coord_f = emit_src_vec4(coord, inst_index, "store_uav_typed", ctx)?;
                 let coord_i = emit_src_vec4_i32(coord, inst_index, "store_uav_typed", ctx)?;
-                let x = format!(
-                    "select(({coord_i}).x, i32(({coord_f}).x), ({coord_f}).x == floor(({coord_f}).x))"
-                );
-                let y = format!(
-                    "select(({coord_i}).y, i32(({coord_f}).y), ({coord_f}).y == floor(({coord_f}).y))"
-                );
+                let x = format!("({coord_i}).x");
+                let y = format!("({coord_i}).y");
 
                 let value = match format.store_value_type() {
                     StorageTextureValueType::F32 => {
@@ -5723,93 +5718,31 @@ fn emit_src_vec4_u32(
     Ok(expr)
 }
 
-/// Emits a `vec4<u32>` source for integer-like operations.
-///
-/// SM4/SM5 register lanes are untyped 32-bit values; in practice integer operands can appear
-/// either as:
-/// - raw integer bits written into a register lane (common),
-/// - or numeric float values (e.g. produced by float arithmetic).
-///
-/// To cover both representations, this helper selects between:
-/// - `bitcast<u32>(f32)` (raw bits), and
-/// - `u32(f32)` (numeric conversion),
-///   based on whether the float value looks like a non-negative integer (per lane).
+// Integer operations consume raw bits from the untyped register file via `emit_src_vec4_u32` /
+// `emit_src_vec4_i32`. Any float→int numeric conversion must be expressed explicitly in DXBC via
+// `ftoi`/`ftou` opcodes, not inferred heuristically.
 fn emit_src_vec4_u32_int(
     src: &crate::sm4_ir::SrcOperand,
     inst_index: usize,
     opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
-    let mut no_mod = src.clone();
-    no_mod.modifier = OperandModifier::None;
-    let f = emit_src_vec4(&no_mod, inst_index, opcode, ctx)?;
-    let bits = emit_src_vec4_u32(&no_mod, inst_index, opcode, ctx)?;
-    let is_int = format!("(({f}) == floor(({f})))");
-    let is_nonneg = format!("(({f}) >= vec4<f32>(0.0))");
-    // WGSL does not support boolean `&&` for `vecN<bool>`, so combine the predicates via `select`.
-    // Equivalent to: `is_nonneg && is_int`.
-    let cond = format!("select(vec4<bool>(false), {is_int}, {is_nonneg})");
-    let base = format!("select(({bits}), vec4<u32>({f}), {cond})");
-    Ok(apply_modifier_u32(base, src.modifier))
+    emit_src_vec4_u32(src, inst_index, opcode, ctx)
 }
 
 /// Emits a scalar `u32` source operand for buffer addressing/indexing.
 ///
-/// DXBC register files are untyped 32-bit lanes. While most integer operations interpret source
-/// values as raw integer bits, address-like operands (byte offsets, indices, etc.) are sometimes
-/// encoded as float values (e.g. `l(16.0)`) even though the consuming instruction expects an
-/// integer.
-///
-/// For these address-like operands we apply a heuristic:
-/// - If interpreting the source as an `f32` yields a non-negative integer value representable in
-///   `u32`, use the numeric value (`u32(f)`).
-/// - Otherwise interpret the source as raw integer bits (via `bitcast<u32>`).
+/// DXBC register files are untyped 32-bit lanes. Address-like operands are consumed as raw integer
+/// bits; numeric float→int conversion must be expressed explicitly (e.g. via `ftou`), not inferred
+/// heuristically.
 fn emit_src_scalar_u32_addr(
     src: &crate::sm4_ir::SrcOperand,
     inst_index: usize,
     opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
-    // Fast path for immediates: constant fold the heuristic so the generated WGSL stays compact and
-    // deterministic.
-    if let SrcKind::ImmediateF32(bits) = &src.kind {
-        let selected = bits[src.swizzle.0[0] as usize];
-
-        // Apply float modifier semantics when attempting the float->u32 path.
-        let mut f = f32::from_bits(selected);
-        f = match src.modifier {
-            OperandModifier::None => f,
-            OperandModifier::Neg => -f,
-            OperandModifier::Abs => f.abs(),
-            OperandModifier::AbsNeg => -f.abs(),
-        };
-
-        // Use a strict `< 2^32` check to avoid the `4294967296.0` edge case where clamping +
-        // float-roundtrip would otherwise "validate" an out-of-range value.
-        const U32_LIMIT_F32: f32 = 4294967296.0;
-        if f.is_finite() && (0.0..U32_LIMIT_F32).contains(&f) {
-            let as_u = f as u32;
-            if (as_u as f32) == f {
-                return Ok(format!("{as_u}u"));
-            }
-        }
-
-        // Apply unsigned-integer modifier semantics for the raw-bits path.
-        let mut u = selected;
-        if matches!(src.modifier, OperandModifier::Neg | OperandModifier::AbsNeg) {
-            u = 0u32.wrapping_sub(u);
-        }
-        return Ok(format!("0x{u:08x}u"));
-    }
-
-    let f_vec = emit_src_vec4(src, inst_index, opcode, ctx)?;
-    let f = format!("({f_vec}).x");
-    let bits_vec = emit_src_vec4_u32_int(src, inst_index, opcode, ctx)?;
-    let bits = format!("({bits_vec}).x");
-
-    // See immediate path for why we use a strict `< 2^32` check.
-    let cond = format!("(({f}) >= 0.0 && ({f}) < 4294967296.0 && f32(u32({f})) == ({f}))");
-    Ok(format!("select({bits}, u32({f}), {cond})"))
+    let u = emit_src_vec4_u32(src, inst_index, opcode, ctx)?;
+    Ok(format!("({u}).x"))
 }
 
 /// Emits a `vec4<i32>` source for signed integer operations.
@@ -5824,7 +5757,6 @@ fn emit_src_vec4_i32_int(
 ) -> Result<String, ShaderTranslateError> {
     emit_src_vec4_i32(src, inst_index, opcode, ctx)
 }
-
 fn emit_src_vec4_i32(
     src: &crate::sm4_ir::SrcOperand,
     inst_index: usize,
