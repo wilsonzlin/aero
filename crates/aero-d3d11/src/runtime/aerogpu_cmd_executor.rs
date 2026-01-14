@@ -1413,6 +1413,9 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
+            ShaderStage::Geometry,
+            ShaderStage::Hull,
+            ShaderStage::Domain,
         ] {
             // Legacy shader constants are bound as uniform buffers; avoid requesting storage buffer
             // support so downlevel backends can still construct the executor.
@@ -1438,6 +1441,9 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
+            ShaderStage::Geometry,
+            ShaderStage::Hull,
+            ShaderStage::Domain,
         ] {
             bindings.stage_mut(stage).set_constant_buffer(
                 0,
@@ -1774,6 +1780,9 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
+            ShaderStage::Geometry,
+            ShaderStage::Hull,
+            ShaderStage::Domain,
         ] {
             self.bindings.stage_mut(stage).set_constant_buffer(
                 0,
@@ -2278,6 +2287,75 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        Ok(out)
+    }
+
+    /// Test/emulator helper: read back the legacy float constants buffer for a stage.
+    pub async fn read_legacy_constants_f32(
+        &self,
+        stage: ShaderStage,
+        start_register: u32,
+        vec4_count: u32,
+    ) -> Result<Vec<f32>> {
+        let src = self.legacy_constants.get(&stage).ok_or_else(|| {
+            anyhow!("read_legacy_constants_f32: missing legacy constants buffer for stage {stage}")
+        })?;
+
+        if vec4_count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let offset_bytes = (start_register as u64)
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("read_legacy_constants_f32: start_register overflows u64"))?;
+        let byte_len = (vec4_count as u64)
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("read_legacy_constants_f32: vec4_count overflows u64"))?;
+        let end = offset_bytes
+            .checked_add(byte_len)
+            .ok_or_else(|| anyhow!("read_legacy_constants_f32: range overflows u64"))?;
+        if end > LEGACY_CONSTANTS_SIZE_BYTES {
+            bail!(
+                "read_legacy_constants_f32: range out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
+            );
+        }
+
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 aerogpu_cmd read_legacy_constants staging"),
+            size: byte_len,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 aerogpu_cmd read_legacy_constants encoder"),
+            });
+        encoder.copy_buffer_to_buffer(src, offset_bytes, &staging, 0, byte_len);
+        self.queue.submit([encoder.finish()]);
+
+        let slice = staging.slice(..);
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send(v).ok();
+        });
+        self.poll();
+        receiver
+            .receive()
+            .await
+            .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+            .context("wgpu: map_async failed")?;
+
+        let mapped = slice.get_mapped_range();
+        let mut out = Vec::with_capacity(mapped.len() / 4);
+        for chunk in mapped.chunks_exact(4) {
+            out.push(f32::from_bits(u32::from_le_bytes(
+                chunk.try_into().expect("chunks_exact(4)"),
+            )));
+        }
+        drop(mapped);
+        staging.unmap();
         Ok(out)
     }
 
@@ -3921,6 +3999,8 @@ impl AerogpuD3d11Executor {
                 return Ok(());
             }
         }
+
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
 
         // Prepare compute prepass output buffers.
         let patchlist_only_emulation = matches!(
@@ -7306,7 +7386,13 @@ impl AerogpuD3d11Executor {
                     let byte_len = vec4_count
                         .checked_mul(16)
                         .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: byte_len overflow"))?;
-                    let expected = 24 + align4(byte_len);
+                    let padded_byte_len = byte_len
+                        .checked_add(3)
+                        .map(|v| v & !3)
+                        .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: size overflow"))?;
+                    let expected = 24usize
+                        .checked_add(padded_byte_len)
+                        .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: size overflow"))?;
                     // Forward-compat: allow this packet to grow by appending new fields after the
                     // data.
                     if cmd_bytes.len() < expected {
@@ -7315,7 +7401,12 @@ impl AerogpuD3d11Executor {
                             cmd_bytes.len()
                         );
                     }
-                    let data = &cmd_bytes[24..24 + byte_len];
+                    let data_end = 24usize
+                        .checked_add(byte_len)
+                        .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: data range overflow"))?;
+                    let data = cmd_bytes
+                        .get(24..data_end)
+                        .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: missing payload data"))?;
 
                     let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
                         .ok_or_else(|| {
@@ -7326,17 +7417,30 @@ impl AerogpuD3d11Executor {
                     let dst = self
                         .legacy_constants
                         .get(&stage)
-                        .expect("legacy constants buffer exists for every stage");
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "SET_SHADER_CONSTANTS_F: missing legacy constants buffer for stage {stage}"
+                            )
+                        })?;
 
-                    let offset_bytes = start_register as u64 * 16;
-                    let end = offset_bytes + byte_len as u64;
-                    if end > LEGACY_CONSTANTS_SIZE_BYTES {
-                        bail!(
-                            "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
-                        );
+                    if byte_len != 0 {
+                        let offset_bytes = (start_register as u64)
+                            .checked_mul(16)
+                            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: offset_bytes overflow"))?;
+                        let byte_len_u64: u64 = byte_len.try_into().map_err(|_| {
+                            anyhow!("SET_SHADER_CONSTANTS_F: byte_len out of range")
+                        })?;
+                        let end = offset_bytes.checked_add(byte_len_u64).ok_or_else(|| {
+                            anyhow!("SET_SHADER_CONSTANTS_F: end offset overflows u64")
+                        })?;
+                        if end > LEGACY_CONSTANTS_SIZE_BYTES {
+                            bail!(
+                                "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
+                            );
+                        }
+
+                        self.queue.write_buffer(dst, offset_bytes, data);
                     }
-
-                    self.queue.write_buffer(dst, offset_bytes, data);
                 }
                 OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes)?,
                 OPCODE_SET_RASTERIZER_STATE => {
@@ -10432,7 +10536,13 @@ impl AerogpuD3d11Executor {
         let byte_len = vec4_count
             .checked_mul(16)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: byte_len overflow"))?;
-        let expected = 24 + align4(byte_len);
+        let padded_byte_len = byte_len
+            .checked_add(3)
+            .map(|v| v & !3)
+            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: size overflow"))?;
+        let expected = 24usize
+            .checked_add(padded_byte_len)
+            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: size overflow"))?;
         // Forward-compat: allow this packet to grow by appending new fields after the data.
         if cmd_bytes.len() < expected {
             bail!(
@@ -10440,26 +10550,48 @@ impl AerogpuD3d11Executor {
                 cmd_bytes.len(),
             );
         }
-        let data = &cmd_bytes[24..24 + byte_len];
+        let data_end = 24usize
+            .checked_add(byte_len)
+            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: data range overflow"))?;
+        let data = cmd_bytes
+            .get(24..data_end)
+            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: missing payload data"))?;
 
-        let stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
-                anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
+            .ok_or_else(|| {
+                anyhow!(
+                    "SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
+                )
             })?;
         let dst = self
             .legacy_constants
             .get(&stage)
-            .expect("legacy constants buffer exists for every stage");
+            .ok_or_else(|| {
+                anyhow!("SET_SHADER_CONSTANTS_F: missing legacy constants buffer for stage {stage}")
+            })?;
 
-        let offset_bytes = start_register as u64 * 16;
-        let end = offset_bytes + byte_len as u64;
+        if byte_len == 0 {
+            return Ok(());
+        }
+
+        let offset_bytes = (start_register as u64)
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: offset_bytes overflow"))?;
+        let byte_len_u64: u64 = byte_len
+            .try_into()
+            .map_err(|_| anyhow!("SET_SHADER_CONSTANTS_F: byte_len out of range"))?;
+        let end = offset_bytes
+            .checked_add(byte_len_u64)
+            .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: end offset overflows u64"))?;
         if end > LEGACY_CONSTANTS_SIZE_BYTES {
             bail!(
                 "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
             );
         }
 
-        let staging_size = align4(byte_len) as u64;
+        let staging_size: u64 = padded_byte_len
+            .try_into()
+            .map_err(|_| anyhow!("SET_SHADER_CONSTANTS_F: staging_size out of range"))?;
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd constants staging"),
             size: staging_size,
@@ -10476,7 +10608,7 @@ impl AerogpuD3d11Executor {
         }
         staging.unmap();
 
-        encoder.copy_buffer_to_buffer(&staging, 0, dst, offset_bytes, byte_len as u64);
+        encoder.copy_buffer_to_buffer(&staging, 0, dst, offset_bytes, byte_len_u64);
         self.encoder_has_commands = true;
         self.encoder_used_buffers
             .insert(legacy_constants_buffer_id(stage));
