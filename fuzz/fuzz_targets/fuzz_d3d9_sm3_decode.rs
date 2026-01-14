@@ -86,7 +86,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // This helps libFuzzer reach deeper decode/IR paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let mode = seed.get(6).copied().unwrap_or(0) % 4;
+    let mode = seed.get(6).copied().unwrap_or(0) % 5;
     let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) && mode != 2;
     // For the `mova`/relative-constant mode, force vs_3_0 so address registers are valid as dst.
     let major = if mode == 2 {
@@ -210,7 +210,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
         }
 
         // A couple of math ops to reach more lowering code.
-        _ => match seed.get(2).copied().unwrap_or(0) % 5 {
+        3 => match seed.get(2).copied().unwrap_or(0) % 5 {
             // dp2 dst, src0, src1
             0 => {
                 tokens.push(opcode_token(90, 3, mod_bits));
@@ -248,6 +248,30 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
                 tokens.push(src2);
             }
         },
+
+        // Loop + breakc to exercise structured looping IR.
+        _ => {
+            // loop aL0, i0
+            let loop_reg = src_token(15, 0, 0xE4, 0);
+            let ctrl_reg = src_token(7, 0, 0xE4, 0);
+            tokens.push(opcode_token(27, 2, 0));
+            tokens.push(loop_reg);
+            tokens.push(ctrl_reg);
+
+            // add dst, src0, src1
+            tokens.push(opcode_token(2, 3, mod_bits));
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // breakc src0, src1 (compare op defaults to 0 = gt)
+            tokens.push(opcode_token(45, 2, 0));
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // endloop
+            tokens.push(opcode_token(29, 0, 0));
+        }
     };
 
     // End token.
