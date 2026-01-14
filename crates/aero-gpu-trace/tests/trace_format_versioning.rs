@@ -320,6 +320,45 @@ fn reject_trace_with_too_old_container_version() {
 }
 
 #[test]
+fn reject_trace_with_too_old_footer_container_version() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+
+    // Set footer container_version = 0 (unsupported). The reader should reject before comparing
+    // header/footer versions.
+    bytes[footer_start + 12..footer_start + 16].copy_from_slice(&0u32.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::UnsupportedContainerVersion(0)));
+}
+
+#[test]
+fn reject_trace_with_unknown_newer_footer_container_version() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+
+    // Set footer container_version to an unknown newer version.
+    let bad_version = CONTAINER_VERSION + 1;
+    bytes[footer_start + 12..footer_start + 16].copy_from_slice(&bad_version.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        TraceReadError::UnsupportedContainerVersion(v) if v == bad_version
+    ));
+}
+
+#[test]
 fn reject_unknown_record_type_in_supported_container_version() {
     let mut bytes = minimal_trace_bytes(0);
 
