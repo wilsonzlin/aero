@@ -16,10 +16,13 @@
 ## Current status / what’s missing
 
 Most of the “hard” graphics pieces already exist in-tree (with unit/integration tests). The main
-remaining gap is **end-to-end canonical AeroGPU validation**: `aero_machine` exposes the correct PCI
-identity and has working boot-display fallbacks + scanout/vblank plumbing. BAR0 command execution is
-pluggable (submission bridge / backend), but we still need validation that Win7 WDDM submissions
-execute correctly and that scanout/present/vblank semantics match the documented contract.
+remaining gap is **end-to-end Win7 WDDM validation on the canonical AeroGPU path**: `aero_machine`
+exposes the correct PCI identity and has working boot-display fallbacks + scanout/vblank plumbing,
+and BAR0 command execution is pluggable (submission bridge / in-process backend).
+
+What’s still missing is validating the full “Win7 WDDM driver → ring submissions → `AEROGPU_CMD`
+execution → fence completion → scanout present → browser canvas” loop against a real Win7 guest +
+driver bring-up (plus any opcode/format gaps that fall out of that).
 
 Key docs for that bring-up:
 
@@ -40,10 +43,15 @@ Quick reality check (as of this repo revision):
 - ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` (requires `enable_pc_platform=true`) /
   `MachineConfig::win7_graphics(...)`
   exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM** and VRAM-backed legacy VGA/VBE decode (`0xA0000..0xC0000`),
-  **minimal BAR0 MMIO + ring/fence transport** (command execution via a pluggable backend / external submission bridge; defaults to
-  fence-only forward progress when no backend is installed), BAR0 scanout regs + vblank tick/IRQ, and
-  WDDM scanout presentation/boot→WDDM handoff via `Machine::display_present` (see
-  `crates/aero-machine/src/{lib.rs,aerogpu.rs}` and `crates/aero-machine/tests/aerogpu_bar0_mmio_vblank.rs`).
+  **BAR0 MMIO + ring decode + fence/vblank/scanout regs**, and a backend boundary:
+  - `Machine::aerogpu_drain_submissions` exposes newly-decoded submissions (`cmd_stream` + optional alloc table) for
+    out-of-process execution.
+  - `Machine::aerogpu_enable_submission_bridge` / `Machine::aerogpu_complete_fence` enable “external executor” semantics
+    (fences require host completion).
+  - Optional in-process backends exist for native/tests: `aerogpu_set_backend_immediate/null` (+ feature-gated
+    `aerogpu_set_backend_wgpu`).
+  - WDDM scanout presentation/boot→WDDM handoff is implemented in `Machine::display_present` and the shared
+    `ScanoutState` publisher (`crates/aero-machine/src/{lib.rs,aerogpu.rs}`).
 - ✅ AeroGPU ABI/protocol: `emulator/protocol/` (crate `aero-protocol`) contains Rust **and**
   TypeScript mirrors + ABI drift tests; it’s consumed by both Rust (`crates/aero-gpu/`, `crates/emulator/`)
   and the browser GPU worker (`web/src/workers/`).
@@ -56,12 +64,13 @@ Quick reality check (as of this repo revision):
 - ✅ D3D9 + D3D11 translation: substantial implementations exist (`crates/aero-d3d9/`,
   `crates/aero-d3d11/`) with extensive host-side tests.
 - ✅ WebGPU backend: `crates/aero-webgpu/` + `crates/aero-gpu/` provide WebGPU/wgpu-backed execution and present paths.
-- 🚧 Missing: **end-to-end validation** that the Win7 AeroGPU driver + command executors + scanout/present path meet the
-  documented Win7 UX/vblank contracts.
-  - `aero_machine` can forward BAR0 ring submissions to an out-of-process executor via the WASM “submission bridge” (used by the
-    browser runtime), and native builds can install an in-process headless wgpu backend (feature-gated) for execution.
-  - By default (no backend/bridge), `aero_machine` still completes fences without executing ACMD so guests can boot even when
-    no GPU executor is available.
+- 🚧 Remaining (P0): **validate the full Win7 driver bring-up and rendering loop** on the canonical browser machine:
+  driver install → real ring submissions → `AEROGPU_CMD` execution in the GPU worker → fence completion →
+  scanout present + vblank pacing (DWM stability).
+  - Note: by default (no backend, submission bridge disabled), `aero_machine` completes fences without executing ACMD so guests can boot.
+  - Rust-side submission bridge tests: `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked`
+  - Browser command-submission e2e: `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts`
+  - Browser scanout smoke tests: `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts`
 
 ## Overview
 
@@ -196,13 +205,13 @@ bash ./scripts/ci/run-vga-vbe-tests.sh
 
 | ID | Status | Task | Where | How to test |
 |----|--------|------|-------|-------------|
-| AGPU-MACHINE-001 | Partial (in `crates/aero-machine/`) | `A3A0:0001` @ `00:07.0`: BAR1 VRAM + VRAM-backed legacy VGA/VBE decode + BIOS VBE LFB/text fallback; BAR0 MMIO + ring/fence/IRQ transport (command execution via pluggable backend / external submission bridge; defaults to fence-only forward progress when no backend is installed), plus BAR0 scanout regs + vblank tick/IRQ + WDDM scanout presentation | `crates/aero-machine/src/{lib.rs,aerogpu.rs}` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked`; `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked`; `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_bar0_mmio_vblank --locked` |
+| AGPU-MACHINE-001 | Partial (in `crates/aero-machine/`) | `A3A0:0001` @ `00:07.0`: BAR1 VRAM + VRAM-backed legacy VGA/VBE decode + BIOS VBE LFB/text fallback; BAR0 MMIO device model (ring decode + fences/vblank/scanout/cursor + error-info) plus submission bridge + optional in-process backends (no integrated renderer by default) | `crates/aero-machine/src/{lib.rs,aerogpu.rs}` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked`<br>`bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked` |
 | AGPU-DEV-001 | Implemented | Shared “device-side” AeroGPU implementation: regs/ring/executor + portable PCI wrapper (BAR0 regs + BAR1 VRAM), intended for reuse across hosts (future target for wiring into `aero_machine`). | `crates/aero-devices-gpu/src/{pci.rs,executor.rs,ring.rs,regs.rs,scanout.rs}` | `bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --locked` |
 | AGPU-DEV-001a | Implemented (legacy integration surface) | Monolithic emulator AeroGPU device model still exists (duplicate PCI wrapper/integration code) and is used by some sandbox tests. | `crates/emulator/src/devices/pci/aerogpu.rs`, `crates/emulator/src/gpu_worker/*` | `bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_device --locked` |
-| AGPU-DEV-002 | Implemented (feature-gated) | wgpu-backed command execution backend used by end-to-end tests (D3D9-focused). | Backend: `crates/aero-devices-gpu/src/backend.rs` (`NativeAeroGpuBackend`) • E2E: `crates/aero-devices-gpu/tests/aerogpu_end_to_end.rs`, `crates/emulator/tests/aerogpu_end_to_end.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end --locked`; `bash ./scripts/safe-run.sh cargo test -p emulator --features aerogpu-native --test aerogpu_end_to_end --locked` |
-| AGPU-WIRE-001 | Partial | Wire BAR0 **command execution** (AEROGPU_CMD) into the canonical machine: execute drained submissions out-of-process (browser runtime), or install an in-process backend (native builds; feature-gated) and ensure fences/presents complete correctly | Start: `crates/aero-machine/src/aerogpu.rs` (ring + fence scheduling + submission capture) • Backend boundary: `crates/aero-devices-gpu/src/backend.rs` (`AeroGpuCommandBackend`) • Host executors: `crates/aero-gpu`, `crates/aero-d3d11` • Browser wiring: `crates/aero-wasm` + `web/src/workers/gpu-worker.ts` | Keep guards passing: `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked`; optional e2e: `bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end --locked` |
-| AGPU-WIRE-002 | Implemented (in `crates/aero-machine/`) | Boot display → WDDM scanout handoff: once the guest successfully claims scanout0, `Machine::display_present` prefers the WDDM framebuffer over VBE/text. `SCANOUT0_ENABLE=0` blanks output but does not release WDDM ownership back to legacy (ownership remains sticky until VM reset). | `crates/aero-machine/src/lib.rs` (`display_present`, `display_present_aerogpu_scanout`) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_handoff --locked`; `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_enable_before_fb_is_ok --locked` |
-| AGPU-WIRE-003 | Partial | Browser presentation path for WDDM scanout state exists (`SCANOUT_SOURCE_WDDM`). The GPU worker can present scanout from either guest RAM **or** the shared VRAM aperture (BAR1 backing) when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`. `aero_machine` can publish scanout0 descriptors when a shared `ScanoutState` is installed via `Machine::set_scanout_state`, but the canonical browser runtime still needs to plumb that shared state into the WASM machine for end-to-end present. | Scanout state contract: `crates/aero-shared/src/scanout_state.rs` • Machine scanout publication: `crates/aero-machine/src/lib.rs` (`set_scanout_state`, `process_aerogpu`) • VRAM/base-paddr contract: `docs/16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer` • GPU worker: `web/src/workers/gpu-worker.ts` (Vite entrypoint: `gpu.worker.ts`) • E2E smoke harnesses: `web/wddm-scanout-smoke.ts`, `web/wddm-scanout-vram-smoke.ts` • E2E specs: `tests/e2e/wddm_scanout_smoke.spec.ts`, `tests/e2e/wddm_scanout_vram_smoke.spec.ts` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_wddm_scanout_state_format_mapping --locked`; `npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts`; `npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke.spec.ts` |
+| AGPU-DEV-002 | Implemented (feature-gated) | wgpu-backed command execution backend used by end-to-end tests (D3D9-focused). | Backend: `crates/aero-devices-gpu/src/backend.rs` (`NativeAeroGpuBackend`) • E2E: `crates/aero-devices-gpu/tests/aerogpu_end_to_end.rs`, `crates/emulator/tests/aerogpu_end_to_end.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end --locked`<br>`bash ./scripts/safe-run.sh cargo test -p emulator --features aerogpu-native --test aerogpu_end_to_end --locked` |
+| AGPU-WIRE-001 | **Remaining (P0)** | **Validate and harden end-to-end `AEROGPU_CMD` execution** on the canonical browser machine (Win7 driver → ring submissions → GPU worker execution → fence completion → scanout present). The submission bridge + GPU worker executors exist; the missing work is real Win7 bring-up validation + any opcode/format gaps that fall out. | Rust/wasm bridge: `crates/aero-wasm/src/lib.rs` (`aerogpu_drain_submissions`, `aerogpu_complete_fence`) • Runtime routing: `web/src/runtime/coordinator.ts`, `web/src/workers/{machine_cpu.worker.ts,gpu-worker.ts}` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked`<br>`bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts` |
+| AGPU-WIRE-002 | Implemented (in `crates/aero-machine/`) | Boot display → WDDM scanout handoff: once the guest successfully claims scanout0, `Machine::display_present` prefers the WDDM framebuffer over VBE/text. `SCANOUT0_ENABLE=0` blanks output but does not release WDDM ownership back to legacy (ownership remains sticky until VM reset). | `crates/aero-machine/src/lib.rs` (`display_present`, `display_present_aerogpu_scanout`) + `crates/aero-machine/src/aerogpu.rs` (`AEROGPU_MMIO_REG_SCANOUT0_ENABLE`) | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_handoff --locked`<br>`bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_disable_publishes_wddm_disabled --locked` |
+| AGPU-WIRE-003 | Implemented (MVP) | Browser presentation path for WDDM scanout state exists (`SCANOUT_SOURCE_WDDM`). The GPU worker can present scanout from either guest RAM **or** the shared VRAM aperture (BAR1 backing) when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`. The canonical WASM machine (`crates/aero-wasm`) plumbs the shared `ScanoutState` into `aero_machine`. | Scanout contract: `web/src/ipc/scanout_state.ts` + `crates/aero-shared/src/scanout_state.rs` • Publisher: `crates/aero-wasm/src/lib.rs` + `crates/aero-machine/src/{lib.rs,aerogpu.rs}` • Reader: `web/src/workers/gpu-worker.ts` | `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts`<br>`bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke.spec.ts` |
 | AGPU-WIRE-004 | **Remaining (P0)** | Validate Win7 vblank + vsynced present behavior against the documented contract (DWM stability) | Spec: `docs/graphics/win7-vblank-present-requirements.md` • Guest tests: `drivers/aerogpu/tests/win7/*` | In Win7 guest: `cd drivers\\aerogpu\\tests\\win7 && build_all_vs2010.cmd && run_all.cmd` |
 
 ### DirectX 9 translation (`crates/aero-d3d9`)

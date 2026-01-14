@@ -116,6 +116,15 @@ Test pointers:
   - VGA mode 13h (320×200×256) (from BIOS state), otherwise
   - text mode (scan `0xB8000`)
 
+Implementation note: `SCANOUT0_ENABLE` is treated as a **visibility toggle**, not an ownership release.
+Clearing it (`SCANOUT0_ENABLE=0`) blanks output (and stops vblank pacing / flushes vsync-paced fences), but keeps the sticky
+`wddm_scanout_active` latch held so legacy VGA/VBE cannot reclaim scanout until reset.
+
+- Ownership latch + disable handling: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs)
+  (`AEROGPU_MMIO_REG_SCANOUT0_ENABLE`, `wddm_scanout_active`) + unit test `scanout_disable_keeps_wddm_ownership_latched`.
+- Host-side presentation behavior when disabled: [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs)
+  (`display_present_aerogpu_scanout`).
+
 Code pointers:
 
 - [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs)
@@ -166,7 +175,7 @@ Test pointers (ABI conformance / drift detection):
 
 ### Device models
 
-#### Canonical machine (`crates/aero-machine`): BAR0/BAR1 transport + submission bridge
+#### Canonical machine (`crates/aero-machine`): BAR0/BAR1 + backend boundary (submission bridge / in-process backends)
 
 `MachineConfig::enable_aerogpu=true` exposes the canonical identity:
 
@@ -174,27 +183,81 @@ Test pointers (ABI conformance / drift detection):
 - [x] BDF `00:07.0`
 - [x] BAR1 VRAM + legacy VGA window aliasing
 - [~] BAR0 MMIO register block + ring/fence transport + scanout/vblank + cursor + error-info registers
-  - The ring is decoded into drained `AerogpuSubmission` payloads (`cmd_stream` + optional allocation table).
-  - Command execution is host-driven:
-    - **Browser runtime:** uses the AeroGPU **submission bridge** (`Machine::aerogpu_drain_submissions` + `Machine::aerogpu_complete_fence`) to execute ACMD out-of-process (GPU worker) and then report fence completion back to the device model.
-    - **Native/tests:** can install an in-process backend (`Machine::aerogpu_set_backend_*`), including an optional wgpu backend (feature `aerogpu-wgpu-backend`).
-  - Default behavior without a backend/bridge is "no-op" forward progress (fences complete without executing commands) to avoid guest deadlocks during bring-up.
+  - Ring processing decodes `aerogpu_ring` submissions and can capture `AEROGPU_CMD` payloads into a bounded queue
+    for host-driven execution (`Machine::aerogpu_drain_submissions`).
+  - Fence forward-progress policy is selectable:
+    - default (no backend, submission bridge disabled): fences complete automatically (bring-up / no-op execution).
+    - submission bridge enabled: fences are deferred until the host reports completion (`Machine::aerogpu_complete_fence`).
+    - in-process backend installed: fences complete when the backend reports completions (see below).
   - Error-info latches are implemented (ABI 1.3+) behind `AEROGPU_FEATURE_ERROR_INFO` (`AEROGPU_MMIO_REG_ERROR_*` + `AEROGPU_IRQ_ERROR`).
 
 Code pointers:
 
 - [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (`MachineConfig::enable_aerogpu`, BAR1 aliasing, display helpers)
-- [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (BAR0 register model, ring decode + fence/vblank pacing, submission bridge + optional backend)
-- Browser runtime wiring: [`crates/aero-wasm/src/lib.rs`](../../crates/aero-wasm/src/lib.rs) (`Machine::aerogpu_drain_submissions` / `Machine::aerogpu_complete_fence`), [`web/src/workers/machine_cpu.worker.ts`](../../web/src/workers/machine_cpu.worker.ts), [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts)
+- [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (BAR0 register model, ring decode, submission bridge + backend boundary, vblank/scanout/cursor)
 
 Test pointers:
 
 - [`crates/aero-machine/tests/pci_display_bdf_contract.rs`](../../crates/aero-machine/tests/pci_display_bdf_contract.rs) (BDF contract)
 - [`crates/aero-machine/tests/machine_aerogpu_pci_identity.rs`](../../crates/aero-machine/tests/machine_aerogpu_pci_identity.rs)
-- [`crates/aero-machine/tests/aerogpu_ring_noop_fence.rs`](../../crates/aero-machine/tests/aerogpu_ring_noop_fence.rs) (legacy no-op forward-progress policy)
-- [`crates/aero-machine/tests/aerogpu_submission_bridge.rs`](../../crates/aero-machine/tests/aerogpu_submission_bridge.rs) (external executor fence completion contract)
-- [`crates/aero-machine/tests/aerogpu_immediate_backend_completes_fence.rs`](../../crates/aero-machine/tests/aerogpu_immediate_backend_completes_fence.rs) (in-process backend hook)
+- [`crates/aero-machine/tests/aerogpu_ring_noop_fence.rs`](../../crates/aero-machine/tests/aerogpu_ring_noop_fence.rs) (default “bring-up” completion policy + drains submissions)
+- [`crates/aero-machine/tests/aerogpu_submission_bridge.rs`](../../crates/aero-machine/tests/aerogpu_submission_bridge.rs) (submission bridge requires host fence completion)
+- [`crates/aero-machine/tests/aerogpu_immediate_backend_completes_fence.rs`](../../crates/aero-machine/tests/aerogpu_immediate_backend_completes_fence.rs) (in-process backend APIs)
 - [`crates/aero-machine/tests/aerogpu_bar0_mmio_vblank.rs`](../../crates/aero-machine/tests/aerogpu_bar0_mmio_vblank.rs)
+
+In-process backend APIs (native/tests):
+
+- `Machine::aerogpu_set_backend_immediate()` / `Machine::aerogpu_set_backend_null()` (always available)
+  - Test: `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_immediate_backend_completes_fence --locked`
+- `Machine::aerogpu_set_backend_wgpu()` (feature-gated, native-only: `aero-machine/aerogpu-wgpu-backend`)
+  - Build sanity: `bash ./scripts/safe-run.sh cargo test -p aero-machine --features aerogpu-wgpu-backend --locked`
+  - End-to-end backend tests live in `aero-devices-gpu`:
+    `bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end --locked`
+
+#### Canonical browser runtime (`crates/aero-wasm` + `web/`): submission bridge + GPU worker execution
+
+The canonical browser integration runs:
+
+- the guest-visible AeroGPU PCI/MMIO device model **in the CPU worker** (inside the `aero-wasm` `Machine`), and
+- `AEROGPU_CMD` execution **in the GPU worker** (`web/src/workers/gpu-worker.ts`).
+
+Message flow (high level):
+
+1. Guest rings the AeroGPU doorbell (BAR0 MMIO), causing the in-process device model to decode ring entries.
+2. CPU worker calls `Machine.aerogpu_drain_submissions()` (WASM export) and posts each submission to the coordinator:
+   `kind: "aerogpu.submit"` (payload includes `cmdStream`, optional `allocTable`, and `signalFence`).
+3. Coordinator buffers submissions until the GPU worker is READY, then forwards them to the GPU worker using the GPU
+   protocol message `type: "submit_aerogpu"`.
+4. GPU worker executes the command stream (TypeScript CPU executor and/or `aero-gpu-wasm` D3D9 path) and replies with
+   `type: "submit_complete"` containing `completedFence`.
+5. Coordinator forwards `kind: "aerogpu.complete_fence"` to the CPU worker, which calls the WASM export
+   `Machine.aerogpu_complete_fence(fence: BigInt)` to update the guest-visible fence page + IRQ status.
+
+Code pointers:
+
+- WASM bridge exports (enables external-executor semantics on first drain):
+  - [`crates/aero-wasm/src/lib.rs`](../../crates/aero-wasm/src/lib.rs) (`Machine::aerogpu_drain_submissions`, `Machine::aerogpu_complete_fence`)
+- CPU worker drain + completion queue:
+  - [`web/src/workers/machine_cpu.worker.ts`](../../web/src/workers/machine_cpu.worker.ts) (`drainAerogpuSubmissions`, `processPendingAerogpuFenceCompletions`)
+- Coordinator routing/buffering + fence forwarding:
+  - [`web/src/runtime/coordinator.ts`](../../web/src/runtime/coordinator.ts) (`forwardAerogpuSubmit`, `forwardAerogpuFenceComplete`)
+  - [`web/src/runtime/coordinator.test.ts`](../../web/src/runtime/coordinator.test.ts) (“buffers aerogpu.submit…”)
+- GPU worker executor + vsync completion policy:
+  - [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`handleSubmitAerogpu`, `enqueueAerogpuSubmitComplete`)
+
+Test commands:
+
+```bash
+# Rust: submission bridge semantics (host must complete fences)
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked
+
+# Web unit: coordinator message flow (aerogpu.submit -> submit_aerogpu -> submit_complete -> aerogpu.complete_fence)
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=32G bash ./scripts/safe-run.sh npm -w web run test:unit -- src/runtime/coordinator.test.ts
+
+# Playwright: GPU worker ACMD execution + submit_complete semantics
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu_vsync_completion.spec.ts
+```
 
 #### Legacy/sandbox (`crates/emulator`): separate device model + executor
 
@@ -492,22 +555,42 @@ Test pointers:
 
 This section lists integration blockers that prevent a full “Win7 WDDM + accelerated rendering” experience on the canonical machine today.
 
-### AeroGPU command execution is host-driven and needs end-to-end Win7 validation
+### AeroGPU command execution: external executor exists; Win7 validation is still pending
 
-- `MachineConfig::enable_aerogpu` implements BAR0/BAR1 transport, ring parsing, and a submission bridge for external execution.
-  - Default bring-up behavior without a backend/bridge treats submissions as no-op and completes fences without executing commands (to avoid wedging early guests).
-  - Browser/WASM runtime uses out-of-process execution via the AeroGPU **submission bridge**:
-    - WASM export surface: [`crates/aero-wasm/src/lib.rs`](../../crates/aero-wasm/src/lib.rs) (`Machine::aerogpu_drain_submissions`, `Machine::aerogpu_complete_fence`)
-    - CPU worker: [`web/src/workers/machine_cpu.worker.ts`](../../web/src/workers/machine_cpu.worker.ts) (drain submissions + forward to GPU worker)
-    - Coordinator: [`web/src/runtime/coordinator.ts`](../../web/src/runtime/coordinator.ts) (buffers submissions across GPU worker restarts + forwards fence completions)
-    - GPU worker: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`handleSubmitAerogpu`)
-    - GPU executors: TypeScript ACMD executor (`web/src/workers/aerogpu-acmd-executor.ts`) + wgpu-backed Rust executor (`crates/aero-gpu-wasm/`)
-  - Native builds/tests can install an in-process backend (`Machine::aerogpu_set_backend_*`), including a feature-gated wgpu backend (`Machine::aerogpu_set_backend_wgpu`, feature `aerogpu-wgpu-backend`).
+What exists today:
 
-Impact:
+- `aero-machine` implements **BAR0/BAR1 transport** (ring + fences + vblank/scanout/cursor regs) and decodes submissions.
+  It can route `AEROGPU_CMD` payloads via:
+  - the **submission bridge** (external executor), or
+  - an optional **in-process backend** (immediate/null, plus feature-gated native wgpu backend).
+- Default bring-up behavior (no backend, submission bridge disabled) completes fences without executing commands (to avoid wedging early guests).
+- The canonical browser runtime uses the **submission bridge** and executes command streams in the GPU worker
+  (`web/src/workers/gpu-worker.ts`), completing fences back into the device model.
 
-- Native `aero_machine` consumers that do not supply an executor (in-process backend or submission bridge) will not get accelerated rendering via ACMD execution.
-- The remaining blocker for the canonical browser machine is validating the in-tree Win7 driver + web runtime against the vblank/present timing contract, and broadening command coverage as needed for real guest workloads.
+Evidence/pointers:
+
+- Device-side capture + bridge/backends: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs)
+  (`enable_submission_bridge`, `drain_pending_submissions`, `complete_fence_from_backend`, `set_backend`)
+- Browser control-plane routing: [`web/src/runtime/coordinator.ts`](../../web/src/runtime/coordinator.ts)
+  (`forwardAerogpuSubmit`, `forwardAerogpuFenceComplete`)
+- GPU worker executor: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`handleSubmitAerogpu`)
+
+Fast regression commands:
+
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked
+AERO_TIMEOUT=600 AERO_MEM_LIMIT=32G bash ./scripts/safe-run.sh npm -w web run test:unit -- src/runtime/coordinator.test.ts
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu_vsync_completion.spec.ts
+```
+
+What is still missing (P0):
+
+- **End-to-end Win7 bring-up + accelerated rendering validation** on the canonical browser machine:
+  driver install → ring submissions → ACMD execution → scanout present → DWM/Aero stability.
+  (See: [`docs/graphics/win7-aerogpu-validation.md`](./win7-aerogpu-validation.md))
+- Validate vblank + vsynced present behavior against the documented contract (DWM stability):
+  [`docs/graphics/win7-vblank-present-requirements.md`](./win7-vblank-present-requirements.md).
 
 ### WDDM scanout publication into `ScanoutState` exists (MVP) but needs end-to-end validation
 
@@ -537,10 +620,8 @@ Owning docs:
 
 ### Canonical machine vs sandbox: duplicate device models
 
-- A shared AeroGPU device-side library exists in `crates/aero-devices-gpu` (regs/ring/executor + optional wgpu backend), and a legacy integration surface exists in `crates/emulator`.
-  The canonical in-browser machine (`crates/aero-machine` + `crates/aero-wasm` + web workers) currently has its own BAR0/BAR1 integration layer behind the same PCI identity (`A3A0:0001`) to satisfy the Windows 7 driver binding/boot-display contract, but supports:
-  - external execution via the submission bridge (browser runtime), and
-  - optional in-process execution backends (native/tests).
+- A more complete AeroGPU device-side library exists in `crates/aero-devices-gpu` (portable PCI wrapper + ring executor + optional native wgpu backend) and is wired into the legacy sandbox integration surface in `crates/emulator`.
+  The canonical in-browser machine (`crates/aero-machine` + `crates/aero-wasm` + web workers) currently has its own BAR0/BAR1 integration layer behind the same PCI identity (`A3A0:0001`) to satisfy the Windows 7 driver binding/boot-display contract, and relies on the submission bridge (browser) or optional in-process backends (native) for command execution.
   Consolidating these integration surfaces onto a single device model remains outstanding.
   - Shared device-side library: [`crates/aero-devices-gpu/src/pci.rs`](../../crates/aero-devices-gpu/src/pci.rs), [`crates/aero-devices-gpu/src/executor.rs`](../../crates/aero-devices-gpu/src/executor.rs)
   - Legacy emulator integration: [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs), [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs)
