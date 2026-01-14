@@ -6700,11 +6700,10 @@ impl AerogpuD3d11Executor {
         ExpansionScratchAlloc,
         ExpansionScratchAlloc,
     )> {
-        const VERTS_PER_PRIM: u32 = 3;
-        if gs_meta.verts_per_primitive != VERTS_PER_PRIM {
+        let verts_per_primitive = gs_meta.verts_per_primitive;
+        if !matches!(verts_per_primitive, 3 | 4 | 6) {
             bail!(
-                "GS triangle-list prepass requires verts_per_primitive={VERTS_PER_PRIM}, got {}",
-                gs_meta.verts_per_primitive
+                "GS list prepass requires verts_per_primitive to be 3 (triangle), 4 (lineadj), or 6 (triadj), got {verts_per_primitive}"
             );
         }
 
@@ -7028,27 +7027,21 @@ impl AerogpuD3d11Executor {
 
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
-            out.push_str("  let prim_id: u32 = id.x;\n");
-            out.push_str(
-                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < 3u; vert_in_prim = vert_in_prim + 1u) {\n",
-            );
+            // Fill one VS/IA vertex into the flattened GS input register file per invocation.
+            // The executor dispatches `primitive_count * verts_per_primitive` workgroups and
+            // relies on the fact that list topologies are laid out contiguously:
+            //   vertex_id = prim_id * verts_per_primitive + vert_in_prim.
+            out.push_str("  let vertex_id: u32 = id.x;\n");
             if indexed_draw {
                 out.push_str(
-                    "    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * 3u + vert_in_prim));\n",
+                    "  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(vertex_id));\n",
                 );
             } else {
-                out.push_str(
-                    "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * 3u + vert_in_prim;\n",
-                );
+                out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + vertex_id;\n");
             }
-            out.push_str(
-                "    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
-            );
-            out.push_str(
-                "      let idx: u32 = ((prim_id * 3u + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n",
-            );
-            out.push_str("      gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index);\n");
-            out.push_str("    }\n");
+            out.push_str("  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n");
+            out.push_str("    let idx: u32 = vertex_id * GS_INPUT_REG_COUNT + reg;\n");
+            out.push_str("    gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index);\n");
             out.push_str("  }\n");
             out.push_str("}\n");
             out
@@ -7495,11 +7488,13 @@ impl AerogpuD3d11Executor {
             Ok(out)
         }
 
-        let vertex_invocation_count: u32 = primitive_count.checked_mul(VERTS_PER_PRIM).ok_or_else(|| {
-            anyhow!(
-                "GS prepass: vertex_invocation_count overflows u32 (primitive_count={primitive_count})"
-            )
-        })?;
+        let vertex_invocation_count: u32 = primitive_count
+            .checked_mul(verts_per_primitive)
+            .ok_or_else(|| {
+                anyhow!(
+                    "GS prepass: vertex invocation count overflows u32 (primitive_count={primitive_count}, verts_per_primitive={verts_per_primitive})"
+                )
+            })?;
 
         let (fill_wgsl, fill_dispatch_x) = match vs_shader.sm4_module.as_deref() {
             Some(module) => match build_vs_as_compute_gs_input_wgsl(
@@ -7515,14 +7510,14 @@ impl AerogpuD3d11Executor {
                     // GS would observe incorrect register values (VS-side transforms would be
                     // skipped).
                     if vs_is_identity_passthrough_for_gs_inputs(module, gs_meta.input_reg_count) {
-                        (fill_wgsl_ia, primitive_count)
+                        (fill_wgsl_ia, vertex_invocation_count)
                     } else if super::env_var_truthy("AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS") {
                         eprintln!(
                             "aero-d3d11: WARNING: VS-as-compute translation failed for VS shader {} (using incorrect IA-fill fallback): {:#}",
                             vs_handle,
                             err
                         );
-                        (fill_wgsl_ia, primitive_count)
+                        (fill_wgsl_ia, vertex_invocation_count)
                     } else {
                         bail!(
                             "GS prepass requires VS-as-compute to feed GS inputs, but VS-as-compute translation failed for VS shader {vs_handle}: {err:#}\n\
@@ -7537,7 +7532,7 @@ impl AerogpuD3d11Executor {
                         "aero-d3d11: WARNING: missing decoded SM4 module for VS shader {} (using incorrect IA-fill fallback)",
                         vs_handle
                     );
-                    (fill_wgsl_ia, primitive_count)
+                    (fill_wgsl_ia, vertex_invocation_count)
                 } else {
                     bail!(
                         "GS prepass requires VS-as-compute to feed GS inputs, but the bound VS shader {vs_handle} has no decoded SM4 module available.\n\
@@ -8576,6 +8571,9 @@ impl AerogpuD3d11Executor {
                 CmdPrimitiveTopology::PointList => 1,
                 CmdPrimitiveTopology::LineList => 2,
                 CmdPrimitiveTopology::TriangleList => 3,
+                // D3D11 adjacency-list topologies (GS input).
+                CmdPrimitiveTopology::LineListAdj => 4,
+                CmdPrimitiveTopology::TriangleListAdj => 6,
                 _ => 0,
             };
             if expected_verts_per_primitive == 0 {
@@ -9165,7 +9163,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     vertex_pulling_draw,
                     indexed_draw,
                 )?,
-                3 => self.exec_geometry_shader_prepass_trianglelist(
+                3 | 4 | 6 => self.exec_geometry_shader_prepass_trianglelist(
                     encoder,
                     allocs,
                     guest_mem,
