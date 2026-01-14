@@ -13,31 +13,8 @@ use crate::runtime::indirect_args::DrawIndexedIndirectArgs;
 
 const REGISTER_STRIDE_BYTES: u64 = 16;
 
-/// Per-patch metadata consumed by tessellation expansion compute passes.
-///
-/// The metadata stores counts and offsets for each patch within the expanded vertex + index
-/// buffers. Offsets are in elements (vertices/indices), not bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TessellationPatchMetadata {
-    pub vertex_offset: u32,
-    pub vertex_count: u32,
-    pub index_offset: u32,
-    pub index_count: u32,
-}
-
-impl TessellationPatchMetadata {
-    pub const fn layout() -> (u64, u64) {
-        (
-            core::mem::size_of::<Self>() as u64,
-            core::mem::align_of::<Self>() as u64,
-        )
-    }
-}
-
-// Compile-time layout validation.
-const _: [(); 16] = [(); core::mem::size_of::<TessellationPatchMetadata>()];
-const _: [(); 4] = [(); core::mem::align_of::<TessellationPatchMetadata>()];
+// Per-patch metadata layout is defined by `tessellation::TessellationLayoutPatchMeta` (written by
+// the GPU layout pass). Keep sizing helpers in sync with that layout.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TessellationSizingError {
@@ -256,7 +233,7 @@ impl TessellationDrawScratchSizes {
             "hs_patch_constants bytes",
         )?;
 
-        let (metadata_size, _metadata_align) = TessellationPatchMetadata::layout();
+        let (metadata_size, _metadata_align) = super::TessellationLayoutPatchMeta::layout();
         let tess_metadata_bytes =
             checked_mul_u64(patch_count_total, metadata_size, "metadata bytes")?;
 
@@ -346,7 +323,7 @@ mod tests {
         assert_eq!(sizes.vs_out_bytes, 192);
         assert_eq!(sizes.hs_out_bytes, 192);
         assert_eq!(sizes.hs_patch_constants_bytes, 64);
-        assert_eq!(sizes.tess_metadata_bytes, 32);
+        assert_eq!(sizes.tess_metadata_bytes, 40);
         assert_eq!(sizes.expanded_vertex_count_total, 50);
         assert_eq!(sizes.expanded_vertex_bytes, 1600);
         assert_eq!(sizes.expanded_index_count_total, 192);
