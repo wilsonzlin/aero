@@ -520,6 +520,7 @@ Guest image requirement:
 
 - Provision the guest selftest to run with `--test-input-events-extended` or set guest env var
   `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`.
+  - If provisioning via `New-AeroWin7TestImage.ps1`, pass `-TestInputEventsExtended` (alias: `-TestInputEventsExtra`).
   - This is in addition to enabling the base `--test-input-events` flow; the harness will fail if `virtio-input-events`
     is skipped.
 

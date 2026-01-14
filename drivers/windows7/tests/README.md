@@ -283,7 +283,8 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) sets
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS`
-      This requires provisioning the guest with `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`).
+      This requires provisioning the guest with `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`;
+      if using `New-AeroWin7TestImage.ps1`, pass `-TestInputEventsExtended` (alias: `-TestInputEventsExtra`)).
     - When `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-WithTabletEvents`) /
       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`) is enabled,
       the harness attaches `virtio-tablet-pci`, injects a

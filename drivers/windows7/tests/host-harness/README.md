@@ -371,7 +371,8 @@ This:
 - requires all three `virtio-input-events-*` markers above to PASS
 - requires the guest selftest to be provisioned with `--test-input-events-extended`
   (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`)
-  - the harness fails if the base `virtio-input-events` marker is skipped/missing
+  - If provisioning via `New-AeroWin7TestImage.ps1`, pass `-TestInputEventsExtended` (alias: `-TestInputEventsExtra`).
+  - The harness fails if the base `virtio-input-events` marker is skipped/missing
 
 Note: This is separate from `-WithInputWheel` / `--with-input-wheel`, which instead requires the aggregate marker
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`. The extended wheel marker (`virtio-input-events-wheel`) covers
@@ -728,7 +729,8 @@ To also exercise the optional virtio-input wheel marker (`virtio-input-wheel`), 
 
 To exercise the extended virtio-input markers (`virtio-input-events-modifiers/buttons/wheel`), set the workflow input
 `with_virtio_input_events_extended=true`. This requires a guest image provisioned with `--test-input-events` and
-`--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`).
+`--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`; for example via
+`New-AeroWin7TestImage.ps1 -TestInputEventsExtended` (alias: `-TestInputEventsExtra`)).
 
 To also exercise the virtio-input tablet (absolute pointer) end-to-end path, set the workflow input
 `with_virtio_input_tablet_events=true`. This requires a guest image provisioned with `--test-input-tablet-events`
