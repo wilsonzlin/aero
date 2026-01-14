@@ -1350,6 +1350,11 @@ pub struct AerogpuD3d11Executor {
     next_texture_view_id: u64,
     next_scratch_buffer_id: u64,
     expansion_scratch: ExpansionScratchAllocator,
+    /// Uniform-only scratch allocator used by compute-based expansion paths.
+    ///
+    /// WebGPU (wgpu) does not allow binding the same buffer as both `storage` and `uniform` within
+    /// a single render/compute pass. Compute expansion prepasses write to the storage scratch
+    /// buffer, so any per-draw uniform payloads must be allocated from a separate uniform buffer.
     expansion_uniform_scratch: ExpansionScratchAllocator,
     tessellation: TessellationRuntime,
 
