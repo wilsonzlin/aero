@@ -30,7 +30,11 @@ use super::bindings::ShaderStage;
 // Bump note (v3): typed UAV store (`store_uav_typed`) support was expanded (more storage formats,
 // stricter integer-coordinate handling, and per-format write-mask rules). Old cached WGSL could
 // still compile but behave differently.
-pub const D3D11_TRANSLATOR_CACHE_VERSION: u32 = 3;
+//
+// Bump note (v4): add host-side `Texture2DArray` SRV support. The translator now classifies `t#`
+// bindings using DXBC `RDEF` reflection and emits different WGSL declarations/bindings for array
+// textures (including slice-aware sampling via coord.z).
+pub const D3D11_TRANSLATOR_CACHE_VERSION: u32 = 4;
 
 fn default_d3d11_translator_cache_version() -> u32 {
     D3D11_TRANSLATOR_CACHE_VERSION
@@ -111,6 +115,9 @@ pub enum PersistedBindingKind {
     Texture2D {
         slot: u32,
     },
+    Texture2DArray {
+        slot: u32,
+    },
     SrvBuffer {
         slot: u32,
     },
@@ -137,6 +144,7 @@ impl PersistedBindingKind {
                 reg_count: *reg_count,
             },
             crate::BindingKind::Texture2D { slot } => Self::Texture2D { slot: *slot },
+            crate::BindingKind::Texture2DArray { slot } => Self::Texture2DArray { slot: *slot },
             crate::BindingKind::SrvBuffer { slot } => Self::SrvBuffer { slot: *slot },
             crate::BindingKind::Sampler { slot } => Self::Sampler { slot: *slot },
             crate::BindingKind::UavBuffer { slot } => Self::UavBuffer { slot: *slot },
@@ -161,6 +169,7 @@ impl PersistedBindingKind {
                 reg_count: *reg_count,
             },
             Self::Texture2D { slot } => crate::BindingKind::Texture2D { slot: *slot },
+            Self::Texture2DArray { slot } => crate::BindingKind::Texture2DArray { slot: *slot },
             Self::SrvBuffer { slot } => crate::BindingKind::SrvBuffer { slot: *slot },
             Self::Sampler { slot } => crate::BindingKind::Sampler { slot: *slot },
             Self::UavBuffer { slot } => crate::BindingKind::UavBuffer { slot: *slot },

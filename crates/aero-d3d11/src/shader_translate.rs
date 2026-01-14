@@ -88,6 +88,9 @@ pub enum BindingKind {
     Texture2D {
         slot: u32,
     },
+    Texture2DArray {
+        slot: u32,
+    },
     /// A `t#` SRV that is backed by a buffer (e.g. `ByteAddressBuffer`, `StructuredBuffer`).
     ///
     /// In WGSL this maps to a `var<storage, read>` binding.
@@ -3182,7 +3185,8 @@ fn apply_modifier_u32(expr: String, modifier: OperandModifier) -> String {
 #[derive(Debug, Clone)]
 struct ResourceUsage {
     cbuffers: BTreeMap<u32, u32>,
-    textures: BTreeSet<u32>,
+    textures_2d: BTreeSet<u32>,
+    textures_2d_array: BTreeSet<u32>,
     srv_buffers: BTreeSet<u32>,
     samplers: BTreeSet<u32>,
     uav_buffers: BTreeSet<u32>,
@@ -3191,6 +3195,10 @@ struct ResourceUsage {
 }
 
 impl ResourceUsage {
+    fn texture_is_array(&self, slot: u32) -> bool {
+        self.textures_2d_array.contains(&slot)
+    }
+
     fn stage_bind_group(stage: ShaderStage) -> u32 {
         match stage {
             ShaderStage::Vertex => 0,
@@ -3228,12 +3236,20 @@ impl ResourceUsage {
                 kind: BindingKind::ConstantBuffer { slot, reg_count },
             });
         }
-        for &slot in &self.textures {
+        for &slot in &self.textures_2d {
             out.push(Binding {
                 group,
                 binding: BINDING_BASE_TEXTURE + slot,
                 visibility,
                 kind: BindingKind::Texture2D { slot },
+            });
+        }
+        for &slot in &self.textures_2d_array {
+            out.push(Binding {
+                group,
+                binding: BINDING_BASE_TEXTURE + slot,
+                visibility,
+                kind: BindingKind::Texture2DArray { slot },
             });
         }
         for &slot in &self.srv_buffers {
@@ -3289,13 +3305,22 @@ impl ResourceUsage {
             ));
             w.line("");
         }
-        for &slot in &self.textures {
+        for &slot in &self.textures_2d {
             w.line(&format!(
                 "@group({group}) @binding({}) var t{slot}: texture_2d<f32>;",
                 BINDING_BASE_TEXTURE + slot
             ));
         }
-        if !self.textures.is_empty() || !self.srv_buffers.is_empty() {
+        for &slot in &self.textures_2d_array {
+            w.line(&format!(
+                "@group({group}) @binding({}) var t{slot}: texture_2d_array<f32>;",
+                BINDING_BASE_TEXTURE + slot
+            ));
+        }
+        if !self.textures_2d.is_empty()
+            || !self.textures_2d_array.is_empty()
+            || !self.srv_buffers.is_empty()
+        {
             w.line("");
         }
         let needs_u32_struct = !self.srv_buffers.is_empty()
@@ -3375,11 +3400,15 @@ fn scan_resources(
                 slot,
                 max: max_slots.saturating_sub(1),
             });
-        }
-        Ok(())
+    }
+    Ok(())
     }
     let mut cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
-    let mut textures = BTreeSet::new();
+    // Collect all `t#` slots referenced by the shader instruction stream (and expand arrays using
+    // `RDEF` when available) into `textures_2d` / `textures_2d_array`.
+    let mut texture_slots = BTreeSet::new();
+    let mut textures_2d = BTreeSet::new();
+    let mut textures_2d_array = BTreeSet::new();
     let mut srv_buffers = BTreeSet::new();
     let mut samplers = BTreeSet::new();
     let mut uav_buffers = BTreeSet::new();
@@ -3578,7 +3607,7 @@ fn scan_resources(
                 scan_src(coord)?;
                 validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
                 validate_slot("sampler", sampler.slot, MAX_SAMPLER_SLOTS)?;
-                textures.insert(texture.slot);
+                texture_slots.insert(texture.slot);
                 samplers.insert(sampler.slot);
             }
             Sm4Inst::SampleL {
@@ -3592,7 +3621,7 @@ fn scan_resources(
                 scan_src(lod)?;
                 validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
                 validate_slot("sampler", sampler.slot, MAX_SAMPLER_SLOTS)?;
-                textures.insert(texture.slot);
+                texture_slots.insert(texture.slot);
                 samplers.insert(sampler.slot);
             }
             Sm4Inst::Ld {
@@ -3604,7 +3633,7 @@ fn scan_resources(
                 scan_src(coord)?;
                 scan_src(lod)?;
                 validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
-                textures.insert(texture.slot);
+                texture_slots.insert(texture.slot);
             }
             Sm4Inst::ResInfo {
                 dst: _,
@@ -3613,7 +3642,7 @@ fn scan_resources(
             } => {
                 scan_src(mip_level)?;
                 validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
-                textures.insert(texture.slot);
+                texture_slots.insert(texture.slot);
             }
             Sm4Inst::LdRaw {
                 dst: _,
@@ -3863,13 +3892,27 @@ fn scan_resources(
             match res.input_type {
                 // D3D_SIT_TEXTURE
                 2 => {
-                    if set_intersects_range(&textures, res.bind_point, res.bind_count) {
+                    if set_intersects_range(&texture_slots, res.bind_point, res.bind_count) {
+                        // D3D_SRV_DIMENSION_TEXTURE2DARRAY
+                        let is_array = res.dimension == 5;
                         expand_set_range(
-                            &mut textures,
+                            &mut texture_slots,
                             res.bind_point,
                             res.bind_count,
                             MAX_TEXTURE_SLOTS,
                         );
+
+                        let end = res
+                            .bind_point
+                            .saturating_add(res.bind_count)
+                            .min(MAX_TEXTURE_SLOTS);
+                        for slot in res.bind_point..end {
+                            if is_array {
+                                textures_2d_array.insert(slot);
+                            } else {
+                                textures_2d.insert(slot);
+                            }
+                        }
                     }
                 }
                 // D3D_SIT_SAMPLER
@@ -3920,6 +3963,14 @@ fn scan_resources(
         }
     }
 
+    // Any texture slots referenced by the instruction stream but not described by `RDEF` default to
+    // `Texture2D` (common in stripped/shader-cache DXBC blobs).
+    for slot in texture_slots {
+        if !textures_2d_array.contains(&slot) {
+            textures_2d.insert(slot);
+        }
+    }
+
     // `u#` slots are a single namespace in D3D11: a slot is either a UAV buffer or a UAV texture.
     // Reject shaders that try to use the same slot in both ways (this would otherwise result in
     // conflicting WGSL declarations and invalid bind group layouts).
@@ -3930,7 +3981,7 @@ fn scan_resources(
     }
     // `t#` slots are likewise a single namespace for SRVs (textures and buffers share the same
     // binding indices in the Aero D3D11 binding model).
-    for &slot in &textures {
+    for &slot in textures_2d.iter().chain(textures_2d_array.iter()) {
         if srv_buffers.contains(&slot) {
             return Err(ShaderTranslateError::TextureSlotUsedAsBufferAndTexture { slot });
         }
@@ -3986,7 +4037,8 @@ fn scan_resources(
 
     Ok(ResourceUsage {
         cbuffers,
-        textures,
+        textures_2d,
+        textures_2d_array,
         srv_buffers,
         samplers,
         uav_buffers,
@@ -5673,6 +5725,7 @@ fn emit_instructions(
                 sampler,
             } => {
                 let coord = emit_src_vec4(coord, inst_index, "sample", ctx)?;
+                let is_array = ctx.resources.texture_is_array(texture.slot);
                 // WGSL forbids implicit-derivative sampling (`textureSample`) outside the fragment
                 // stage, so map D3D-style `sample` to `textureSampleLevel(..., 0.0)` when
                 // translating vertex/compute shaders.
@@ -5680,15 +5733,29 @@ fn emit_instructions(
                 // Note: On real D3D hardware, non-fragment `sample` uses an implementation-defined
                 // LOD selection (typically base LOD). Using LOD 0 is a reasonable approximation and
                 // keeps the generated WGSL valid.
-                let expr = match ctx.stage {
-                    ShaderStage::Pixel => format!(
-                        "textureSample(t{}, s{}, ({coord}).xy)",
-                        texture.slot, sampler.slot
-                    ),
-                    _ => format!(
-                        "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
-                        texture.slot, sampler.slot
-                    ),
+                let expr = if is_array {
+                    let slice = format!("i32(({coord}).z)");
+                    match ctx.stage {
+                        ShaderStage::Pixel => format!(
+                            "textureSample(t{}, s{}, ({coord}).xy, {slice})",
+                            texture.slot, sampler.slot
+                        ),
+                        _ => format!(
+                            "textureSampleLevel(t{}, s{}, ({coord}).xy, {slice}, 0.0)",
+                            texture.slot, sampler.slot
+                        ),
+                    }
+                } else {
+                    match ctx.stage {
+                        ShaderStage::Pixel => format!(
+                            "textureSample(t{}, s{}, ({coord}).xy)",
+                            texture.slot, sampler.slot
+                        ),
+                        _ => format!(
+                            "textureSampleLevel(t{}, s{}, ({coord}).xy, 0.0)",
+                            texture.slot, sampler.slot
+                        ),
+                    }
                 };
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "sample", ctx)?;
@@ -5702,10 +5769,18 @@ fn emit_instructions(
             } => {
                 let coord = emit_src_vec4(coord, inst_index, "sample_l", ctx)?;
                 let lod_vec = emit_src_vec4(lod, inst_index, "sample_l", ctx)?;
-                let expr = format!(
-                    "textureSampleLevel(t{}, s{}, ({coord}).xy, ({lod_vec}).x)",
-                    texture.slot, sampler.slot
-                );
+                let expr = if ctx.resources.texture_is_array(texture.slot) {
+                    let slice = format!("i32(({coord}).z)");
+                    format!(
+                        "textureSampleLevel(t{}, s{}, ({coord}).xy, {slice}, ({lod_vec}).x)",
+                        texture.slot, sampler.slot
+                    )
+                } else {
+                    format!(
+                        "textureSampleLevel(t{}, s{}, ({coord}).xy, ({lod_vec}).x)",
+                        texture.slot, sampler.slot
+                    )
+                };
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "sample_l", ctx)?;
             }
@@ -5729,10 +5804,18 @@ fn emit_instructions(
                 let lod_i = emit_src_vec4_i32(lod, inst_index, "ld", ctx)?;
                 let lod_scalar = format!("({lod_i}).x");
 
-                let expr = format!(
-                    "textureLoad(t{}, vec2<i32>({x}, {y}), {lod_scalar})",
-                    texture.slot
-                );
+                let expr = if ctx.resources.texture_is_array(texture.slot) {
+                    let slice = format!("({coord_i}).z");
+                    format!(
+                        "textureLoad(t{}, vec2<i32>({x}, {y}), {slice}, {lod_scalar})",
+                        texture.slot
+                    )
+                } else {
+                    format!(
+                        "textureLoad(t{}, vec2<i32>({x}, {y}), {lod_scalar})",
+                        texture.slot
+                    )
+                };
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld", ctx)?;
             }
@@ -5771,9 +5854,20 @@ fn emit_instructions(
                     texture.slot
                 ));
 
-                let expr = format!(
-                    "bitcast<vec4<f32>>(vec4<u32>(({dims_name}).x, ({dims_name}).y, 1u, {levels_name}))"
-                );
+                let expr = if ctx.resources.texture_is_array(texture.slot) {
+                    let layers_name = format!("resinfo_layers{inst_index}");
+                    w.line(&format!(
+                        "let {layers_name}: u32 = textureNumLayers(t{});",
+                        texture.slot
+                    ));
+                    format!(
+                        "bitcast<vec4<f32>>(vec4<u32>(({dims_name}).x, ({dims_name}).y, {layers_name}, {levels_name}))"
+                    )
+                } else {
+                    format!(
+                        "bitcast<vec4<f32>>(vec4<u32>(({dims_name}).x, ({dims_name}).y, 1u, {levels_name}))"
+                    )
+                };
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "resinfo", ctx)?;
             }
             Sm4Inst::LdRaw { dst, addr, buffer } => {
@@ -7170,7 +7264,8 @@ mod tests {
 
         let usage = ResourceUsage {
             cbuffers,
-            textures: BTreeSet::new(),
+            textures_2d: BTreeSet::new(),
+            textures_2d_array: BTreeSet::new(),
             srv_buffers: BTreeSet::new(),
             samplers: BTreeSet::new(),
             uav_buffers,
@@ -7773,6 +7868,90 @@ mod tests {
     }
 
     #[test]
+    fn texture2d_array_sampling_uses_rdef_dimension_and_coord_z_as_slice() {
+        use aero_dxbc::rdef::RdefResourceBinding;
+
+        let coord_reg = crate::sm4_ir::SrcOperand {
+            kind: SrcKind::Register(RegisterRef {
+                file: RegFile::Temp,
+                index: 1,
+            }),
+            swizzle: Swizzle::XYZW,
+            modifier: OperandModifier::None,
+        };
+
+        let module = Sm4Module {
+            stage: ShaderStage::Compute,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+            instructions: vec![
+                // Populate r1 so the generated WGSL has a stable `(r1).z` slice expression.
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Temp,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: dummy_coord(),
+                },
+                Sm4Inst::SampleL {
+                    dst: dummy_dst(),
+                    coord: coord_reg,
+                    texture: crate::sm4_ir::TextureRef { slot: 0 },
+                    sampler: crate::sm4_ir::SamplerRef { slot: 0 },
+                    lod: dummy_coord(),
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let rdef = RdefChunk {
+            target: 0,
+            flags: 0,
+            creator: None,
+            constant_buffers: Vec::new(),
+            bound_resources: vec![RdefResourceBinding {
+                name: "t0".to_owned(),
+                // D3D_SIT_TEXTURE
+                input_type: 2,
+                return_type: 0,
+                // D3D_SRV_DIMENSION_TEXTURE2DARRAY
+                dimension: 5,
+                sample_count: 0,
+                bind_point: 0,
+                bind_count: 1,
+                flags: 0,
+            }],
+        };
+
+        let translated = translate_cs(&module, Some(rdef)).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(
+            translated.wgsl.contains("texture_2d_array<f32>"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(
+            translated.wgsl.contains("i32((r1).z)"),
+            "{}",
+            translated.wgsl
+        );
+
+        assert!(
+            translated
+                .reflection
+                .bindings
+                .iter()
+                .any(|b| b.kind == BindingKind::Texture2DArray { slot: 0 }),
+            "expected reflection to include BindingKind::Texture2DArray, got: {:?}",
+            translated.reflection.bindings
+        );
+    }
+
+    #[test]
     fn unknown_opcode_error_uses_friendly_name_when_known() {
         // Force an "unknown opcode" through the emitter path and ensure the resulting error
         // message uses `opcode_name()` instead of a raw `opcode_<n>` placeholder.
@@ -7783,7 +7962,8 @@ mod tests {
         let io = IoMaps::default();
         let resources = ResourceUsage {
             cbuffers: BTreeMap::new(),
-            textures: BTreeSet::new(),
+            textures_2d: BTreeSet::new(),
+            textures_2d_array: BTreeSet::new(),
             srv_buffers: BTreeSet::new(),
             samplers: BTreeSet::new(),
             uav_buffers: BTreeSet::new(),

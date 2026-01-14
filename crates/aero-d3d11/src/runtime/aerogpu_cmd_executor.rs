@@ -849,8 +849,9 @@ struct Texture2dDesc {
 #[derive(Debug)]
 struct Texture2dResource {
     texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    /// Unique bind-group cache ID for `view`.
+    view_2d: wgpu::TextureView,
+    view_2d_array: wgpu::TextureView,
+    /// Unique bind-group cache ID for this texture's views.
     ///
     /// Do not use the guest resource handle as the cache key (see `BufferResource::id`).
     view_id: TextureViewId,
@@ -1394,7 +1395,8 @@ pub struct AerogpuD3d11Executor {
     dummy_uniform: wgpu::Buffer,
     dummy_storage: wgpu::Buffer,
     dummy_vertex: wgpu::Buffer,
-    dummy_texture_view: wgpu::TextureView,
+    dummy_texture_view_2d: wgpu::TextureView,
+    dummy_texture_view_2d_array: wgpu::TextureView,
 
     /// Cache of internal dummy color targets for depth-only render passes.
     ///
@@ -1548,7 +1550,12 @@ impl AerogpuD3d11Executor {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let dummy_texture_view_2d =
+            dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &dummy_texture,
@@ -1773,7 +1780,8 @@ impl AerogpuD3d11Executor {
             dummy_uniform,
             dummy_storage,
             dummy_vertex,
-            dummy_texture_view,
+            dummy_texture_view_2d,
+            dummy_texture_view_2d_array,
             depth_only_dummy_color_targets: HashMap::new(),
             sampler_cache,
             default_sampler,
@@ -6829,7 +6837,8 @@ impl AerogpuD3d11Executor {
                     as u64,
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
-                dummy_texture_view: &self.dummy_texture_view,
+                dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                 default_sampler: &self.default_sampler,
                 stage: group_stage,
                 stage_state: stage_bindings,
@@ -6902,7 +6911,7 @@ impl AerogpuD3d11Executor {
                 Some((
                     ds_tex.desc.width,
                     ds_tex.desc.height,
-                    &ds_tex.view as *const wgpu::TextureView,
+                    &ds_tex.view_2d as *const wgpu::TextureView,
                     ds_tex.desc.format,
                 ))
             } else {
@@ -7083,7 +7092,8 @@ impl AerogpuD3d11Executor {
             for binding in group_bindings {
                 #[allow(unreachable_patterns)]
                 match &binding.kind {
-                    crate::BindingKind::Texture2D { slot } => {
+                    crate::BindingKind::Texture2D { slot }
+                    | crate::BindingKind::Texture2DArray { slot } => {
                         if let Some(tex) = stage_bindings.texture(*slot) {
                             self.encoder_used_textures.insert(tex.texture);
                         }
@@ -7952,6 +7962,7 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::Texture2D { slot }
+                    | crate::BindingKind::Texture2DArray { slot }
                     | crate::BindingKind::SrvBuffer { slot } => {
                         let slot_usize = *slot as usize;
                         let used = match stage {
@@ -9244,7 +9255,8 @@ impl AerogpuD3d11Executor {
                                             as u64,
                                         dummy_uniform: &self.dummy_uniform,
                                         dummy_storage: &self.dummy_storage,
-                                        dummy_texture_view: &self.dummy_texture_view,
+                                        dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                                        dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
@@ -9353,7 +9365,8 @@ impl AerogpuD3d11Executor {
                             for binding in group_bindings {
                                 #[allow(unreachable_patterns)]
                                 match &binding.kind {
-                                    crate::BindingKind::Texture2D { slot } => {
+                                    crate::BindingKind::Texture2D { slot }
+                                    | crate::BindingKind::Texture2DArray { slot } => {
                                         if let Some(tex) = stage_bindings.texture(*slot) {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
@@ -9579,7 +9592,8 @@ impl AerogpuD3d11Executor {
                                             as u64,
                                         dummy_uniform: &self.dummy_uniform,
                                         dummy_storage: &self.dummy_storage,
-                                        dummy_texture_view: &self.dummy_texture_view,
+                                        dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                                        dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
@@ -9697,7 +9711,8 @@ impl AerogpuD3d11Executor {
                             for binding in group_bindings {
                                 #[allow(unreachable_patterns)]
                                 match &binding.kind {
-                                    crate::BindingKind::Texture2D { slot } => {
+                                    crate::BindingKind::Texture2D { slot }
+                                    | crate::BindingKind::Texture2DArray { slot } => {
                                         if let Some(tex) = stage_bindings.texture(*slot) {
                                             self.encoder_used_textures.insert(tex.texture);
                                         }
@@ -10680,6 +10695,32 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_TEXTURE2D: row_pitch_bytes is required for allocation-backed textures");
         }
 
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aerogpu texture2d"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: array_layers,
+            },
+            mip_level_count: mip_levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        });
+        let view_2d = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: 0,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let view_2d_array = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_array_layer: 0,
+            array_layer_count: None,
+            ..Default::default()
+        });
         let backing = if backing_alloc_id != 0 {
             // Validate that the allocation can hold all mips/layers using the guest UMD's canonical
             // packing:
@@ -10721,27 +10762,12 @@ impl AerogpuD3d11Executor {
                 other => anyhow!("CREATE_TEXTURE2D: {other}"),
             })?;
 
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("aerogpu texture2d"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: array_layers,
-            },
-            mip_level_count: mip_levels,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
         self.resources.textures.insert(
             texture_handle,
             Texture2dResource {
                 texture,
-                view,
+                view_2d,
+                view_2d_array,
                 view_id,
                 desc: Texture2dDesc {
                     width,
@@ -14678,14 +14704,15 @@ impl AerogpuD3d11Executor {
                 group_stage_overrides.as_slice(),
             )?;
             let stage_bindings = self.bindings.stage(stage);
-            for binding in group_bindings {
-                #[allow(unreachable_patterns)]
-                match &binding.kind {
-                    crate::BindingKind::Texture2D { slot } => {
-                        if let Some(tex) = stage_bindings.texture(*slot) {
-                            self.encoder_used_textures.insert(tex.texture);
+                for binding in group_bindings {
+                    #[allow(unreachable_patterns)]
+                    match &binding.kind {
+                        crate::BindingKind::Texture2D { slot }
+                        | crate::BindingKind::Texture2DArray { slot } => {
+                            if let Some(tex) = stage_bindings.texture(*slot) {
+                                self.encoder_used_textures.insert(tex.texture);
+                            }
                         }
-                    }
                     crate::BindingKind::SrvBuffer { slot } => {
                         if let Some(buf) = stage_bindings.srv_buffer(*slot) {
                             self.encoder_used_buffers.insert(buf.buffer);
@@ -14895,7 +14922,8 @@ impl AerogpuD3d11Executor {
                     as u64,
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
-                dummy_texture_view: &self.dummy_texture_view,
+                dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                 default_sampler: &self.default_sampler,
                 stage: group_stage,
                 stage_state: stage_bindings,
@@ -14973,7 +15001,8 @@ impl AerogpuD3d11Executor {
                             }
                         }
                     }
-                    crate::BindingKind::Texture2D { slot } => {
+                    crate::BindingKind::Texture2D { slot }
+                    | crate::BindingKind::Texture2DArray { slot } => {
                         if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
                             self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
                         }
@@ -15217,7 +15246,8 @@ impl AerogpuD3d11Executor {
                         }
                     }
                 }
-                crate::BindingKind::Texture2D { slot } => {
+                crate::BindingKind::Texture2D { slot }
+                | crate::BindingKind::Texture2DArray { slot } => {
                     if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
                         self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
                     }
@@ -15460,7 +15490,8 @@ impl AerogpuD3d11Executor {
             max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size as u64,
             dummy_uniform: &self.dummy_uniform,
             dummy_storage: &self.dummy_storage,
-            dummy_texture_view: &self.dummy_texture_view,
+            dummy_texture_view_2d: &self.dummy_texture_view_2d,
+            dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
             default_sampler: &self.default_sampler,
             stage: ShaderStage::Hull,
             stage_state: self.bindings.stage(ShaderStage::Hull),
@@ -15493,7 +15524,7 @@ impl AerogpuD3d11Executor {
             .chain(patch_constant.bindings.iter())
         {
             match &binding.kind {
-                crate::BindingKind::Texture2D { slot } => {
+                crate::BindingKind::Texture2D { slot } | crate::BindingKind::Texture2DArray { slot } => {
                     if let Some(tex) = stage_bindings.texture(*slot) {
                         self.encoder_used_textures.insert(tex.texture);
                     }
@@ -16585,7 +16616,7 @@ fn build_render_pass_attachments<'a>(
             .get(&tex_id)
             .ok_or_else(|| anyhow!("unknown render target texture {tex_id}"))?;
         color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-            view: &tex.view,
+            view: &tex.view_2d,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: color_load,
@@ -16606,7 +16637,7 @@ fn build_render_pass_attachments<'a>(
                 bail!("render pass depth-stencil texture {ds_id} has non-depth format {format:?}");
             }
             Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &tex.view,
+                view: &tex.view_2d,
                 depth_ops: texture_format_has_depth(format).then_some(wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -16861,7 +16892,8 @@ struct CmdExecutorBindGroupProvider<'a> {
     max_storage_binding_size: u64,
     dummy_uniform: &'a wgpu::Buffer,
     dummy_storage: &'a wgpu::Buffer,
-    dummy_texture_view: &'a wgpu::TextureView,
+    dummy_texture_view_2d: &'a wgpu::TextureView,
+    dummy_texture_view_2d_array: &'a wgpu::TextureView,
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
     stage: ShaderStage,
     stage_state: &'a super::bindings::StageBindings,
@@ -16911,13 +16943,19 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
         let bound = self.stage_state.texture(slot)?;
         let tex = self.resources.textures.get(&bound.texture)?;
-        Some((tex.view_id, &tex.view))
+        Some((tex.view_id, &tex.view_2d))
+    }
+
+    fn texture2d_array(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        let bound = self.stage_state.texture(slot)?;
+        let tex = self.resources.textures.get(&bound.texture)?;
+        Some((tex.view_id, &tex.view_2d_array))
     }
 
     fn uav_texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
         let bound = self.stage_state.uav_texture(slot)?;
         let tex = self.resources.textures.get(&bound.texture)?;
-        Some((tex.view_id, &tex.view))
+        Some((tex.view_id, &tex.view_2d))
     }
 
     fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
@@ -17006,8 +17044,12 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
         self.dummy_storage
     }
 
-    fn dummy_texture_view(&self) -> &wgpu::TextureView {
-        self.dummy_texture_view
+    fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+        self.dummy_texture_view_2d
+    }
+
+    fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+        self.dummy_texture_view_2d_array
     }
 
     fn default_sampler(&self) -> &aero_gpu::bindings::samplers::CachedSampler {
@@ -19425,12 +19467,24 @@ mod tests {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
-            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let view_2d = tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: 0,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+            let view_2d_array = tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                base_array_layer: 0,
+                array_layer_count: None,
+                ..Default::default()
+            });
             exec.resources.textures.insert(
                 RT,
                 Texture2dResource {
                     texture: tex,
-                    view,
+                    view_2d,
+                    view_2d_array,
                     view_id: TextureViewId(1),
                     desc: Texture2dDesc {
                         width: 1,
@@ -19676,12 +19730,24 @@ mod tests {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     view_formats: &[],
                 });
-                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let view_2d = tex.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: 0,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+                let view_2d_array = tex.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    base_array_layer: 0,
+                    array_layer_count: None,
+                    ..Default::default()
+                });
                 exec.resources.textures.insert(
                     handle,
                     Texture2dResource {
                         texture: tex,
-                        view,
+                        view_2d,
+                        view_2d_array,
                         view_id: TextureViewId(handle as u64),
                         desc: Texture2dDesc {
                             width: 1,
@@ -19694,12 +19760,12 @@ mod tests {
                             as u32,
                         backing: None,
                         row_pitch_bytes: 0,
-                         dirty: false,
-                         guest_backing_is_current: true,
-                         host_shadow: None,
-                         host_shadow_valid: Vec::new(),
-                     },
-                 );
+                        dirty: false,
+                        guest_backing_is_current: true,
+                        host_shadow: None,
+                        host_shadow_valid: Vec::new(),
+                    },
+                );
             }
 
             // Minimal input layout so pipeline creation succeeds. This VS uses only builtins, so we
@@ -19873,12 +19939,24 @@ mod tests {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
-            let ds_view = ds_tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let view_2d = ds_tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: 0,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+            let view_2d_array = ds_tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                base_array_layer: 0,
+                array_layer_count: None,
+                ..Default::default()
+            });
             exec.resources.textures.insert(
                 DS,
                 Texture2dResource {
                     texture: ds_tex,
-                    view: ds_view,
+                    view_2d,
+                    view_2d_array,
                     view_id: TextureViewId(DS as u64),
                     desc: Texture2dDesc {
                         width: 1,
@@ -22938,12 +23016,24 @@ fn cs_main() {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
-            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let view_2d = tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: 0,
+                array_layer_count: Some(1),
+                ..Default::default()
+            });
+            let view_2d_array = tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                base_array_layer: 0,
+                array_layer_count: None,
+                ..Default::default()
+            });
             exec.resources.textures.insert(
                 GS_TEX,
                 Texture2dResource {
                     texture: tex,
-                    view,
+                    view_2d,
+                    view_2d_array,
                     view_id: TextureViewId(GS_TEX as u64),
                     desc: Texture2dDesc {
                         width: 1,
@@ -23072,7 +23162,8 @@ fn cs_main() {
                     as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
-                dummy_texture_view: &exec.dummy_texture_view,
+                dummy_texture_view_2d: &exec.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Vertex,
                 stage_state: exec.bindings.stage(ShaderStage::Vertex),
@@ -23106,7 +23197,8 @@ fn cs_main() {
                     as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
-                dummy_texture_view: &exec.dummy_texture_view,
+                dummy_texture_view_2d: &exec.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Geometry,
                 stage_state: exec.bindings.stage(ShaderStage::Geometry),
@@ -23640,7 +23732,8 @@ fn cs_main() {
                     as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
-                dummy_texture_view: &exec.dummy_texture_view,
+                dummy_texture_view_2d: &exec.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Compute,
                 stage_state: exec.bindings.stage(ShaderStage::Compute),
@@ -23811,7 +23904,8 @@ fn cs_main() {
                     as u64,
                 dummy_uniform: &exec.dummy_uniform,
                 dummy_storage: &exec.dummy_storage,
-                dummy_texture_view: &exec.dummy_texture_view,
+                dummy_texture_view_2d: &exec.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
@@ -24311,7 +24405,7 @@ fn cs_main() {
                 .textures
                 .get(&TEX_565)
                 .expect("texture exists")
-                .view;
+                .view_2d;
             let sampled =
                 render_sample_texture_to_rgba8(&exec.device, &exec.queue, src_view, width, height)
                     .await
@@ -24350,7 +24444,7 @@ fn cs_main() {
                 .textures
                 .get(&TEX_5551)
                 .expect("texture exists")
-                .view;
+                .view_2d;
             let sampled =
                 render_sample_texture_to_rgba8(&exec.device, &exec.queue, src_view, width, height)
                     .await

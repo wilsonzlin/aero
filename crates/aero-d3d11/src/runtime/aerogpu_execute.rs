@@ -54,8 +54,9 @@ pub struct Texture2dDesc {
 #[derive(Debug)]
 pub struct TextureResource {
     pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    /// Unique bind-group cache ID for `view`.
+    pub view_2d: wgpu::TextureView,
+    pub view_2d_array: wgpu::TextureView,
+    /// Unique bind-group cache ID for this texture's views.
     pub view_id: TextureViewId,
     pub desc: Texture2dDesc,
 }
@@ -146,7 +147,8 @@ pub struct AerogpuCmdRuntime {
 
     dummy_uniform: wgpu::Buffer,
     dummy_storage: wgpu::Buffer,
-    dummy_texture_view: wgpu::TextureView,
+    dummy_texture_view_2d: wgpu::TextureView,
+    dummy_texture_view_2d_array: wgpu::TextureView,
     sampler_cache: SamplerCache,
     default_sampler: aero_gpu::bindings::samplers::CachedSampler,
     bind_group_layout_cache: BindGroupLayoutCache,
@@ -267,7 +269,18 @@ impl AerogpuCmdRuntime {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let dummy_texture_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let dummy_texture_view_2d = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: 0,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_array_layer: 0,
+            array_layer_count: None,
+            ..Default::default()
+        });
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &dummy_texture,
@@ -318,7 +331,8 @@ impl AerogpuCmdRuntime {
             pipeline_layout_cache: PipelineLayoutCache::new(),
             dummy_uniform,
             dummy_storage,
-            dummy_texture_view,
+            dummy_texture_view_2d,
+            dummy_texture_view_2d_array,
             sampler_cache,
             default_sampler,
             bind_group_layout_cache: BindGroupLayoutCache::new(),
@@ -438,12 +452,24 @@ impl AerogpuCmdRuntime {
             usage,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view_2d = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: 0,
+            array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let view_2d_array = texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            base_array_layer: 0,
+            array_layer_count: None,
+            ..Default::default()
+        });
         self.resources.textures.insert(
             handle,
             TextureResource {
                 texture,
-                view,
+                view_2d,
+                view_2d_array,
                 view_id,
                 desc: Texture2dDesc {
                     width,
@@ -1213,7 +1239,8 @@ impl AerogpuCmdRuntime {
                 stage_state,
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
-                dummy_texture_view: &self.dummy_texture_view,
+                dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                 default_sampler: &self.default_sampler,
             };
             bind_groups.push(reflection_bindings::build_bind_group(
@@ -1991,7 +2018,8 @@ impl AerogpuCmdRuntime {
                 stage_state: Some(&self.state.bindings.gs),
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
-                dummy_texture_view: &self.dummy_texture_view,
+                dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                 default_sampler: &self.default_sampler,
             };
             Some(reflection_bindings::build_bind_group(
@@ -2378,7 +2406,8 @@ impl AerogpuCmdRuntime {
                 stage_state,
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
-                dummy_texture_view: &self.dummy_texture_view,
+                dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                 default_sampler: &self.default_sampler,
             };
             bind_groups.push(reflection_bindings::build_bind_group(
@@ -2704,7 +2733,8 @@ impl AerogpuCmdRuntime {
                 stage_state,
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
-                dummy_texture_view: &self.dummy_texture_view,
+                dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                 default_sampler: &self.default_sampler,
             };
             bind_groups.push(reflection_bindings::build_bind_group(
@@ -2936,7 +2966,8 @@ struct RuntimeBindGroupProvider<'a> {
     stage_state: Option<&'a super::aerogpu_state::StageBindings>,
     dummy_uniform: &'a wgpu::Buffer,
     dummy_storage: &'a wgpu::Buffer,
-    dummy_texture_view: &'a wgpu::TextureView,
+    dummy_texture_view_2d: &'a wgpu::TextureView,
+    dummy_texture_view_2d_array: &'a wgpu::TextureView,
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
 }
 
@@ -2966,7 +2997,14 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
         let stage = self.stage_state?;
         let handle = stage.textures.get(slot as usize).copied().flatten()?;
         let tex = self.resources.textures.get(&handle)?;
-        Some((tex.view_id, &tex.view))
+        Some((tex.view_id, &tex.view_2d))
+    }
+
+    fn texture2d_array(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        let stage = self.stage_state?;
+        let handle = stage.textures.get(slot as usize).copied().flatten()?;
+        let tex = self.resources.textures.get(&handle)?;
+        Some((tex.view_id, &tex.view_2d_array))
     }
 
     fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
@@ -3001,8 +3039,12 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
         self.dummy_storage
     }
 
-    fn dummy_texture_view(&self) -> &wgpu::TextureView {
-        self.dummy_texture_view
+    fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+        self.dummy_texture_view_2d
+    }
+
+    fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+        self.dummy_texture_view_2d_array
     }
 
     fn default_sampler(&self) -> &aero_gpu::bindings::samplers::CachedSampler {
@@ -3138,7 +3180,7 @@ fn build_color_attachments<'a>(
         }
 
         attachments.push(Some(wgpu::RenderPassColorAttachment {
-            view: &tex.view,
+            view: &tex.view_2d,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -3220,7 +3262,7 @@ fn build_depth_attachment<'a>(
     };
 
     let attachment = wgpu::RenderPassDepthStencilAttachment {
-        view: &tex.view,
+        view: &tex.view_2d,
         depth_ops: Some(wgpu::Operations {
             load: wgpu::LoadOp::Clear(1.0),
             store: wgpu::StoreOp::Store,
@@ -4151,8 +4193,18 @@ mod tests {
                 "untrimmed pipeline must succeed when RT2 is bound"
             );
 
-            let view0 = &rt.resources.textures.get(&RT0).expect("RT0 created").view;
-            let view2 = &rt.resources.textures.get(&RT2).expect("RT2 created").view;
+            let view0 = &rt
+                .resources
+                .textures
+                .get(&RT0)
+                .expect("RT0 created")
+                .view_2d;
+            let view2 = &rt
+                .resources
+                .textures
+                .get(&RT2)
+                .expect("RT2 created")
+                .view_2d;
 
             let mut encoder = rt
                 .device

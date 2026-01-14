@@ -467,6 +467,26 @@ pub(super) fn binding_to_layout_entry(
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
             }
         }
+        crate::BindingKind::Texture2DArray { slot } => {
+            if *slot >= MAX_TEXTURE_SLOTS {
+                bail!(
+                    "texture slot {slot} is out of range for binding model (max {})",
+                    MAX_TEXTURE_SLOTS - 1
+                );
+            }
+            let expected = BINDING_BASE_TEXTURE + slot;
+            if binding.binding != expected {
+                bail!(
+                    "texture slot {slot} expected @binding({expected}), got {}",
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            }
+        }
         crate::BindingKind::SrvBuffer { slot } => {
             if *slot >= MAX_TEXTURE_SLOTS {
                 bail!(
@@ -591,6 +611,7 @@ pub(super) trait BindGroupResourceProvider {
         None
     }
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)>;
+    fn texture2d_array(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)>;
     fn sampler(&self, slot: u32) -> Option<&CachedSampler>;
 
     /// Optional `t#` SRV buffer binding.
@@ -613,7 +634,8 @@ pub(super) trait BindGroupResourceProvider {
 
     fn dummy_uniform(&self) -> &wgpu::Buffer;
     fn dummy_storage(&self) -> &wgpu::Buffer;
-    fn dummy_texture_view(&self) -> &wgpu::TextureView;
+    fn dummy_texture_view_2d(&self) -> &wgpu::TextureView;
+    fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView;
     fn default_sampler(&self) -> &CachedSampler;
 }
 
@@ -779,7 +801,17 @@ pub(super) fn build_bind_group(
             crate::BindingKind::Texture2D { slot } => {
                 let (id, view) = provider
                     .texture2d(*slot)
-                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view()));
+                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view_2d()));
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::TextureView { id, view },
+                });
+            }
+            crate::BindingKind::Texture2DArray { slot } => {
+                let (id, view) = provider
+                    .texture2d_array(*slot)
+                    .unwrap_or((TextureViewId(0), provider.dummy_texture_view_2d_array()));
 
                 entries.push(BindGroupCacheEntry {
                     binding: binding.binding,
@@ -1967,8 +1999,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view =
+            let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
             let mut sampler_cache = SamplerCache::new();
             let default_sampler = sampler_cache.get_or_create(
                 &device,
@@ -1989,7 +2025,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 buffer: &'a wgpu::Buffer,
                 dummy_uniform: &'a wgpu::Buffer,
                 dummy_storage: &'a wgpu::Buffer,
-                dummy_texture_view: &'a wgpu::TextureView,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_texture_view_2d_array: &'a wgpu::TextureView,
                 default_sampler: &'a CachedSampler,
             }
 
@@ -2015,6 +2052,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
+                fn texture2d_array(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
@@ -2027,8 +2068,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
-                fn dummy_texture_view(&self) -> &wgpu::TextureView {
-                    self.dummy_texture_view
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d_array
                 }
 
                 fn default_sampler(&self) -> &CachedSampler {
@@ -2041,7 +2086,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 buffer: &vs_cb0_buffer,
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
 
@@ -2322,8 +2368,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view =
+            let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -2347,7 +2397,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 cb: Option<(BufferId, &'a wgpu::Buffer, u64, Option<u64>, u64)>,
                 dummy_uniform: &'a wgpu::Buffer,
                 dummy_storage: &'a wgpu::Buffer,
-                dummy_texture_view: &'a wgpu::TextureView,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_texture_view_2d_array: &'a wgpu::TextureView,
                 default_sampler: &'a CachedSampler,
             }
 
@@ -2374,6 +2425,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
@@ -2386,8 +2444,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
-                fn dummy_texture_view(&self) -> &wgpu::TextureView {
-                    self.dummy_texture_view
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d_array
                 }
 
                 fn default_sampler(&self) -> &CachedSampler {
@@ -2399,7 +2461,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 cb: Some((BufferId(1), &too_small_uniform, 0, None, 32)),
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
             let provider_none = TestProvider {
@@ -2480,8 +2543,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view =
+            let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -2514,7 +2581,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             struct DummyProvider<'a> {
                 dummy_uniform: &'a wgpu::Buffer,
                 dummy_storage: &'a wgpu::Buffer,
-                dummy_texture_view: &'a wgpu::TextureView,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_texture_view_2d_array: &'a wgpu::TextureView,
                 default_sampler: &'a CachedSampler,
             }
 
@@ -2531,6 +2599,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
@@ -2543,8 +2618,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
-                fn dummy_texture_view(&self) -> &wgpu::TextureView {
-                    self.dummy_texture_view
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d_array
                 }
 
                 fn default_sampler(&self) -> &CachedSampler {
@@ -2555,7 +2634,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let provider = DummyProvider {
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
 
@@ -2635,8 +2715,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view =
+            let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -2665,7 +2749,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 scratch: Option<(BufferId, &'a wgpu::Buffer)>,
                 dummy_uniform: &'a wgpu::Buffer,
                 dummy_storage: &'a wgpu::Buffer,
-                dummy_texture_view: &'a wgpu::TextureView,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_texture_view_2d_array: &'a wgpu::TextureView,
                 default_sampler: &'a CachedSampler,
             }
 
@@ -2694,6 +2779,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
@@ -2706,8 +2798,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
-                fn dummy_texture_view(&self) -> &wgpu::TextureView {
-                    self.dummy_texture_view
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d_array
                 }
 
                 fn default_sampler(&self) -> &CachedSampler {
@@ -2724,7 +2820,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 scratch: Some((BufferId(2), &scratch_uniform)),
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
             let provider_without_scratch = TestProvider {
@@ -2820,8 +2917,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view =
+            let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -2845,7 +2946,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 total_size: u64,
                 dummy_uniform: &'a wgpu::Buffer,
                 dummy_storage: &'a wgpu::Buffer,
-                dummy_texture_view: &'a wgpu::TextureView,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_texture_view_2d_array: &'a wgpu::TextureView,
                 default_sampler: &'a CachedSampler,
             }
 
@@ -2880,6 +2982,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
@@ -2892,8 +3001,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
-                fn dummy_texture_view(&self) -> &wgpu::TextureView {
-                    self.dummy_texture_view
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d_array
                 }
 
                 fn default_sampler(&self) -> &CachedSampler {
@@ -2909,7 +3022,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 total_size: 256,
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
             let provider_dummy = TestProvider {
@@ -2920,7 +3034,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 total_size: 0,
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
 
@@ -3292,8 +3407,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view =
+            let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -3312,7 +3431,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             struct Provider<'a> {
                 dummy_uniform: &'a wgpu::Buffer,
                 dummy_storage: &'a wgpu::Buffer,
-                dummy_texture_view: &'a wgpu::TextureView,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_texture_view_2d_array: &'a wgpu::TextureView,
                 default_sampler: &'a CachedSampler,
             }
 
@@ -3329,6 +3449,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
@@ -3341,8 +3468,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
-                fn dummy_texture_view(&self) -> &wgpu::TextureView {
-                    self.dummy_texture_view
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d_array
                 }
 
                 fn default_sampler(&self) -> &CachedSampler {
@@ -3353,7 +3484,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let provider = Provider {
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
 
@@ -3476,8 +3608,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let dummy_texture_view =
+            let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -3486,7 +3622,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             struct DummyProvider<'a> {
                 dummy_uniform: &'a wgpu::Buffer,
                 dummy_storage: &'a wgpu::Buffer,
-                dummy_texture_view: &'a wgpu::TextureView,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_texture_view_2d_array: &'a wgpu::TextureView,
                 default_sampler: &'a CachedSampler,
             }
 
@@ -3503,6 +3640,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
                 fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
                     None
                 }
@@ -3515,8 +3659,12 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
-                fn dummy_texture_view(&self) -> &wgpu::TextureView {
-                    self.dummy_texture_view
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d_array
                 }
 
                 fn default_sampler(&self) -> &CachedSampler {
@@ -3527,7 +3675,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             let provider = DummyProvider {
                 dummy_uniform: &dummy_uniform,
                 dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
+                dummy_texture_view_2d: &dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &dummy_texture_view_2d_array,
                 default_sampler: &default_sampler,
             };
 

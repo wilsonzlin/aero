@@ -38,6 +38,10 @@ impl<P: reflection_bindings::BindGroupResourceProvider>
         self.base.texture2d(slot)
     }
 
+    fn texture2d_array(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+        self.base.texture2d_array(slot)
+    }
+
     fn sampler(&self, slot: u32) -> Option<&CachedSampler> {
         self.base.sampler(slot)
     }
@@ -75,8 +79,12 @@ impl<P: reflection_bindings::BindGroupResourceProvider>
         self.base.dummy_storage()
     }
 
-    fn dummy_texture_view(&self) -> &wgpu::TextureView {
-        self.base.dummy_texture_view()
+    fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+        self.base.dummy_texture_view_2d()
+    }
+
+    fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+        self.base.dummy_texture_view_2d_array()
     }
 
     fn default_sampler(&self) -> &CachedSampler {
