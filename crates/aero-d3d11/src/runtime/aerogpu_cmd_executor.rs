@@ -4320,8 +4320,6 @@ impl AerogpuD3d11Executor {
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
 
-        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
-
         let gs_prepass = if opcode == OPCODE_DRAW
             && self.state.primitive_topology == CmdPrimitiveTopology::PointList
         {
