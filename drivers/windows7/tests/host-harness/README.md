@@ -456,27 +456,6 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --snapshot
 ```
 
-PowerShell:
-
-```powershell
-pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
-  -QemuSystem qemu-system-x86_64 `
-  -DiskImagePath ./win7-aero-tests.qcow2 `
-  -WithInputEventsExtended `
-  -TimeoutSeconds 600
-```
-
-Python:
-
-```bash
-python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
-  --qemu-system qemu-system-x86_64 \
-  --disk-image ./win7-aero-tests.qcow2 \
-  --with-input-events-extended \
-  --timeout-seconds 600 \
-  --snapshot
-```
-
 ### virtio-input tablet (absolute pointer) event delivery (QMP input injection)
 
 When a virtio tablet device (`virtio-tablet-pci`) is attached, the guest selftest can optionally validate **absolute
