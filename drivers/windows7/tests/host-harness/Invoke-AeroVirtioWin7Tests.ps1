@@ -2817,6 +2817,57 @@ function Try-EmitAeroVirtioBlkResizeMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioBlkResetMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk-reset marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+  
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+  
+  $toks = $line.Split("|")
+  $status = "INFO"
+  if ($toks.Count -ge 4) {
+    $s = $toks[3].Trim().ToUpperInvariant()
+    if ($s -eq "PASS" -or $s -eq "FAIL" -or $s -eq "SKIP" -or $s -eq "INFO") {
+      $status = $s
+    }
+  }
+  
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+  
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|$status"
+  
+  # Keep ordering stable for log scraping.
+  $ordered = @("performed", "counter_before", "counter_after", "err", "reason")
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+  
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+  foreach ($k in ($fields.Keys | Where-Object { -not $orderedSet.ContainsKey($_) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+  
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioNetLargeMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -6809,6 +6860,7 @@ try {
   Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkCountersMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkResizeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioBlkResetMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetUdpMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetUdpDnsMarker -Tail $result.Tail -SerialLogPath $SerialLogPath

@@ -42,6 +42,11 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
         self.assertIn(r"virtio-blk-reset\|FAIL\|reason=", self.text)
         self.assertIn(r"\|err=", self.text)
 
+    def test_host_marker_is_emitted(self) -> None:
+        # The PowerShell harness should mirror the guest marker into a stable host marker
+        # for log scraping/debugging (best-effort; does not affect PASS/FAIL).
+        self.assertIn("AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()

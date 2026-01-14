@@ -833,8 +833,7 @@ To enable end-to-end testing:
 1. Provision the guest image so the scheduled selftest runs with `--test-blk-reset`
    (or set env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1` in the guest).
    - When generating provisioning media with `New-AeroWin7TestImage.ps1`, bake this in via:
-   - When generating provisioning media with `New-AeroWin7TestImage.ps1`, bake this in via:
-     `-TestBlkReset` (adds `--test-blk-reset` to the scheduled task).
+      `-TestBlkReset` (adds `--test-blk-reset` to the scheduled task).
 2. Run the host harness with blk-reset gating enabled so it requires the guest marker to PASS
    (and treats SKIP/FAIL/missing as failure):
    - PowerShell: `-WithBlkReset`
