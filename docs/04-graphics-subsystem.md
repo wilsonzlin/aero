@@ -307,7 +307,8 @@ Worker presented-output validation (post sRGB/alpha policy; canvas pixels):
 - Test card generator: `web/src/gpu/test-card.ts`
 - Playwright E2E:
   - Color policy (gamma/alpha/origin): `tests/e2e/web/gpu_worker_presented_color_policy.spec.ts`
-  - Cursor overlay (CursorState + screenshot include/exclude): `tests/e2e/web/gpu_hardware_cursor_state.spec.ts`
+  - Cursor overlay blending (linear blend + sRGB encode): `tests/e2e/gpu_worker_presented_cursor_overlay.spec.ts`
+  - CursorState upload + screenshot include/exclude: `tests/e2e/web/gpu_hardware_cursor_state.spec.ts`
 
 ## AeroGPU status (high level; protocol references)
 
