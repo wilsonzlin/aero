@@ -675,6 +675,41 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
     return AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI);
 }
 
+static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _Out_ ULONG* FenceOut)
+{
+    if (FenceOut) {
+        *FenceOut = 0;
+    }
+    if (!Adapter || !FenceOut || !Adapter->Bar0) {
+        return FALSE;
+    }
+
+    /*
+     * Error registers are part of the versioned (AGPU) ABI v1.3+ contract.
+     *
+     * Even though the fence itself is a 64-bit field in the device ABI, Win7's WDDM
+     * fence IDs are 32-bit. Treat values outside the 32-bit range as "unknown".
+     */
+    if (Adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+        return FALSE;
+    }
+    const ULONG abiMinor = (ULONG)(Adapter->DeviceAbiVersion & 0xFFFFu);
+    if (abiMinor < 3) {
+        return FALSE;
+    }
+    if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG))) {
+        return FALSE;
+    }
+
+    const ULONGLONG fence =
+        AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_ERROR_FENCE_LO, AEROGPU_MMIO_REG_ERROR_FENCE_HI);
+    if (fence == 0 || fence > 0xFFFFFFFFull) {
+        return FALSE;
+    }
+    *FenceOut = (ULONG)fence;
+    return TRUE;
+}
+
 static const char* AeroGpuErrorCodeName(_In_ ULONG Code)
 {
     switch (Code) {
@@ -7216,13 +7251,34 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
              * arrives before a vsync-delayed fence completes), report the *next* in-flight fence so the
              * faulted fence ID is not trivially <= the last completed fence.
              */
-            ULONG errorFence32 = haveCompletedFence ? completedFence32 : (ULONG)adapter->LastCompletedFence;
-            if (((handled & AEROGPU_IRQ_FENCE) == 0) && (errorFence32 < lastSubmitted32Snapshot) && (errorFence32 != 0xFFFFFFFFu)) {
-                ULONG nextFence = errorFence32 + 1;
-                if (nextFence > lastSubmitted32Snapshot) {
-                    nextFence = lastSubmitted32Snapshot;
+            ULONG errorFence32 = 0;
+            ULONG mmioErrorFence32 = 0;
+            BOOLEAN haveMmioErrorFence = FALSE;
+            if (AeroGpuTryReadErrorFence32(adapter, &mmioErrorFence32)) {
+                const ULONG lastCompleted32Snapshot = haveCompletedFence ? completedFence32 : (ULONG)adapter->LastCompletedFence;
+                if (mmioErrorFence32 >= lastCompleted32Snapshot && mmioErrorFence32 <= lastSubmitted32Snapshot) {
+                    /*
+                     * If the device did not report a fence completion bit in this interrupt, prefer to
+                     * report an in-flight fence (> last_completed) so dxgkrnl can associate the fault
+                     * with a queued DMA buffer.
+                     */
+                    if (((handled & AEROGPU_IRQ_FENCE) != 0) || (mmioErrorFence32 > lastCompleted32Snapshot)) {
+                        errorFence32 = mmioErrorFence32;
+                        haveMmioErrorFence = TRUE;
+                    }
                 }
-                errorFence32 = nextFence;
+            }
+
+            if (!haveMmioErrorFence) {
+                errorFence32 = haveCompletedFence ? completedFence32 : (ULONG)adapter->LastCompletedFence;
+                if (((handled & AEROGPU_IRQ_FENCE) == 0) && (errorFence32 < lastSubmitted32Snapshot) &&
+                    (errorFence32 != 0xFFFFFFFFu)) {
+                    ULONG nextFence = errorFence32 + 1;
+                    if (nextFence > lastSubmitted32Snapshot) {
+                        nextFence = lastSubmitted32Snapshot;
+                    }
+                    errorFence32 = nextFence;
+                }
             }
             const ULONGLONG errorFence = (ULONGLONG)errorFence32;
             AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);

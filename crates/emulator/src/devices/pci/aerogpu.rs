@@ -673,6 +673,7 @@ mod tests {
         AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
     };
     use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+    use crate::devices::aerogpu_regs::AerogpuErrorCode;
     use crate::gpu_worker::aerogpu_backend::{AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission};
     use memory::bus::PhysicalMemoryBus;
     use memory::phys::DenseMemory;
@@ -814,6 +815,18 @@ mod tests {
         assert_eq!(dev.regs.completed_fence, 1);
         assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
         assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+        assert_eq!(dev.regs.error_code, AerogpuErrorCode::Backend as u32);
+        assert_eq!(dev.regs.error_fence, 1);
+        assert_eq!(dev.regs.error_count, 1);
+        assert!(dev.irq_level());
+
+        // Clearing IRQ status does not clear the latched error payload (ABI contract).
+        dev.mmio_write(&mut mem, mmio::IRQ_ACK, 4, irq_bits::ERROR);
+        assert_eq!(dev.regs.irq_status & irq_bits::ERROR, 0);
+        assert_eq!(dev.regs.error_code, AerogpuErrorCode::Backend as u32);
+        assert_eq!(dev.regs.error_fence, 1);
+        assert_eq!(dev.regs.error_count, 1);
+        // Fence IRQ is still pending, so the interrupt line remains asserted.
         assert!(dev.irq_level());
     }
 
@@ -925,6 +938,9 @@ mod tests {
         assert_eq!(dev.regs.completed_fence, 0);
         assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
         assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+        assert_eq!(dev.regs.error_code, AerogpuErrorCode::Backend as u32);
+        assert_eq!(dev.regs.error_fence, 1);
+        assert_eq!(dev.regs.error_count, 1);
         assert!(dev.irq_level());
 
         // Force a vblank edge and ensure the fence still advances (even though the backend errored).
