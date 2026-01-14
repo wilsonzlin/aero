@@ -61,6 +61,12 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
 
     run_until_halt(&mut m);
 
+    assert_eq!(
+        m.vbe_lfb_base(),
+        u64::from(lfb_base),
+        "BIOS VBE PhysBasePtr should reflect MachineConfig::vga_lfb_base"
+    );
+
     let vga = m.vga().expect("machine should have a VGA device");
     assert_eq!(vga.borrow().get_resolution(), (1024, 768));
 
