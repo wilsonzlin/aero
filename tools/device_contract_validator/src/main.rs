@@ -60,6 +60,18 @@ struct SpecDriverEntry {
 
     required: bool,
 
+    /// A list of INF filenames (no paths) expected to be present for this driver.
+    #[serde(default)]
+    expected_inf_files: Vec<String>,
+
+    /// A list of Windows service names expected to appear in AddService directives.
+    #[serde(default)]
+    expected_add_services: Vec<String>,
+
+    /// Optional: derive an expected service name from a Guest Tools devices.cmd variable.
+    #[serde(default)]
+    expected_add_services_from_devices_cmd_var: Option<String>,
+
     /// Regex patterns that must appear in at least one INF for the driver.
     #[serde(default)]
     expected_hardware_ids: Vec<String>,
@@ -74,9 +86,21 @@ struct SpecDriverEntry {
 struct LegacySpecDriverEntry {
     name: String,
 
+    #[serde(default)]
+    expected_inf_files: Vec<String>,
+
+    #[serde(default)]
+    expected_add_services: Vec<String>,
+
+    #[serde(default)]
+    expected_add_services_from_devices_cmd_var: Option<String>,
+
     /// Regex patterns that must appear in at least one INF for the driver.
     #[serde(default)]
     expected_hardware_ids: Vec<String>,
+
+    #[serde(default)]
+    expected_hardware_ids_from_devices_cmd_var: Option<String>,
 }
 
 fn main() {
@@ -608,6 +632,7 @@ fn validate_packaging_specs(
         repo_root.join("tools/packaging/specs/win7-signed.json"),
         repo_root.join("tools/packaging/specs/win7-aero-guest-tools.json"),
         repo_root.join("tools/packaging/specs/win7-aero-virtio.json"),
+        repo_root.join("tools/packaging/specs/win7-aerogpu-only.json"),
     ];
 
     // Some packaging specs reference a devices.cmd variable name instead of inlining
@@ -636,8 +661,52 @@ fn validate_packaging_specs(
         // - entries from `drivers`
         // - plus any additional entries from `required_drivers`
         // - if a driver appears in both, treat it as required and merge patterns.
-        let mut merged = BTreeMap::<String, (bool, Vec<String>)>::new();
+        #[derive(Debug, Clone)]
+        struct MergedSpecDriverEntry {
+            required: bool,
+            expected_inf_files: Vec<String>,
+            expected_add_services: Vec<String>,
+            expected_add_services_from_devices_cmd_var: Option<String>,
+            expected_hardware_ids: Vec<String>,
+        }
+
+        let mut merged = BTreeMap::<String, MergedSpecDriverEntry>::new();
         let mut original_names = BTreeMap::<String, String>::new();
+
+        let append_hwid_patterns_from_devices_cmd_var = |patterns: &mut Vec<String>,
+                                                         var: &str,
+                                                         driver_name: &str|
+         -> Result<()> {
+            let var_key = var.to_ascii_uppercase();
+            let raw = devices_cmd_vars.get(&var_key).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{}: driver '{}': expected_hardware_ids_from_devices_cmd_var references missing devices.cmd variable: {}",
+                    spec_path.display(),
+                    driver_name,
+                    var
+                )
+            })?;
+            let hwids = parse_cmd_quoted_list(raw);
+            if hwids.is_empty() {
+                bail!(
+                    "{}: driver '{}': devices.cmd variable {} is empty",
+                    spec_path.display(),
+                    driver_name,
+                    var
+                );
+            }
+            for hwid in hwids {
+                let base = pci_ven_dev_re
+                    .find(&hwid)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or(hwid);
+                let pat = regex::escape(&base);
+                if !patterns.contains(&pat) {
+                    patterns.push(pat);
+                }
+            }
+            Ok(())
+        };
 
         for drv in spec.drivers {
             let key = drv.name.to_ascii_lowercase();
@@ -651,54 +720,77 @@ fn validate_packaging_specs(
             original_names.insert(key.clone(), drv.name);
             let mut patterns = drv.expected_hardware_ids;
             if let Some(var) = drv.expected_hardware_ids_from_devices_cmd_var {
-                let var_key = var.to_ascii_uppercase();
-                let raw = devices_cmd_vars.get(&var_key).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "{}: driver '{}': expected_hardware_ids_from_devices_cmd_var references missing devices.cmd variable: {}",
-                        spec_path.display(),
-                        original_names.get(&key).cloned().unwrap_or_else(|| key.clone()),
-                        var
-                    )
-                })?;
-                let hwids = parse_cmd_quoted_list(raw);
-                if hwids.is_empty() {
-                    bail!(
-                        "{}: driver '{}': devices.cmd variable {} is empty",
-                        spec_path.display(),
-                        original_names
-                            .get(&key)
-                            .cloned()
-                            .unwrap_or_else(|| key.clone()),
-                        var
-                    );
-                }
-                for hwid in hwids {
-                    let base = pci_ven_dev_re
-                        .find(&hwid)
-                        .map(|m| m.as_str().to_string())
-                        .unwrap_or(hwid);
-                    let pat = regex::escape(&base);
-                    if !patterns.contains(&pat) {
-                        patterns.push(pat);
-                    }
-                }
+                append_hwid_patterns_from_devices_cmd_var(
+                    &mut patterns,
+                    &var,
+                    original_names.get(&key).map(|s| s.as_str()).unwrap_or(&key),
+                )?;
             }
-            merged.insert(key, (drv.required, patterns));
+            merged.insert(
+                key,
+                MergedSpecDriverEntry {
+                    required: drv.required,
+                    expected_inf_files: drv.expected_inf_files,
+                    expected_add_services: drv.expected_add_services,
+                    expected_add_services_from_devices_cmd_var: drv
+                        .expected_add_services_from_devices_cmd_var,
+                    expected_hardware_ids: patterns,
+                },
+            );
         }
         for legacy in spec.required_drivers {
             let key = legacy.name.to_ascii_lowercase();
             match merged.get_mut(&key) {
-                Some((required, patterns)) => {
-                    *required = true;
+                Some(existing) => {
+                    existing.required = true;
                     for pat in legacy.expected_hardware_ids {
-                        if !patterns.contains(&pat) {
-                            patterns.push(pat);
+                        if !existing.expected_hardware_ids.contains(&pat) {
+                            existing.expected_hardware_ids.push(pat);
                         }
+                    }
+                    if let Some(var) = legacy.expected_hardware_ids_from_devices_cmd_var {
+                        append_hwid_patterns_from_devices_cmd_var(
+                            &mut existing.expected_hardware_ids,
+                            &var,
+                            original_names.get(&key).map(|s| s.as_str()).unwrap_or(&key),
+                        )?;
+                    }
+                    for inf in legacy.expected_inf_files {
+                        if !existing.expected_inf_files.contains(&inf) {
+                            existing.expected_inf_files.push(inf);
+                        }
+                    }
+                    for svc in legacy.expected_add_services {
+                        if !existing.expected_add_services.contains(&svc) {
+                            existing.expected_add_services.push(svc);
+                        }
+                    }
+                    if existing.expected_add_services_from_devices_cmd_var.is_none() {
+                        existing.expected_add_services_from_devices_cmd_var =
+                            legacy.expected_add_services_from_devices_cmd_var;
                     }
                 }
                 None => {
                     original_names.insert(key.clone(), legacy.name);
-                    merged.insert(key, (true, legacy.expected_hardware_ids));
+                    let mut patterns = legacy.expected_hardware_ids;
+                    if let Some(var) = legacy.expected_hardware_ids_from_devices_cmd_var {
+                        append_hwid_patterns_from_devices_cmd_var(
+                            &mut patterns,
+                            &var,
+                            original_names.get(&key).map(|s| s.as_str()).unwrap_or(&key),
+                        )?;
+                    }
+                    merged.insert(
+                        key,
+                        MergedSpecDriverEntry {
+                            required: true,
+                            expected_inf_files: legacy.expected_inf_files,
+                            expected_add_services: legacy.expected_add_services,
+                            expected_add_services_from_devices_cmd_var: legacy
+                                .expected_add_services_from_devices_cmd_var,
+                            expected_hardware_ids: patterns,
+                        },
+                    );
                 }
             }
         }
@@ -712,11 +804,14 @@ fn validate_packaging_specs(
 
         let contract_devices = match spec_path.file_name().and_then(|s| s.to_str()).unwrap_or("") {
             "win7-virtio-win.json" | "win7-virtio-full.json" => virtio_win_devices,
-            "win7-signed.json" | "win7-aero-guest-tools.json" | "win7-aero-virtio.json" => devices,
+            "win7-signed.json"
+            | "win7-aero-guest-tools.json"
+            | "win7-aero-virtio.json"
+            | "win7-aerogpu-only.json" => devices,
             other => bail!("unexpected spec file name (validator bug): {other}"),
         };
 
-        for (key, (required, patterns)) in merged {
+        for (key, entry) in merged {
             let name = original_names.get(&key).cloned().unwrap_or(key.clone());
 
             // Ensure every spec driver name maps to a contract entry so adding drivers forces
@@ -731,7 +826,71 @@ fn validate_packaging_specs(
                 },
             )?;
 
-            if patterns.is_empty() {
+            if !entry.expected_inf_files.is_empty()
+                && !entry
+                    .expected_inf_files
+                    .iter()
+                    .any(|f| f.eq_ignore_ascii_case(&dev.inf_name))
+            {
+                bail!(
+                    "{}: driver '{}' (maps to contract device '{}'): expected_inf_files is missing required INF '{}' (got {:?})",
+                    spec_path.display(),
+                    name,
+                    dev.device,
+                    dev.inf_name,
+                    entry.expected_inf_files
+                );
+            }
+
+            if !entry.expected_add_services.is_empty()
+                && !entry
+                    .expected_add_services
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&dev.driver_service_name))
+            {
+                bail!(
+                    "{}: driver '{}' (maps to contract device '{}'): expected_add_services is missing required service '{}' (got {:?})",
+                    spec_path.display(),
+                    name,
+                    dev.device,
+                    dev.driver_service_name,
+                    entry.expected_add_services
+                );
+            }
+
+            if let Some(var) = entry.expected_add_services_from_devices_cmd_var.as_deref() {
+                let var_key = var.to_ascii_uppercase();
+                let raw = devices_cmd_vars.get(&var_key).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}: driver '{}': expected_add_services_from_devices_cmd_var references missing devices.cmd variable: {}",
+                        spec_path.display(),
+                        name,
+                        var
+                    )
+                })?;
+                let svc = raw.trim();
+                if svc.is_empty() {
+                    bail!(
+                        "{}: driver '{}': devices.cmd variable {} (expected_add_services_from_devices_cmd_var) is empty",
+                        spec_path.display(),
+                        name,
+                        var
+                    );
+                }
+                if !svc.eq_ignore_ascii_case(&dev.driver_service_name) {
+                    bail!(
+                        "{}: driver '{}' (maps to contract device '{}'): devices.cmd variable {} resolves to service {:?}, but contract driver_service_name is {:?}",
+                        spec_path.display(),
+                        name,
+                        dev.device,
+                        var,
+                        svc,
+                        dev.driver_service_name
+                    );
+                }
+            }
+
+            if entry.expected_hardware_ids.is_empty() {
                 bail!(
                     "{}: driver '{}' has empty expected_hardware_ids; add patterns derived from {}",
                     spec_path.display(),
@@ -741,7 +900,7 @@ fn validate_packaging_specs(
             }
 
             let mut compiled = Vec::new();
-            for pat in &patterns {
+            for pat in &entry.expected_hardware_ids {
                 let re = regex::RegexBuilder::new(pat)
                     .case_insensitive(true)
                     .build()
@@ -757,7 +916,7 @@ fn validate_packaging_specs(
 
             // Each spec regex must match at least one contract HWID string for the mapped device.
             for (i, re) in compiled.iter().enumerate() {
-                let pat = &patterns[i];
+                let pat = &entry.expected_hardware_ids[i];
                 if !dev
                     .hardware_id_patterns
                     .iter()
@@ -774,7 +933,7 @@ fn validate_packaging_specs(
 
             if dev.virtio_device_type.is_some() {
                 let mut offenders = BTreeSet::<String>::new();
-                for (pat, re) in patterns.iter().zip(compiled.iter()) {
+                for (pat, re) in entry.expected_hardware_ids.iter().zip(compiled.iter()) {
                     let explicit = find_transitional_virtio_device_ids(pat);
                     let explicit_set: BTreeSet<_> = explicit.iter().cloned().collect();
                     for dev_id in explicit {
@@ -817,7 +976,7 @@ fn validate_packaging_specs(
                         name
                     );
                 }
-                for pat in &patterns {
+                for pat in &entry.expected_hardware_ids {
                     if pat.to_ascii_uppercase().contains("1AED") {
                         bail!(
                             "{}: driver '{}': expected_hardware_ids must not reference legacy AeroGPU vendor 1AED (canonical contract is A3A0-only); offending pattern: {}",
@@ -831,7 +990,7 @@ fn validate_packaging_specs(
 
             // Extra sanity: required drivers must stay required.
             // (This is intentionally minimal and does not encode full packaging policy.)
-            let _ = required;
+            let _ = entry.required;
         }
     }
 
@@ -1673,14 +1832,85 @@ fn format_bullets(items: &BTreeSet<String>) -> String {
 
 fn read_inf_text(path: &Path) -> Result<String> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    // INFs are usually ASCII/UTF-8, but can be UTF-16LE with BOM.
-    if bytes.starts_with(&[0xFF, 0xFE]) {
-        return Ok(decode_utf16(&bytes[2..], true));
+    // INF files are often ASCII/UTF-8, but can be UTF-16LE/BE (with or without BOM).
+    // We only need a best-effort string for lightweight parsing + regex matching.
+    let text = if bytes.starts_with(&[0xFF, 0xFE]) {
+        // UTF-16LE with BOM.
+        decode_utf16(&bytes[2..], true)
+    } else if bytes.starts_with(&[0xFE, 0xFF]) {
+        // UTF-16BE with BOM.
+        decode_utf16(&bytes[2..], false)
+    } else if bytes.len() >= 4 && bytes.len() % 2 == 0 {
+        // Some Windows tooling produces UTF-16 INFs without a BOM. Detect by looking for a high
+        // ratio of NUL bytes (common for mostly-ASCII UTF-16 text) and decode best-effort.
+        //
+        // Use a small set of prefix windows to avoid missing UTF-16 when the file contains large
+        // non-ASCII string tables (which reduce the overall NUL-byte ratio).
+        let likely_utf16 = [128usize, 512, 2048].into_iter().any(|prefix_len| {
+            let mut len = bytes.len().min(prefix_len);
+            len -= len % 2;
+            if len < 4 {
+                return false;
+            }
+            let nuls = bytes[..len].iter().filter(|b| **b == 0).count();
+            // "High proportion of NUL bytes": >= 20%.
+            nuls * 5 >= len
+        });
+
+        if likely_utf16 {
+            let le = decode_utf16(&bytes, true);
+            let be = decode_utf16(&bytes, false);
+
+            fn decode_score(s: &str) -> (usize, usize, usize, usize) {
+                let mut replacement = 0usize;
+                let mut nul = 0usize;
+                let mut ascii = 0usize;
+                let mut newlines = 0usize;
+                let mut total = 0usize;
+                for c in s.chars() {
+                    total += 1;
+                    if c == '\u{FFFD}' {
+                        replacement += 1;
+                    } else if c == '\u{0000}' {
+                        nul += 1;
+                    }
+                    if c.is_ascii() {
+                        ascii += 1;
+                        if c == '\n' {
+                            newlines += 1;
+                        }
+                    }
+                }
+                // Lower is better: prefer fewer replacement/NULs; then prefer decodes that yield
+                // more ASCII/newlines (which strongly correlates with correct endianness for INFs).
+                let ascii_penalty = total.saturating_sub(ascii);
+                let newline_penalty = total.saturating_sub(newlines);
+                (replacement, nul, ascii_penalty, newline_penalty)
+            }
+
+            let le_score = decode_score(&le);
+            let be_score = decode_score(&be);
+            if le_score < be_score {
+                le
+            } else if be_score < le_score {
+                be
+            } else {
+                // Prefer little-endian when ambiguous (Windows commonly uses UTF-16LE).
+                le
+            }
+        } else {
+            String::from_utf8_lossy(&bytes).to_string()
+        }
+    } else {
+        String::from_utf8_lossy(&bytes).to_string()
+    };
+
+    // Strip UTF-8 BOM if present.
+    let stripped = text.trim_start_matches('\u{feff}');
+    if stripped.len() != text.len() {
+        return Ok(stripped.to_string());
     }
-    if bytes.starts_with(&[0xFE, 0xFF]) {
-        return Ok(decode_utf16(&bytes[2..], false));
-    }
-    Ok(String::from_utf8_lossy(&bytes).to_string())
+    Ok(text)
 }
 
 fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
@@ -1920,6 +2150,48 @@ Signature="$Windows NT$"
                 "PCI\\VEN_1AF4&DEV_1042&REV_01".to_string(),
             ])
         );
+    }
+
+    #[test]
+    fn inf_text_decoding_supports_utf16le_without_bom() -> Result<()> {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let path = tmp.path().join("test.inf");
+
+        let inf = r#"
+[Version]
+Signature="$Windows NT$"
+
+[Manufacturer]
+%Mfg% = Models,NTx86
+
+[Models.NTx86]
+%DeviceDesc% = Install, PCI\VEN_1234&DEV_5678
+
+[Install.Services]
+AddService = TestSvc, 0x00000002, Service_Inst
+"#;
+
+        // Write UTF-16LE, no BOM.
+        let mut bytes = Vec::new();
+        for u in inf.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        fs::write(&path, &bytes).expect("write utf16 inf");
+
+        let text = read_inf_text(&path).expect("decode inf");
+
+        let add_service_re = regex::RegexBuilder::new(&format!(
+            r"(?im)^\s*AddService\s*=\s*{}\b",
+            regex::escape("TestSvc")
+        ))
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+        assert!(add_service_re.is_match(&text));
+
+        let hwids = parse_inf_active_pci_hwids(&text);
+        assert!(hwids.contains(r"PCI\VEN_1234&DEV_5678"));
+        Ok(())
     }
 
     #[test]
