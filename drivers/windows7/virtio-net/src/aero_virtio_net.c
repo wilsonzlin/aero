@@ -5555,7 +5555,7 @@ static VOID AerovNetMiniportReturnNetBufferLists(_In_ NDIS_HANDLE MiniportAdapte
     AerovNetRecycleRxPacketLocked(Adapter, Rx);
   }
 
-  if (Adapter->State == AerovNetAdapterRunning) {
+  if (Adapter->State == AerovNetAdapterRunning && !Adapter->SurpriseRemoved) {
     AerovNetFillRxQueueLocked(Adapter);
   }
 
