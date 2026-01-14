@@ -2453,6 +2453,8 @@ impl AerogpuD3d11Executor {
         guest_mem: &mut dyn GuestMemory,
         report: &mut ExecuteReport,
     ) -> Result<()> {
+        self.validate_gs_hs_ds_emulation_capabilities()?;
+
         let has_color_targets = self.state.render_targets.iter().any(|rt| rt.is_some());
         if !has_color_targets && self.state.depth_stencil.is_none() {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
