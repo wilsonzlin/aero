@@ -8258,7 +8258,7 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   if (haveContigPool) {
     JsonWriteU64HexDec(w, "hit", q.contig_pool_hit);
     JsonWriteU64HexDec(w, "miss", q.contig_pool_miss);
-    JsonWriteU64HexDec(w, "bytes_saved", q.contig_pool_bytes_saved);
+    JsonWriteBytesAndMiB(w, "bytes_saved", (uint64_t)q.contig_pool_bytes_saved);
   }
   w.EndObject();
 
