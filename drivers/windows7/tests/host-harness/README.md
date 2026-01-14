@@ -499,7 +499,8 @@ Note: this is best-effort. `VIRTIO_BLK_RECOVERY` is derived from either:
 
 Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-net interrupt mode/vectors:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`.
-If the virtio-net diag interface is unavailable, the marker is emitted as `SKIP|reason=diag_unavailable|...`.
+If the virtio-net diag interface is unavailable or the IOCTL payload is missing/truncated, the marker is emitted as
+`SKIP|reason=...|...` by default (or `FAIL|reason=...|...` when the guest is provisioned with `--require-net-msix`).
 
 Newer virtio-net miniport builds may append additional diagnostic fields (best-effort), for example:
 `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
