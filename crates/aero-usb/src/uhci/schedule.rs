@@ -16,6 +16,16 @@ use super::regs::{
 /// adversarial schedule can hang `tick_1ms()` in an infinite loop.
 const MAX_SCHEDULE_LINKS_PER_FRAME: usize = 4096;
 
+/// Maximum number of consecutive TDs processed as part of a single TD chain walk.
+///
+/// `process_td_chain` previously used recursion to process a linked list of TDs; an adversarial
+/// guest could construct a very deep chain and risk overflowing the Rust stack. Keep this bounded
+/// and iterative.
+const MAX_TD_CHAIN_STEPS: usize = 1024;
+
+/// Maximum number of TDs processed via a QH element list per frame.
+const MAX_QH_ELEMENT_STEPS: usize = 1024;
+
 const PID_IN: u8 = 0x69;
 const PID_OUT: u8 = 0xe1;
 const PID_SETUP: u8 = 0x2d;
@@ -90,7 +100,7 @@ fn walk_link<M: MemoryBus + ?Sized>(ctx: &mut ScheduleContext<'_, M>, mut link: 
         link = if link.is_qh() {
             process_qh(ctx, addr)
         } else {
-            process_td_chain(ctx, addr, 0)
+            process_td_chain(ctx, addr)
         };
     }
 
@@ -181,14 +191,23 @@ fn process_qh<M: MemoryBus + ?Sized>(
     let horiz = LinkPointer(ctx.mem.read_u32(qh_addr as u64));
     let mut elem = LinkPointer(ctx.mem.read_u32(qh_addr.wrapping_add(4) as u64));
 
-    let mut iterations = 0;
-    while !elem.terminated() && !elem.is_qh() {
-        if iterations > 1024 {
+    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    for _ in 0..MAX_QH_ELEMENT_STEPS {
+        if elem.terminated() || elem.is_qh() {
             break;
         }
-        iterations += 1;
 
         let td_addr = elem.addr();
+        if td_addr == 0 {
+            // Treat null element pointers as terminated to avoid walking uninitialized schedules.
+            break;
+        }
+        if visited.iter().any(|&a| a == td_addr) {
+            *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+            break;
+        }
+        visited.push(td_addr);
+
         match process_single_td(ctx, td_addr) {
             TdProgress::NoProgress => break,
             TdProgress::Advanced { next_link, stop } => {
@@ -201,43 +220,72 @@ fn process_qh<M: MemoryBus + ?Sized>(
             TdProgress::Nak => break,
         }
     }
+    if !elem.terminated()
+        && !elem.is_qh()
+        && visited.len() >= MAX_QH_ELEMENT_STEPS
+    {
+        *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+    }
 
     horiz
 }
 
 fn process_td_chain<M: MemoryBus + ?Sized>(
     ctx: &mut ScheduleContext<'_, M>,
-    td_addr: u32,
-    depth: u32,
+    mut td_addr: u32,
 ) -> LinkPointer {
-    if depth > 1024 {
-        return LinkPointer(LINK_PTR_TERMINATE);
-    }
+    let mut visited: Vec<u32> = Vec::with_capacity(16);
+    let mut steps = 0usize;
 
-    let link = LinkPointer(ctx.mem.read_u32(td_addr as u64));
-    match process_single_td(ctx, td_addr) {
-        TdProgress::NoProgress => link,
-        TdProgress::Advanced { stop, .. } => {
-            if stop {
-                // Stop further TD processing within this chain for the current frame, but still
-                // continue walking the schedule at the first non-TD link (QH/terminate).
-                let mut skip = link;
-                let mut skip_depth = depth + 1;
-                while !skip.terminated() && !skip.is_qh() {
-                    if skip_depth > 1024 {
-                        return LinkPointer(LINK_PTR_TERMINATE);
+    loop {
+        if steps >= MAX_TD_CHAIN_STEPS {
+            *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+            return LinkPointer(LINK_PTR_TERMINATE);
+        }
+        steps += 1;
+
+        if td_addr == 0 {
+            // Treat null pointers as terminated.
+            return LinkPointer(LINK_PTR_TERMINATE);
+        }
+        if visited.iter().any(|&a| a == td_addr) {
+            *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+            return LinkPointer(LINK_PTR_TERMINATE);
+        }
+        visited.push(td_addr);
+
+        let link = LinkPointer(ctx.mem.read_u32(td_addr as u64));
+        match process_single_td(ctx, td_addr) {
+            TdProgress::NoProgress => return link,
+            TdProgress::Nak => return link,
+            TdProgress::Advanced { stop, .. } => {
+                if stop {
+                    // Stop further TD processing within this chain for the current frame, but still
+                    // continue walking the schedule at the first non-TD link (QH/terminate).
+                    let mut skip = link;
+                    let mut skip_steps = 0usize;
+                    while !skip.terminated() && !skip.is_qh() {
+                        if skip_steps >= MAX_TD_CHAIN_STEPS {
+                            *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+                            return LinkPointer(LINK_PTR_TERMINATE);
+                        }
+                        skip_steps += 1;
+
+                        let addr = skip.addr();
+                        if addr == 0 {
+                            return LinkPointer(LINK_PTR_TERMINATE);
+                        }
+                        skip = LinkPointer(ctx.mem.read_u32(addr as u64));
                     }
-                    skip = LinkPointer(ctx.mem.read_u32(skip.addr() as u64));
-                    skip_depth += 1;
+                    return skip;
                 }
-                skip
-            } else if link.terminated() || link.is_qh() {
-                link
-            } else {
-                process_td_chain(ctx, link.addr(), depth + 1)
+
+                if link.terminated() || link.is_qh() {
+                    return link;
+                }
+                td_addr = link.addr();
             }
         }
-        TdProgress::Nak => link,
     }
 }
 
