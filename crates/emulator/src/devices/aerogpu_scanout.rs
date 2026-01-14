@@ -1,7 +1,10 @@
 use memory::MemoryBus;
 
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat as ProtocolAerogpuFormat;
-use aero_shared::scanout_state::{ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8};
+use aero_shared::scanout_state::{
+    ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8A8_SRGB,
+    SCANOUT_FORMAT_B8G8R8X8, SCANOUT_FORMAT_B8G8R8X8_SRGB,
+};
 
 // Values derived from the canonical `aero-protocol` definition of `enum aerogpu_format`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -97,15 +100,14 @@ impl AeroGpuFormat {
     /// Map an AeroGPU pixel format (`enum aerogpu_format`) to the shared scanout descriptor format
     /// enum (`aero_shared::scanout_state::SCANOUT_FORMAT_*`).
     ///
-    /// The scanout descriptor currently supports only a single format (`B8G8R8X8`). We treat
-    /// AeroGPU BGRA/XRGB variants as compatible since they share the same byte layout for the RGB
-    /// channels; alpha (if present) is ignored by the scanout consumer.
+    /// The scanout descriptor stores AeroGPU format discriminants (`u32`) directly, but scanout
+    /// consumers (e.g. web presenters) only support a small subset of formats today.
     pub fn to_scanout_state_format(self) -> Option<u32> {
         match self {
-            Self::B8G8R8X8Unorm
-            | Self::B8G8R8A8Unorm
-            | Self::B8G8R8X8UnormSrgb
-            | Self::B8G8R8A8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8X8),
+            Self::B8G8R8X8Unorm => Some(SCANOUT_FORMAT_B8G8R8X8),
+            Self::B8G8R8A8Unorm => Some(SCANOUT_FORMAT_B8G8R8A8),
+            Self::B8G8R8X8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8X8_SRGB),
+            Self::B8G8R8A8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8A8_SRGB),
             _ => None,
         }
     }
@@ -143,7 +145,7 @@ impl AeroGpuScanoutConfig {
             width: 0,
             height: 0,
             pitch_bytes: 0,
-            // Keep format at the default/only-representable value even while disabled.
+            // Keep format at a stable default even while disabled.
             format: SCANOUT_FORMAT_B8G8R8X8,
         }
     }
@@ -172,8 +174,7 @@ impl AeroGpuScanoutConfig {
             return Self::disabled_scanout_state_update(source);
         }
 
-        // Today the shared scanout descriptor can only represent B8G8R8X8 (4 bytes per pixel).
-        // Enforce that assumption here so consumers don't misinterpret memory.
+        // Scanout is currently limited to 32bpp formats the scanout consumer can present.
         let Some(bytes_per_pixel) = self.format.bytes_per_pixel() else {
             return Self::disabled_scanout_state_update(source);
         };
@@ -657,7 +658,7 @@ mod tests {
         assert_eq!(update.base_paddr_hi, 0);
         assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
 
-        // BGRA is treated as compatible (alpha ignored by scanout consumer).
+        // BGRA should preserve the scanout format discriminant.
         let bgra = AeroGpuScanoutConfig {
             format: AeroGpuFormat::B8G8R8A8Unorm,
             ..cfg
@@ -666,7 +667,22 @@ mod tests {
         assert_eq!(update.width, 640);
         assert_eq!(update.height, 480);
         assert_eq!(update.pitch_bytes, 640 * 4);
-        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8);
+
+        // sRGB discriminants should be preserved.
+        let bgrx_srgb = AeroGpuScanoutConfig {
+            format: AeroGpuFormat::B8G8R8X8UnormSrgb,
+            ..cfg
+        };
+        let update = bgrx_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8_SRGB);
+
+        let bgra_srgb = AeroGpuScanoutConfig {
+            format: AeroGpuFormat::B8G8R8A8UnormSrgb,
+            ..cfg
+        };
+        let update = bgra_srgb.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8A8_SRGB);
 
         // Unsupported format must not panic and must publish a disabled descriptor.
         let unsupported = AeroGpuScanoutConfig {
