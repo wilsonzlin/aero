@@ -13,4 +13,5 @@ corpus/fuzz_aerogpu_trace_read/*
 !corpus/fuzz_aerogpu_trace_read/aerogpu_submission_empty
 !corpus/fuzz_aerogpu_trace_read/aerogpu_submission_one_range
 !corpus/fuzz_aerogpu_trace_read/begin_frame
+!corpus/fuzz_aerogpu_trace_read/begin_packet_present
 !corpus/fuzz_aerogpu_trace_read/blob_header
