@@ -157,9 +157,9 @@ import {
   type AerogpuCpuExecutorState,
 } from "./aerogpu-acmd-executor.ts";
 import {
-  AEROGPU_PRESENT_FLAG_VSYNC,
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
+  cmdPacketHasVsyncPresent,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
 import { AerogpuFormat, aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
@@ -3254,21 +3254,14 @@ type AerogpuCmdStreamAnalysis = { vsyncPaced: boolean; presentCount: bigint; req
 const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalysis => {
   try {
     const iter = new AerogpuCmdStreamIter(cmdStream);
-    const dv = iter.view;
     let vsyncPaced = false;
     let presentCount = 0n;
     let requiresD3d9 = false;
 
     for (const packet of iter) {
       const opcode = packet.hdr.opcode;
-      if (opcode === AerogpuCmdOpcode.Present || opcode === AerogpuCmdOpcode.PresentEx) {
-        presentCount += 1n;
-        // flags is always after the scanout_id field (hdr + scanout_id => offset + 12).
-        if (packet.offsetBytes + 16 <= packet.endBytes) {
-          const flags = dv.getUint32(packet.offsetBytes + 12, true);
-          if ((flags & AEROGPU_PRESENT_FLAG_VSYNC) !== 0) vsyncPaced = true;
-        }
-      }
+      if (!vsyncPaced && cmdPacketHasVsyncPresent(packet)) vsyncPaced = true;
+      if (opcode === AerogpuCmdOpcode.Present || opcode === AerogpuCmdOpcode.PresentEx) presentCount += 1n;
 
       if (requiresD3d9) continue;
       switch (opcode) {

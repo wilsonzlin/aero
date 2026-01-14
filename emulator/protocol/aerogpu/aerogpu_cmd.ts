@@ -187,6 +187,44 @@ export function decodeCmdStreamView(bytes: ArrayBuffer | Uint8Array): AerogpuCmd
   return { header: iter.header, packets: Array.from(iter) };
 }
 
+/**
+ * Returns whether a command packet is a vsync-paced PRESENT/PRESENT_EX.
+ *
+ * This mirrors Rust `cmd_stream_has_vsync_present_*` helpers and is used by host runtimes to
+ * implement the Win7 timing contract: vsync'd PRESENT fences must not complete before the next
+ * vblank edge.
+ *
+ * Throws when a PRESENT packet is too small to contain the `{scanout_id, flags}` fields.
+ */
+export function cmdPacketHasVsyncPresent(packet: AerogpuCmdPacket): boolean {
+  if (packet.opcode !== AerogpuCmdOpcode.Present && packet.opcode !== AerogpuCmdOpcode.PresentEx) {
+    return false;
+  }
+
+  // `payload` starts after `aerogpu_cmd_hdr`. PRESENT payload begins with:
+  //   u32 scanout_id; u32 flags;
+  if (packet.payload.byteLength < 8) {
+    throw new Error(
+      `PRESENT packet too small to contain flags (need 8 bytes, have ${packet.payload.byteLength})`,
+    );
+  }
+  const payloadView = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const flags = payloadView.getUint32(4, true);
+  return (flags & AEROGPU_PRESENT_FLAG_VSYNC) !== 0;
+}
+
+/**
+ * Returns whether the command stream contains a vsync-paced PRESENT/PRESENT_EX.
+ *
+ * Prefer `cmdPacketHasVsyncPresent` when the caller already iterates the stream for other reasons.
+ */
+export function cmdStreamHasVsyncPresent(bytes: ArrayBuffer | Uint8Array): boolean {
+  for (const packet of new AerogpuCmdStreamIter(bytes)) {
+    if (cmdPacketHasVsyncPresent(packet)) return true;
+  }
+  return false;
+}
+
 export const AerogpuCmdOpcode = {
   Nop: 0,
   // Packet payload is UTF-8 bytes (no NUL terminator); padded to 4-byte alignment.
