@@ -22,6 +22,7 @@ declare global {
       sourceHash?: string;
       expectedSourceHash?: string;
       pass?: boolean;
+      metrics?: any;
       samplePixels?: () => Promise<{
         backend: string;
         source: {
@@ -204,6 +205,7 @@ async function main(): Promise<void> {
 
     let fatalError: string | null = null;
     let backendKind: string | null = null;
+    let lastMetrics: any | null = null;
     let readyResolve!: () => void;
     let readyReject!: (err: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => {
@@ -238,6 +240,9 @@ async function main(): Promise<void> {
           pending.resolve(msg);
           break;
         }
+        case "metrics":
+          lastMetrics = msg;
+          break;
         case "error":
           fatalError = String(msg.message ?? "unknown worker error");
           readyResolve();
@@ -314,6 +319,14 @@ async function main(): Promise<void> {
       await sleep(10);
     }
 
+    // Capture the latest metrics message so tests can assert outputSource/scanout telemetry.
+    {
+      const deadline = performance.now() + 2000;
+      while (!lastMetrics && performance.now() < deadline) {
+        await sleep(10);
+      }
+    }
+
     // Wait briefly for PRESENTED so screenshot readback is stable.
     {
       const deadline = performance.now() + 2000;
@@ -386,6 +399,7 @@ async function main(): Promise<void> {
       sourceHash,
       expectedSourceHash,
       pass,
+      metrics: lastMetrics,
       samplePixels: async () => ({
         backend,
         source: {

@@ -11,6 +11,7 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
   await waitForReady(page);
 
   const result = await page.evaluate(async () => {
+    const scanout = await import("/web/src/ipc/scanout_state.ts");
     const api = (window as any).__aeroTest;
     if (!api) throw new Error("__aeroTest missing");
     if (api.error) throw new Error(api.error);
@@ -29,6 +30,8 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
       sourceHash: api.sourceHash,
       expectedSourceHash: api.expectedSourceHash,
       samples,
+      metrics: api.metrics ?? null,
+      scanoutSourceWddm: scanout.SCANOUT_SOURCE_WDDM,
     };
   });
 
@@ -62,4 +65,10 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
   ]) {
     expect(sample[3]).toBe(255);
   }
+
+  // Telemetry: verify scanout presentation is reported as WDDM scanout (not legacy framebuffer).
+  expect(result.metrics).not.toBeNull();
+  expect(result.metrics.outputSource).toBe("wddm_scanout");
+  expect(result.metrics.scanout).toBeTruthy();
+  expect(result.metrics.scanout.source).toBe(result.scanoutSourceWddm);
 });

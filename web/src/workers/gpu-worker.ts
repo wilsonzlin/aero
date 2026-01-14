@@ -564,8 +564,7 @@ const redrawCursor = (): void => {
 
   const frame = getCurrentFrameInfo();
   if (!frame) return;
-  const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
-  aerogpuLastOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
+  aerogpuLastOutputSource = frame.outputSource;
   presenter.present(frame.pixels, frame.strideBytes);
 };
 
@@ -1835,6 +1834,7 @@ type CurrentFrameInfo = {
   strideBytes: number;
   pixels: Uint8Array;
   frameSeq: number;
+  outputSource: GpuRuntimeOutputSource;
   sharedLayout?: SharedFramebufferLayout;
   dirtyRects?: DirtyRect[] | null;
 };
@@ -2000,7 +2000,7 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
         // guest surfaces (pitchBytes). We normalize to a tightly-packed RGBA8 buffer so existing
         // presenter backends can consume it directly.
         const seq = frameState ? Atomics.load(frameState, FRAME_SEQ_INDEX) : 0;
-        return { ...wddm, frameSeq: seq };
+        return { ...wddm, frameSeq: seq, outputSource: "wddm_scanout" };
       }
     } catch {
       // Ignore and fall back to the legacy framebuffer sources.
@@ -2032,6 +2032,7 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
       strideBytes: sharedFramebufferViews.layout.strideBytes,
       pixels,
       frameSeq,
+      outputSource: "framebuffer",
       sharedLayout: sharedFramebufferViews.layout,
       dirtyRects,
     };
@@ -2045,6 +2046,7 @@ const getCurrentFrameInfo = (): CurrentFrameInfo | null => {
       strideBytes: framebufferProtocolViews.strideBytes,
       pixels: framebufferProtocolViews.pixels,
       frameSeq,
+      outputSource: "framebuffer",
     };
   }
 
@@ -2127,11 +2129,15 @@ const presentOnce = async (): Promise<boolean> => {
       if (didPresent) {
         lastPresentUploadKind = predictedKind;
         lastPresentUploadDirtyRectCount = predictedKind === "dirty_rects" ? predictedDirtyCount : 0;
-        // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
-        // does not clobber the active scanout with a stale shared framebuffer upload.
         const hasBasePaddr =
           !!scanoutSnap && ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0;
-        aerogpuLastOutputSource = wddmOwnsScanout ? (hasBasePaddr ? "wddm_scanout" : "aerogpu") : "framebuffer";
+        // In WDDM scanout mode, treat the output as non-legacy so cursor redraw fallback
+        // does not clobber the active scanout with a stale shared framebuffer upload.
+        aerogpuLastOutputSource = wddmOwnsScanout
+          ? hasBasePaddr
+            ? "wddm_scanout"
+            : "aerogpu"
+          : (frame?.outputSource ?? "framebuffer");
         clearSharedFramebufferDirty();
       } else if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback)) {
         // Even if the custom present() declined to draw, WDDM ownership means the legacy
@@ -2196,10 +2202,9 @@ const presentOnce = async (): Promise<boolean> => {
         presenterNeedsFullUpload = true;
       }
 
-      const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
-      const framebufferOutputSource: GpuRuntimeOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
+      const framebufferOutputSource: GpuRuntimeOutputSource = frame.outputSource;
 
-      const needsFullUpload = presenterNeedsFullUpload || aerogpuLastOutputSource !== "framebuffer";
+      const needsFullUpload = presenterNeedsFullUpload || aerogpuLastOutputSource !== framebufferOutputSource;
       if (needsFullUpload) {
         const result = presenter.present(frame.pixels, frame.strideBytes);
         presenterNeedsFullUpload = false;
@@ -2253,10 +2258,17 @@ const presentOnce = async (): Promise<boolean> => {
 
     // Headless: treat as successfully presented so the shared frame state can
     // transition back to PRESENTED and avoid DIRTY→tick spam.
-    if (wddmOwnsScanout && aerogpuLastPresentedFrame) {
+    const scanoutUsesGuestBuffer =
+      !!scanoutSnap &&
+      scanoutSnap.source === SCANOUT_SOURCE_WDDM &&
+      ((scanoutSnap.basePaddrLo | scanoutSnap.basePaddrHi) >>> 0) !== 0 &&
+      frame?.outputSource === "wddm_scanout";
+    if (scanoutUsesGuestBuffer) {
+      aerogpuLastOutputSource = "wddm_scanout";
+    } else if (wddmOwnsScanout && aerogpuLastPresentedFrame) {
       aerogpuLastOutputSource = "aerogpu";
     } else {
-      aerogpuLastOutputSource = "framebuffer";
+      aerogpuLastOutputSource = frame?.outputSource ?? "framebuffer";
     }
     clearSharedFramebufferDirty();
     return true;
@@ -3763,8 +3775,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                       presenterNeedsFullUpload = true;
                     }
                     presenter.present(frame.pixels, frame.strideBytes);
-                    const isWddmScanoutFrame = !!wddmScanoutRgba && frame.pixels === wddmScanoutRgba;
-                    aerogpuLastOutputSource = isWddmScanoutFrame ? "wddm_scanout" : "framebuffer";
+                    aerogpuLastOutputSource = frame.outputSource;
                     presenterNeedsFullUpload = false;
                   }
                 }
