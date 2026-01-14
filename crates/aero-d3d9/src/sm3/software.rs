@@ -2208,6 +2208,112 @@ mod tests {
     }
 
     #[test]
+    fn collect_used_pixel_inputs_includes_sincos_optional_srcs() {
+        // Regression test: optional `sincos` operands must still be scanned for pixel inputs.
+        let op = IrOp::SinCos {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            src: src_input(0),
+            src1: Some(src_input(1)),
+            src2: Some(src_input(2)),
+            modifiers: InstModifiers::none(),
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert!(used.contains(&(RegFile::Input, 0)));
+        assert!(used.contains(&(RegFile::Input, 1)));
+        assert!(used.contains(&(RegFile::Input, 2)));
+    }
+
+    #[test]
+    fn collect_used_pixel_inputs_includes_cmp_srcs() {
+        // Regression test: `cmp` / `select` has three source operands.
+        let op = IrOp::Select {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            cond: src_input(0),
+            src_ge: src_input(1),
+            src_lt: src_input(2),
+            modifiers: InstModifiers::none(),
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert!(used.contains(&(RegFile::Input, 0)));
+        assert!(used.contains(&(RegFile::Input, 1)));
+        assert!(used.contains(&(RegFile::Input, 2)));
+    }
+
+    #[test]
+    fn collect_used_pixel_inputs_includes_texsample_grad_ddx_ddy() {
+        // Regression test: `texldd` / gradient sampling has additional source operands for
+        // explicit derivatives.
+        let op = IrOp::TexSample {
+            kind: TexSampleKind::Grad,
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            coord: src_input(0),
+            ddx: Some(src_input(1)),
+            ddy: Some(src_input(2)),
+            sampler: 0,
+            modifiers: InstModifiers::none(),
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert!(used.contains(&(RegFile::Input, 0)));
+        assert!(used.contains(&(RegFile::Input, 1)));
+        assert!(used.contains(&(RegFile::Input, 2)));
+    }
+
+    #[test]
+    fn collect_used_pixel_inputs_includes_matrixmul_columns() {
+        // Matrix helper ops implicitly read multiple registers starting at `src1`.
+        let op = IrOp::MatrixMul {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            src0: src_input(0),
+            src1: src_input(10),
+            m: 4,
+            n: 4,
+            modifiers: InstModifiers::none(),
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert!(used.contains(&(RegFile::Input, 0)));
+        assert!(used.contains(&(RegFile::Input, 10)));
+        assert!(used.contains(&(RegFile::Input, 11)));
+        assert!(used.contains(&(RegFile::Input, 12)));
+        assert!(used.contains(&(RegFile::Input, 13)));
+    }
+
+    #[test]
     fn exec_dp2add_matches_sm3_definition() {
         let op = IrOp::Dp2Add {
             dst: Dst {
