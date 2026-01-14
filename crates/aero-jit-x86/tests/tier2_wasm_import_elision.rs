@@ -581,3 +581,32 @@ fn tier2_inline_tlb_skips_code_version_table_locals_when_stores_are_always_cross
         "expected trace with only cross-page stores to not load code-version table ptr/len locals"
     );
 }
+
+#[test]
+fn tier2_inline_tlb_loads_code_version_table_locals_for_same_page_store_fast_path() {
+    // The inline-TLB store fast-path bumps the code-version table; ensure we load the table
+    // pointer/length locals when a store might take the fast path.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0),
+            src: Operand::Const(0xAA),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        loads_code_version_table_locals(&wasm),
+        "expected same-page store trace to load code-version table ptr/len locals"
+    );
+}
