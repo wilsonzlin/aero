@@ -1409,6 +1409,82 @@ fn tier2_inline_tlb_permission_retranslate_updates_is_ram_flag_for_store() {
 }
 
 #[test]
+fn tier2_inline_tlb_permission_retranslate_updates_physical_base_for_load() {
+    // Similar to `tier2_inline_tlb_prefilled_ram_entry_uses_physical_base_for_load`, but cover the
+    // permission-miss re-translate path.
+    //
+    // Prefill a matching TLB entry that maps vaddr page 1 to phys page 2, but omit READ permission.
+    // The inline-TLB permission check should call `mmu_translate`, and the subsequent RAM fast-path
+    // must use the updated physical base (identity-mapped in this test harness).
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1010),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1010..0x1010 + 4].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+    ram[0x2010..0x2010 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    let tlb_data = (0x2000u64 & PAGE_BASE_MASK)
+        | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing READ.
+    let (_ret, _got_ram, gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1010, tlb_data)]);
+
+    // Load should use the updated phys_base (identity mapping: 0x1010), not the stale paddr=0x2010.
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0x1111_2222);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_permission_retranslate_updates_physical_base_for_store() {
+    // Like `tier2_inline_tlb_permission_retranslate_updates_physical_base_for_load`, but for
+    // stores.
+    //
+    // Prefill a matching entry mapping vaddr page 1 -> phys page 2, omit WRITE permission, and
+    // verify the post-translate store targets the updated (identity-mapped) physical base.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1010),
+            src: Operand::Const(0xDDCC_BBAA),
+            width: Width::W32,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1010..0x1010 + 4].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+    ram[0x2010..0x2010 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    let tlb_data =
+        (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing WRITE.
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1010, tlb_data)]);
+
+    // Store should use the updated phys_base (identity mapping: 0x1010), not the stale paddr=0x2010.
+    assert_eq!(read_u32_le(&got_ram, 0x1010), 0xDDCC_BBAA);
+    assert_eq!(read_u32_le(&got_ram, 0x2010), 0x3333_4444);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_permission_retranslate_can_clear_is_ram_flag_for_load() {
     // Complement `tier2_inline_tlb_permission_retranslate_updates_is_ram_flag_for_load`: ensure a
     // permission-miss re-translate can *remove* `TLB_FLAG_IS_RAM` and that the updated value is
