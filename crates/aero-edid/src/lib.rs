@@ -643,6 +643,13 @@ mod tests {
         // Digital input flag set.
         assert_eq!(edid[20] & 0x80, 0x80);
 
+        // Physical screen size in cm (used for DPI reporting).
+        assert_eq!(edid[21], 34);
+        assert_eq!(edid[22], 27);
+
+        // Gamma: 2.20 encoded as (gamma*100) - 100.
+        assert_eq!(edid[23], 120);
+
         // Features byte advertises sRGB + preferred timing.
         assert_eq!(edid[24] & 0x06, 0x06);
 
@@ -654,15 +661,22 @@ mod tests {
         assert_eq!(&edid[77..85], b"AERO VGA");
         assert_eq!(edid[85], 0x0A);
 
-        // Standard timings are either unused (0x0101) or decodable.
-        for i in 0..8usize {
+        // Established timings: 640x480@60, 800x600@60, 1024x768@60.
+        assert_eq!(edid[35], 0x21);
+        assert_eq!(edid[36], 0x08);
+        assert_eq!(edid[37], 0x00);
+
+        // Standard timings: first 3 should match the established modes; rest unused.
+        let std0 = parse_standard_timing([edid[38], edid[39]]).expect("std timing #0 missing");
+        let std1 = parse_standard_timing([edid[40], edid[41]]).expect("std timing #1 missing");
+        let std2 = parse_standard_timing([edid[42], edid[43]]).expect("std timing #2 missing");
+        assert_eq!(std0, (1024, 768, 60));
+        assert_eq!(std1, (800, 600, 60));
+        assert_eq!(std2, (640, 480, 60));
+
+        for i in 3..8usize {
             let off = 38 + i * 2;
-            let pair = [edid[off], edid[off + 1]];
-            if let Some((w, h, r)) = parse_standard_timing(pair) {
-                assert!(w > 0 && h > 0 && r >= 60);
-            } else {
-                assert_eq!(pair, [0x01, 0x01]);
-            }
+            assert_eq!([edid[off], edid[off + 1]], [0x01, 0x01]);
         }
     }
 
