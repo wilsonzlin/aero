@@ -13,6 +13,7 @@ use aero_devices_storage::ata::AtaDrive;
 use aero_storage::{MemBackend, RawDisk};
 #[cfg(not(target_arch = "wasm32"))]
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+#[cfg(not(target_arch = "wasm32"))]
 use memory::MemoryBus;
 
 #[cfg(not(target_arch = "wasm32"))]
