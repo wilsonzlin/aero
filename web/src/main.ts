@@ -5212,8 +5212,8 @@ function renderAudioPanel(): HTMLElement {
               `- virtio-snd-state.bin / virtio-snd-state.json: virtio-snd PCI function snapshot bytes (when present) + metadata`,
               `- screenshot-*.png / screenshot.json: guest framebuffer screenshot (requires GPU worker) + metadata`,
               `- serial.txt: guest serial output tail (best-effort)`,
-              `- trace.json: Chrome trace export (best-effort)`,
-              `- perf-hud.json: on-page perf HUD export (best-effort)`,
+              `- trace.json / trace-meta.json: Chrome trace export (best-effort) + metadata`,
+              `- perf-hud.json / perf-hud-meta.json: on-page perf HUD export (best-effort) + metadata`,
               ``,
               `Microphone backend notes:`,
               `- backend=worklet: AudioWorklet capture path (preferred, low latency).`,
@@ -5687,10 +5687,27 @@ function renderAudioPanel(): HTMLElement {
         try {
           const data = await perf.exportTrace({ asString: true });
           const payload = typeof data === "string" ? data : JSON.stringify(data);
-          entries.push({ path: `${dir}/trace.json`, data: encoder.encode(payload) });
+          const traceBytes = encoder.encode(payload);
+          entries.push({ path: `${dir}/trace.json`, data: traceBytes });
+          entries.push({
+            path: `${dir}/trace-meta.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                { timeIso, build: getBuildInfoForExport(), ok: true, file: "trace.json", bytes: traceBytes.byteLength },
+                null,
+                2,
+              ),
+            ),
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/trace-error.txt`, data: encoder.encode(message) });
+          entries.push({
+            path: `${dir}/trace-meta.json`,
+            data: encoder.encode(
+              JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: "trace.json", error: message }, null, 2),
+            ),
+          });
         }
 
         // Perf HUD export (best-effort). This captures the low-rate perf telemetry visible in the
@@ -5700,11 +5717,45 @@ function renderAudioPanel(): HTMLElement {
           const exportFn = perfApi?.export;
           if (typeof exportFn === "function") {
             const data = exportFn.call(perfApi);
-            entries.push({ path: `${dir}/perf-hud.json`, data: encoder.encode(JSON.stringify(data, null, 2)) });
+            const perfHudBytes = encoder.encode(JSON.stringify(data, null, 2));
+            entries.push({ path: `${dir}/perf-hud.json`, data: perfHudBytes });
+            entries.push({
+              path: `${dir}/perf-hud-meta.json`,
+              data: encoder.encode(
+                JSON.stringify(
+                  { timeIso, build: getBuildInfoForExport(), ok: true, file: "perf-hud.json", bytes: perfHudBytes.byteLength },
+                  null,
+                  2,
+                ),
+              ),
+            });
+          } else {
+            entries.push({
+              path: `${dir}/perf-hud-meta.json`,
+              data: encoder.encode(
+                JSON.stringify(
+                  {
+                    timeIso,
+                    build: getBuildInfoForExport(),
+                    ok: false,
+                    file: "perf-hud.json",
+                    error: "window.aero.perf.export is not available.",
+                  },
+                  null,
+                  2,
+                ),
+              ),
+            });
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/perf-hud-error.txt`, data: encoder.encode(message) });
+          entries.push({
+            path: `${dir}/perf-hud-meta.json`,
+            data: encoder.encode(
+              JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: "perf-hud.json", error: message }, null, 2),
+            ),
+          });
         }
 
         const tarBytes = createTarArchive(entries, { mtimeSec });
