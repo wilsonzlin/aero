@@ -1,5 +1,5 @@
 use aero_devices_gpu::pci::AeroGpuDeviceConfig;
-use aero_devices_gpu::regs::{irq_bits, mmio, ring_control, AEROGPU_MMIO_MAGIC};
+use aero_devices_gpu::regs::{irq_bits, mmio, ring_control, AerogpuErrorCode, AEROGPU_MMIO_MAGIC};
 use aero_devices_gpu::ring::{
     AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
     FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
@@ -262,4 +262,36 @@ fn enabling_vblank_irq_does_not_latch_stale_irq_from_catchup_ticks() {
     // The next vblank edge after the enable should latch the IRQ status bit.
     dev.tick(&mut mem, period_ns * 4);
     assert_ne!(dev.regs.irq_status & irq_bits::SCANOUT_VBLANK, 0);
+}
+
+#[test]
+fn error_mmio_regs_latch_and_survive_irq_ack() {
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::ERROR as u64);
+
+    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::None as u32);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4), 0);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4), 0);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4), 0);
+
+    dev.regs.record_error(AerogpuErrorCode::Backend, 42);
+    dev.tick(&mut mem, 0);
+
+    assert!(dev.irq_level());
+    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::Backend as u32);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4) as u32, 42);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4) as u32, 0);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);
+
+    // IRQ_ACK clears only the status bit; the error payload remains latched.
+    dev.write(mmio::IRQ_ACK, 4, irq_bits::ERROR as u64);
+    assert_eq!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(!dev.irq_level());
+
+    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::Backend as u32);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4) as u32, 42);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4) as u32, 0);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);
 }
