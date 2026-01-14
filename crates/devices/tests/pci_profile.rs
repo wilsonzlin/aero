@@ -219,7 +219,8 @@ const _: () = {
     // VBE uses a linear framebuffer inside BAR1, with a fixed offset to keep the first 256KiB
     // reserved for legacy VGA planar memory (4 × 64KiB planes).
     //
-    // See `docs/16-aerogpu-vga-vesa-compat.md` (VBE_LFB_OFFSET = 0x40000).
+    // See `docs/16-aerogpu-vga-vesa-compat.md` (VBE_LFB_OFFSET = 0x40000 /
+    // AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES).
     const VBE_LFB_OFFSET: u64 = protocol_pci::AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES as u64;
 
     // Keep BAR1 large enough to hold at least one 32bpp 4K-class framebuffer after the offset.
