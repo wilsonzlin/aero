@@ -3441,26 +3441,31 @@ try {
                     }
                 } catch { $listed = $false }
 
-                $vi = $null
+                $isExe = $false
+                $extLower = ""
                 try {
-                    $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($full)
-                } catch { $vi = $null }
+                    $extLower = "" + [System.IO.Path]::GetExtension($full)
+                    $extLower = $extLower.ToLower()
+                    if ($extLower -eq ".exe") { $isExe = $true }
+                } catch { $isExe = $false; $extLower = "" }
+
+                # FileVersionInfo is relatively expensive; only gather it for PE-like files.
                 $fileVersion = $null
                 $productVersion = $null
                 $fileDescription = $null
                 $originalFilename = $null
-                if ($vi) {
-                    try { if ($vi.FileVersion) { $fileVersion = "" + $vi.FileVersion } } catch { }
-                    try { if ($vi.ProductVersion) { $productVersion = "" + $vi.ProductVersion } } catch { }
-                    try { if ($vi.FileDescription) { $fileDescription = "" + $vi.FileDescription } } catch { }
-                    try { if ($vi.OriginalFilename) { $originalFilename = "" + $vi.OriginalFilename } } catch { }
+                if ($extLower -eq ".exe" -or $extLower -eq ".dll") {
+                    $vi = $null
+                    try {
+                        $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($full)
+                    } catch { $vi = $null }
+                    if ($vi) {
+                        try { if ($vi.FileVersion) { $fileVersion = "" + $vi.FileVersion } } catch { }
+                        try { if ($vi.ProductVersion) { $productVersion = "" + $vi.ProductVersion } } catch { }
+                        try { if ($vi.FileDescription) { $fileDescription = "" + $vi.FileDescription } } catch { }
+                        try { if ($vi.OriginalFilename) { $originalFilename = "" + $vi.OriginalFilename } } catch { }
+                    }
                 }
-
-                $isExe = $false
-                try {
-                    $ext = [System.IO.Path]::GetExtension($full)
-                    if ($ext -and ($ext.ToLower() -eq ".exe")) { $isExe = $true }
-                } catch { $isExe = $false }
 
                 $entry = @{
                     relative_path = $rel
