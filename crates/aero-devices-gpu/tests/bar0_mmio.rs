@@ -217,3 +217,75 @@ fn mmio_64bit_read_write_roundtrips() {
         dev.regs.completed_fence
     );
 }
+
+#[test]
+fn ring_control_reset_clears_completed_fence_and_syncs_head_and_fence_page() {
+    let mut mem = memory::Bus::new(0x20_000);
+
+    let mut dev = new_test_device(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    dev.set_backend(Box::new(ImmediateAeroGpuBackend::new()));
+
+    // Ring layout in guest memory (one no-op submission that signals fence=42).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
+
+    let fence_gpa = 0x3000u64;
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
+    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
+    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+
+    // Enable fence IRQ so the completion raises an interrupt.
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
+
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.read(mmio::COMPLETED_FENCE_LO, 4) as u32, 42);
+    assert!(dev.irq_level());
+
+    // Create a gap between head and tail to ensure the RESET path synchronizes head to tail.
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 3);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+
+    // Dirties so we can ensure the reset overwrites.
+    mem.write_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET, 0);
+    mem.write_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, 999);
+
+    dev.write(
+        mmio::RING_CONTROL,
+        4,
+        (ring_control::ENABLE | ring_control::RESET) as u64,
+    );
+    dev.tick(&mut mem, 0);
+
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(dev.regs.irq_status, 0);
+    assert!(!dev.irq_level());
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 3);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 0);
+}
