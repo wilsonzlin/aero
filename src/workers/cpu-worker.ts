@@ -813,6 +813,12 @@ async function runTieredVm(iterations: number, threshold: number) {
     refreshMemU8();
 
     const cpuPtrU32 = cpuPtr >>> 0;
+    // The tiered VM allocates its JIT ABI buffer (CpuState + JitContext + Tier-2 ctx) on the Rust
+    // heap, which is bounded to the runtime-reserved region `[0, guest_base)`. Ignore refresh
+    // requests for scratch `cpuPtr` values inside guest RAM (used by some ABI smoke tests).
+    //
+    // This also prevents accidental adoption of uninitialized `(ptr,len)` values from guest memory.
+    if (cpuPtrU32 >= guest_base) return;
     let ptr = 0;
     let len = 0;
     try {
