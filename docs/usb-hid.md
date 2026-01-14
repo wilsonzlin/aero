@@ -6,7 +6,7 @@ This document is **separate** from PS/2 scancodes (see `docs/08-input-devices.md
 
 For xHCI (USB 3.x) host controller details and current limitations, see [`docs/usb-xhci.md`](./usb-xhci.md).
 
-> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB/UHCI
+> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB
 > stack for the browser runtime (`crates/aero-usb` + `web/` host integration). This document focuses
 > on HID usages and report formats on top of that stack.
 

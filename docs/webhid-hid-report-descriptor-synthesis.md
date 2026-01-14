@@ -19,7 +19,7 @@ This document defines the **contract** for that synthesis:
 - the encoding rules we follow (short items, minimal-size payloads, signed encoding)
 - validation rules and known limitations (including ordering loss)
 
-> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB/UHCI
+> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB
 > stack for the browser runtime. This document specifies the HID report descriptor synthesis
 > contract used by the browser/runtime USB device models (implemented in `crates/aero-usb`).
 
