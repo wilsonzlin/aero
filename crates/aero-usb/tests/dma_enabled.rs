@@ -2,6 +2,8 @@ use aero_usb::ehci::regs as ehci_regs;
 use aero_usb::ehci::EhciController;
 use aero_usb::uhci::regs as uhci_regs;
 use aero_usb::uhci::UhciController;
+use aero_usb::xhci::regs as xhci_regs;
+use aero_usb::xhci::XhciController;
 use aero_usb::MemoryBus;
 
 #[derive(Default)]
@@ -85,4 +87,33 @@ fn ehci_tick_1ms_does_not_walk_schedule_without_dma() {
     // Schedule faults should not be raised while DMA is disabled.
     let usbsts = ehci.mmio_read(ehci_regs::REG_USBSTS, 4);
     assert_eq!(usbsts & ehci_regs::USBSTS_HSE, 0);
+}
+
+#[test]
+fn xhci_tick_1ms_does_not_touch_guest_memory_without_dma() {
+    let mut mem = NoDmaCountingMem::default();
+    let mut xhci = XhciController::new();
+
+    // Start the controller so the tick-driven CRCR probe would normally run.
+    xhci.mmio_write(&mut mem, xhci_regs::REG_USBCMD, 4, xhci_regs::USBCMD_RUN);
+
+    let mf0 = xhci.mmio_read(&mut mem, xhci_regs::REG_MFINDEX, 4) & 0x3fff;
+
+    xhci.tick_1ms(&mut mem);
+
+    assert_eq!(
+        mem.reads, 0,
+        "xHCI tick_1ms must not DMA-read guest memory when dma_enabled() is false"
+    );
+    assert_eq!(
+        mem.writes, 0,
+        "xHCI tick_1ms must not DMA-write guest memory when dma_enabled() is false"
+    );
+
+    let mf1 = xhci.mmio_read(&mut mem, xhci_regs::REG_MFINDEX, 4) & 0x3fff;
+    assert_eq!(
+        mf1,
+        (mf0 + 8) & 0x3fff,
+        "xHCI MFINDEX should still advance while DMA is disabled"
+    );
 }

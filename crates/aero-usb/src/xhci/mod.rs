@@ -695,6 +695,9 @@ impl XhciController {
 
         // Minimal DMA touch-point used by wrapper tests: read a dword from CRCR while the
         // controller is running.
+        //
+        // Gate this on `dma_enabled()` so wrappers can pass an open-bus/no-DMA `MemoryBus` without
+        // the controller interpreting those reads as real guest memory.
         if (self.usbcmd & regs::USBCMD_RUN) != 0 && mem.dma_enabled() {
             self.last_tick_dma_dword = mem.read_u32(self.crcr);
         }
