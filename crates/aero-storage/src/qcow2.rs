@@ -204,7 +204,7 @@ impl Qcow2Header {
 /// - backing file *only* via [`Qcow2Disk::open_with_backing`] (explicit parent disk injection;
 ///   backing file paths are not resolved automatically)
 /// - no internal snapshots
-/// - writes only support clusters with refcount=1 (shared clusters are rejected)
+/// - copy-on-write for shared (refcount>1) data clusters
 pub struct Qcow2Disk<B> {
     backend: B,
     header: Qcow2Header,
@@ -813,6 +813,38 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         Ok(new_data_offset)
     }
 
+    fn copy_data_cluster(&mut self, src_cluster_offset: u64, dst_cluster_offset: u64) -> Result<()> {
+        let cluster_size = self.cluster_size();
+        // Heap-allocate the copy buffer to avoid large stack frames (important for wasm32).
+        const CHUNK: u64 = 64 * 1024;
+        let buf_len: usize = cluster_size
+            .min(CHUNK)
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(buf_len)
+            .map_err(|_| DiskError::QuotaExceeded)?;
+        buf.resize(buf_len, 0);
+
+        let mut remaining = cluster_size;
+        let mut src = src_cluster_offset;
+        let mut dst = dst_cluster_offset;
+        while remaining > 0 {
+            let to_copy = remaining.min(buf.len() as u64) as usize;
+            self.backend_read_at(src, &mut buf[..to_copy], "qcow2 data cluster truncated")?;
+            self.backend.write_at(dst, &buf[..to_copy])?;
+            src = src
+                .checked_add(to_copy as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            dst = dst
+                .checked_add(to_copy as u64)
+                .ok_or(DiskError::OffsetOverflow)?;
+            remaining -= to_copy as u64;
+        }
+
+        Ok(())
+    }
+
     fn allocate_cluster_raw(&mut self) -> Result<u64> {
         let cluster_size = self.cluster_size();
         let offset = self.next_free_offset;
@@ -1105,6 +1137,9 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
         }
 
         let cluster_size = self.cluster_size();
+        let cluster_size_usize: usize = cluster_size
+            .try_into()
+            .map_err(|_| DiskError::Unsupported("qcow2 cluster size too large"))?;
         let has_backing = self.backing.is_some();
 
         let mut buf_off = 0usize;
@@ -1114,83 +1149,114 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
                 .ok_or(DiskError::OffsetOverflow)?;
             let guest_cluster_index = cur_guest / cluster_size;
             let offset_in_cluster = (cur_guest % cluster_size) as usize;
-            let remaining_in_cluster = cluster_size as usize - offset_in_cluster;
+            let remaining_in_cluster = cluster_size_usize - offset_in_cluster;
             let chunk_len = remaining_in_cluster.min(buf.len() - buf_off);
 
             let chunk = &buf[buf_off..buf_off + chunk_len];
-            let existing = self.lookup_data_cluster(guest_cluster_index)?;
-            if existing.is_none() && !has_backing && chunk.iter().all(|b| *b == 0) {
+            let chunk_is_all_zero = chunk.iter().all(|b| *b == 0);
+
+            // Resolve the L2 entry for this cluster so we can update it during copy-on-write.
+            let (l1_index, l2_index) = self.l1_l2_index(guest_cluster_index)?;
+            let l1_entry = self.l1_table[l1_index];
+            let l2_offset_opt = self.l2_table_offset_from_l1_entry(l1_entry)?;
+
+            let mut l2_entry = 0u64;
+            if let Some(off) = l2_offset_opt {
+                self.ensure_l2_cached(off)?;
+                let table = self
+                    .l2_cache
+                    .get(&off)
+                    .ok_or(DiskError::CorruptImage("qcow2 l2 cache missing"))?;
+                l2_entry = *table
+                    .get(l2_index)
+                    .ok_or(DiskError::CorruptImage("qcow2 l2 index out of range"))?;
+            }
+
+            let existing = if l2_offset_opt.is_some() {
+                self.data_cluster_offset_from_l2_entry(l2_entry)?
+            } else {
+                None
+            };
+
+            // Preserve the existing optimization: zero writes to unallocated clusters don't
+            // allocate new space. With a backing disk, we must still allocate to override the
+            // parent contents (otherwise reads would continue to fall through).
+            if existing.is_none() && !has_backing && chunk_is_all_zero {
                 buf_off += chunk_len;
                 continue;
             }
 
-            let needs_backing_seed = has_backing && existing.is_none();
-            let data_cluster = match existing {
-                Some(off) => {
-                    self.validate_cluster_present(off, "qcow2 data cluster truncated")?;
-                    let refcount = self.refcount_for_offset(off)?;
+            let cluster_start_guest = guest_cluster_index
+                .checked_mul(cluster_size)
+                .ok_or(DiskError::OffsetOverflow)?;
+            let max_len_u64 = (self.capacity_bytes() - cluster_start_guest).min(cluster_size);
+            let max_len: usize = max_len_u64
+                .try_into()
+                .map_err(|_| DiskError::OffsetOverflow)?;
+            let full_cluster_write = offset_in_cluster == 0 && chunk_len == max_len;
+
+            match existing {
+                Some(old_off) => {
+                    self.validate_cluster_present(old_off, "qcow2 data cluster truncated")?;
+                    let refcount = self.refcount_for_offset(old_off)?;
                     if refcount == 0 {
                         return Err(DiskError::CorruptImage(
                             "qcow2 data cluster has zero refcount",
                         ));
                     }
-                    if refcount != 1 {
-                        return Err(DiskError::Unsupported("qcow2 shared cluster"));
+
+                    if refcount == 1 {
+                        let phys = old_off
+                            .checked_add(offset_in_cluster as u64)
+                            .ok_or(DiskError::OffsetOverflow)?;
+                        self.backend.write_at(phys, chunk)?;
+                    } else {
+                        // Shared cluster: copy-on-write.
+                        let l2_offset = l2_offset_opt.ok_or(DiskError::CorruptImage(
+                            "qcow2 l2 missing for allocated data cluster",
+                        ))?;
+
+                        let new_off = self.allocate_cluster_raw()?;
+                        if !full_cluster_write {
+                            self.copy_data_cluster(old_off, new_off)?;
+                        }
+
+                        // Apply the guest write into the new cluster.
+                        let phys = new_off
+                            .checked_add(offset_in_cluster as u64)
+                            .ok_or(DiskError::OffsetOverflow)?;
+                        self.backend.write_at(phys, chunk)?;
+
+                        // Ensure the new cluster is accounted for before linking it from the L2
+                        // table (avoid refcount underflow if we crash mid-write).
+                        self.set_refcount_for_offset(new_off, 1)?;
+
+                        // Update the L2 entry to point at the new cluster.
+                        let new_entry = new_off | QCOW2_OFLAG_COPIED;
+                        self.set_l2_entry(l2_offset, l2_index, new_entry)?;
+
+                        // Drop this reference from the old shared cluster.
+                        self.set_refcount_for_offset(old_off, refcount - 1)?;
                     }
-                    off
                 }
-                None => self.ensure_data_cluster(guest_cluster_index)?,
-            };
+                None => {
+                    // Unallocated cluster: allocate and write. If this is an overlay image, seed
+                    // the newly-allocated cluster with backing contents for bytes we are not
+                    // overwriting.
+                    let data_cluster = self.ensure_data_cluster(guest_cluster_index)?;
+                    if has_backing && !full_cluster_write {
+                        let Some(backing) = self.backing.as_mut() else {
+                            return Err(DiskError::CorruptImage("qcow2 backing disk missing"));
+                        };
 
-            if needs_backing_seed {
-                // We are writing to an unallocated/zero cluster in an overlay image. Seed the
-                // newly-allocated cluster with the parent disk contents for the bytes we are not
-                // overwriting, then apply the guest write. This preserves copy-on-write semantics
-                // without ever writing to the backing disk.
-                let cluster_start_guest = guest_cluster_index
-                    .checked_mul(cluster_size)
-                    .ok_or(DiskError::OffsetOverflow)?;
-                let max_len_u64 = (self.capacity_bytes() - cluster_start_guest).min(cluster_size);
-                let max_len: usize = max_len_u64
-                    .try_into()
-                    .map_err(|_| DiskError::OffsetOverflow)?;
-                let full_cluster_write = offset_in_cluster == 0 && chunk_len == max_len;
+                        let mut scratch = [0u8; 4096];
 
-                if !full_cluster_write {
-                    let Some(backing) = self.backing.as_mut() else {
-                        return Err(DiskError::CorruptImage("qcow2 backing disk missing"));
-                    };
-
-                    let mut scratch = [0u8; 4096];
-
-                    // Prefix before the write.
-                    let mut base_off = cluster_start_guest;
-                    let mut child_off = 0usize;
-                    let mut remaining_prefix = offset_in_cluster.min(max_len);
-                    while remaining_prefix > 0 {
-                        let n = remaining_prefix.min(scratch.len());
-                        backing.read_at(base_off, &mut scratch[..n])?;
-                        let phys = data_cluster
-                            .checked_add(child_off as u64)
-                            .ok_or(DiskError::OffsetOverflow)?;
-                        self.backend.write_at(phys, &scratch[..n])?;
-                        base_off = base_off
-                            .checked_add(n as u64)
-                            .ok_or(DiskError::OffsetOverflow)?;
-                        child_off += n;
-                        remaining_prefix -= n;
-                    }
-
-                    // Suffix after the write.
-                    let write_end = offset_in_cluster + chunk_len;
-                    if write_end < max_len {
-                        let mut base_off = cluster_start_guest
-                            .checked_add(write_end as u64)
-                            .ok_or(DiskError::OffsetOverflow)?;
-                        let mut child_off = write_end;
-                        let mut remaining_suffix = max_len - write_end;
-                        while remaining_suffix > 0 {
-                            let n = remaining_suffix.min(scratch.len());
+                        // Prefix before the write.
+                        let mut base_off = cluster_start_guest;
+                        let mut child_off = 0usize;
+                        let mut remaining_prefix = offset_in_cluster.min(max_len);
+                        while remaining_prefix > 0 {
+                            let n = remaining_prefix.min(scratch.len());
                             backing.read_at(base_off, &mut scratch[..n])?;
                             let phys = data_cluster
                                 .checked_add(child_off as u64)
@@ -1200,15 +1266,39 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
                                 .checked_add(n as u64)
                                 .ok_or(DiskError::OffsetOverflow)?;
                             child_off += n;
-                            remaining_suffix -= n;
+                            remaining_prefix -= n;
+                        }
+
+                        // Suffix after the write.
+                        let write_end = offset_in_cluster + chunk_len;
+                        if write_end < max_len {
+                            let mut base_off = cluster_start_guest
+                                .checked_add(write_end as u64)
+                                .ok_or(DiskError::OffsetOverflow)?;
+                            let mut child_off = write_end;
+                            let mut remaining_suffix = max_len - write_end;
+                            while remaining_suffix > 0 {
+                                let n = remaining_suffix.min(scratch.len());
+                                backing.read_at(base_off, &mut scratch[..n])?;
+                                let phys = data_cluster
+                                    .checked_add(child_off as u64)
+                                    .ok_or(DiskError::OffsetOverflow)?;
+                                self.backend.write_at(phys, &scratch[..n])?;
+                                base_off = base_off
+                                    .checked_add(n as u64)
+                                    .ok_or(DiskError::OffsetOverflow)?;
+                                child_off += n;
+                                remaining_suffix -= n;
+                            }
                         }
                     }
+
+                    let phys = data_cluster
+                        .checked_add(offset_in_cluster as u64)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    self.backend.write_at(phys, chunk)?;
                 }
             }
-            let phys = data_cluster
-                .checked_add(offset_in_cluster as u64)
-                .ok_or(DiskError::OffsetOverflow)?;
-            self.backend.write_at(phys, chunk)?;
 
             buf_off += chunk_len;
         }

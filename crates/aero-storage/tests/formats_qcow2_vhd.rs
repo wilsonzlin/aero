@@ -287,6 +287,36 @@ fn make_qcow2_two_contiguous_data_clusters() -> MemBackend {
     backend
 }
 
+fn make_qcow2_shared_data_cluster(pattern: u8) -> MemBackend {
+    let cluster_bits = 12u32;
+    let cluster_size = 1u64 << cluster_bits;
+    let virtual_size = cluster_size * 2;
+
+    let refcount_block_offset = cluster_size * 3;
+    let l2_table_offset = cluster_size * 4;
+    let data_cluster_offset = cluster_size * 5;
+
+    let mut backend = make_qcow2_empty(virtual_size);
+    backend.set_len(cluster_size * 6).unwrap();
+
+    let l2_entry = data_cluster_offset | QCOW2_OFLAG_COPIED;
+    // Two guest clusters point at the same physical data cluster.
+    backend.write_at(l2_table_offset, &l2_entry.to_be_bytes()).unwrap();
+    backend
+        .write_at(l2_table_offset + 8, &l2_entry.to_be_bytes())
+        .unwrap();
+
+    // Cluster index 5 corresponds to `data_cluster_offset`.
+    backend
+        .write_at(refcount_block_offset + 5 * 2, &2u16.to_be_bytes())
+        .unwrap();
+
+    let cluster = vec![pattern; cluster_size as usize];
+    backend.write_at(data_cluster_offset, &cluster).unwrap();
+
+    backend
+}
+
 struct CountingBackend {
     inner: MemBackend,
     reads: Arc<AtomicU64>,
@@ -1040,23 +1070,88 @@ fn qcow2_write_rejects_data_cluster_pointing_past_eof() {
 
 #[test]
 fn qcow2_write_rejects_shared_data_cluster() {
+    // Legacy test name kept for continuity: shared clusters should now trigger copy-on-write
+    // rather than being rejected.
     let cluster_size = 1u64 << 12;
+    let l2_table_offset = cluster_size * 4;
     let refcount_block_offset = cluster_size * 3;
+    let old_data_cluster_offset = cluster_size * 5;
 
-    let mut backend = make_qcow2_with_pattern();
-
-    // The fixture's first data cluster is at cluster index 5 (offset = cluster_size * 5).
-    backend
-        .write_at(refcount_block_offset + 5 * 2, &2u16.to_be_bytes())
-        .unwrap();
+    let mut backend = make_qcow2_shared_data_cluster(0xA5);
+    let initial_len = backend.len().unwrap();
 
     let mut disk = Qcow2Disk::open(backend).unwrap();
     let data = vec![0x11u8; SECTOR_SIZE];
-    let err = disk.write_sectors(0, &data).unwrap_err();
-    assert!(matches!(
-        err,
-        DiskError::Unsupported("qcow2 shared cluster")
-    ));
+    disk.write_sectors(0, &data).unwrap();
+    disk.flush().unwrap();
+
+    // Guest cluster A (cluster index 0) should see the new write.
+    let mut back_a = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut back_a).unwrap();
+    assert_eq!(back_a, data);
+
+    // Guest cluster B (cluster index 1) should still read the original data.
+    let sectors_per_cluster = (cluster_size as usize / SECTOR_SIZE) as u64;
+    let mut back_b = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(sectors_per_cluster, &mut back_b).unwrap();
+    assert_eq!(back_b, vec![0xA5u8; SECTOR_SIZE]);
+
+    let mut backend = disk.into_backend();
+    let final_len = backend.len().unwrap();
+    assert_eq!(final_len, initial_len + cluster_size);
+
+    // L2 entry for cluster A should now point at the newly allocated cluster.
+    let new_data_cluster_offset = initial_len;
+    let mut l2_bytes = [0u8; 16];
+    backend.read_at(l2_table_offset, &mut l2_bytes).unwrap();
+    let l2_entry_a = u64::from_be_bytes(l2_bytes[0..8].try_into().unwrap());
+    let l2_entry_b = u64::from_be_bytes(l2_bytes[8..16].try_into().unwrap());
+    assert_eq!(l2_entry_a, new_data_cluster_offset | QCOW2_OFLAG_COPIED);
+    assert_eq!(l2_entry_b, old_data_cluster_offset | QCOW2_OFLAG_COPIED);
+
+    // Refcount for old cluster should now be 1, and the new cluster should be 1.
+    let mut rc_old = [0u8; 2];
+    backend
+        .read_at(refcount_block_offset + 5 * 2, &mut rc_old)
+        .unwrap();
+    assert_eq!(u16::from_be_bytes(rc_old), 1);
+
+    let mut rc_new = [0u8; 2];
+    backend
+        .read_at(refcount_block_offset + 6 * 2, &mut rc_new)
+        .unwrap();
+    assert_eq!(u16::from_be_bytes(rc_new), 1);
+}
+
+#[test]
+fn qcow2_shared_data_cluster_partial_write_is_copied_before_write() {
+    let cluster_size = 1u64 << 12;
+    let sectors_per_cluster = (cluster_size as usize / SECTOR_SIZE) as u64;
+
+    let backend = make_qcow2_shared_data_cluster(0xEE);
+    let mut disk = Qcow2Disk::open(backend).unwrap();
+
+    // Write a small slice inside cluster A.
+    let offset_in_cluster: usize = 123;
+    disk.write_at(offset_in_cluster as u64, &[1, 2, 3, 4]).unwrap();
+    disk.flush().unwrap();
+
+    // Cluster A should contain the original bytes except for the written slice.
+    let mut cluster_a = vec![0u8; cluster_size as usize];
+    disk.read_at(0, &mut cluster_a).unwrap();
+    assert!(cluster_a[..offset_in_cluster].iter().all(|b| *b == 0xEE));
+    assert_eq!(&cluster_a[offset_in_cluster..offset_in_cluster + 4], &[1, 2, 3, 4]);
+    assert!(cluster_a[offset_in_cluster + 4..].iter().all(|b| *b == 0xEE));
+
+    // Cluster B should still read the original bytes.
+    let mut cluster_b = vec![0u8; cluster_size as usize];
+    disk.read_at(cluster_size, &mut cluster_b).unwrap();
+    assert!(cluster_b.iter().all(|b| *b == 0xEE));
+
+    // Sanity check: the LBA-based read path should also still see the original pattern for B.
+    let mut sector_b0 = vec![0u8; SECTOR_SIZE];
+    disk.read_sectors(sectors_per_cluster, &mut sector_b0).unwrap();
+    assert_eq!(sector_b0, vec![0xEEu8; SECTOR_SIZE]);
 }
 
 #[test]
