@@ -147,6 +147,9 @@ def _build_iso_with_imapi(stage_root: Path, out_path: Path, label: str) -> None:
             str(out_path),
             "-VolumeLabel",
             label,
+            # ci/lib/New-IsoFile.ps1 defaults to the deterministic Rust ISO writer when cargo is
+            # available. This fallback explicitly requests the legacy built-in IMAPI2 path.
+            "-LegacyIso",
         ],
         check=True,
     )
