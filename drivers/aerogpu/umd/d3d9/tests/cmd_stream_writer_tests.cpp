@@ -29299,7 +29299,58 @@ bool TestDrawPatchInvalidInfoReturnsInvalidCall() {
   draw_tri.pTriPatchInfo = &tri_info;
 
   hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri);
-  return Check(hr == kD3DErrInvalidCall, "DrawTriPatch invalid info returns D3DERR_INVALIDCALL");
+  if (!Check(hr == kD3DErrInvalidCall, "DrawTriPatch invalid info returns D3DERR_INVALIDCALL")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Patch emulation currently only supports float2 texcoords when TEX1 is
+  // present. Reject other `D3DFVF_TEXCOORDSIZE*` encodings to avoid misreading
+  // control point data.
+  constexpr uint32_t kTexcoordSize1Tex0 = 3u << 16u; // float1
+  constexpr uint32_t kUnsupportedFvf = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1 | kTexcoordSize1Tex0;
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kUnsupportedFvf);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1|TEXCOORDSIZE1(0))")) {
+    return false;
+  }
+
+  // Valid patch info, but unsupported FVF.
+  D3DRECTPATCH_INFO rect_valid = rect_info;
+  rect_valid.NumVertices = 16;
+  D3DDDIARG_DRAWRECTPATCH draw_rect_valid = draw_rect;
+  draw_rect_valid.Handle = 3;
+  draw_rect_valid.pRectPatchInfo = &rect_valid;
+
+  D3DTRIPATCH_INFO tri_valid = tri_info;
+  tri_valid.NumVertices = 10;
+  D3DDDIARG_DRAWTRIPATCH draw_tri_valid = draw_tri;
+  draw_tri_valid.Handle = 4;
+  draw_tri_valid.pTriPatchInfo = &tri_valid;
+
+  dev->patch_tessellate_count = 0;
+  dev->patch_cache_hit_count = 0;
+  dev->patch_cache.clear();
+
+  hr = cleanup.device_funcs.pfnDrawRectPatch(create_dev.hDevice, &draw_rect_valid);
+  if (!Check(hr == kD3DErrInvalidCall, "DrawRectPatch rejects TEXCOORDSIZE1(0) TEX1 FVF")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawTriPatch(create_dev.hDevice, &draw_tri_valid);
+  if (!Check(hr == kD3DErrInvalidCall, "DrawTriPatch rejects TEXCOORDSIZE1(0) TEX1 FVF")) {
+    return false;
+  }
+  if (!Check(dev->patch_tessellate_count == 0, "unsupported FVF does not tessellate")) {
+    return false;
+  }
+  if (!Check(dev->patch_cache.empty(), "unsupported FVF does not populate cache")) {
+    return false;
+  }
+  return Check(dev->up_vertex_buffer == nullptr && dev->up_index_buffer == nullptr,
+               "unsupported FVF does not allocate scratch UP buffers");
 }
 
 bool TestDrawTriPatchTex1ValidatesStrideAndPreservesTexcoords() {

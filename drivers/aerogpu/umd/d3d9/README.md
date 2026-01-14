@@ -508,9 +508,10 @@ Limitations (bring-up):
   - consumes `D3DMATERIAL9` diffuse/ambient/emissive (`SetMaterial`),
   - computes a simple per-vertex `N·L` diffuse term and passes the lit vertex color to the pixel shader.
   Other lights/types and specular are cached-only and ignored by the fixed-function shaders.
-- The fixed-function fallback's `TEX1` path assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`).
-  Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets require user shaders (layout translation
-  is supported; fixed-function shading is not).
+- The fixed-function fallback's `TEX1` path consumes a single set of texture coordinates (`TEXCOORD0`) and uses the first
+  two components as `(u, v)`. `TEXCOORD0` may be declared as `float1/2/3/4` via `D3DFVF_TEXCOORDSIZE*` (extra components
+  are ignored; `float1` implies `v=0`). Multiple texture coordinate sets still require user shaders (layout translation is
+  supported; fixed-function shading is not).
 - Stage0 texture stage state (`D3DTSS_COLOROP/ALPHAOP` + `D3DTSS_COLORARG*/ALPHAARG*`) is interpreted for a guarded, stage0-only subset (validated by `d3d9ex_fixedfunc_texture_stage_state`):
   - Supported COLOR/ALPHA ops:
     - `DISABLE`, `SELECTARG1`, `SELECTARG2`
