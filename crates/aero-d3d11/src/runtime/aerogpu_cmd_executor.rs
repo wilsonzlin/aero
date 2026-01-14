@@ -917,16 +917,21 @@ impl CmdPrimitiveTopology {
     fn primitive_count_from_element_count(self, element_count: u32) -> u32 {
         match self {
             CmdPrimitiveTopology::PointList => element_count,
-            CmdPrimitiveTopology::LineList | CmdPrimitiveTopology::LineListAdj => element_count / 2,
-            CmdPrimitiveTopology::LineStrip | CmdPrimitiveTopology::LineStripAdj => {
-                element_count.saturating_sub(1)
+            CmdPrimitiveTopology::LineList => element_count / 2,
+            // D3D11 adjacency primitives consume additional vertices per primitive:
+            // - line-list-adj: 4 verts / primitive
+            // - line-strip-adj: N verts => N-3 line primitives
+            CmdPrimitiveTopology::LineListAdj => element_count / 4,
+            CmdPrimitiveTopology::LineStrip => element_count.saturating_sub(1),
+            CmdPrimitiveTopology::LineStripAdj => element_count.saturating_sub(3),
+            CmdPrimitiveTopology::TriangleList => element_count / 3,
+            // - triangle-list-adj: 6 verts / primitive
+            // - triangle-strip-adj: N verts => (N-4)/2 triangle primitives
+            CmdPrimitiveTopology::TriangleListAdj => element_count / 6,
+            CmdPrimitiveTopology::TriangleStrip | CmdPrimitiveTopology::TriangleFan => {
+                element_count.saturating_sub(2)
             }
-            CmdPrimitiveTopology::TriangleList | CmdPrimitiveTopology::TriangleListAdj => {
-                element_count / 3
-            }
-            CmdPrimitiveTopology::TriangleStrip
-            | CmdPrimitiveTopology::TriangleStripAdj
-            | CmdPrimitiveTopology::TriangleFan => element_count.saturating_sub(2),
+            CmdPrimitiveTopology::TriangleStripAdj => element_count.saturating_sub(4) / 2,
             CmdPrimitiveTopology::PatchList { control_points } => {
                 element_count / u32::from(control_points.max(1))
             }
@@ -14136,6 +14141,51 @@ mod tests {
             CmdPrimitiveTopology::PatchList { control_points: 4 }
                 .primitive_count_from_element_count(0),
             0
+        );
+    }
+
+    #[test]
+    fn adjacency_primitive_count_matches_d3d11_rules() {
+        // List adjacency primitives use a fixed vertex count per primitive.
+        assert_eq!(
+            CmdPrimitiveTopology::LineListAdj.primitive_count_from_element_count(4),
+            1
+        );
+        // Floor division: remaining vertices are ignored.
+        assert_eq!(
+            CmdPrimitiveTopology::LineListAdj.primitive_count_from_element_count(7),
+            1
+        );
+        assert_eq!(
+            CmdPrimitiveTopology::LineListAdj.primitive_count_from_element_count(8),
+            2
+        );
+
+        assert_eq!(
+            CmdPrimitiveTopology::TriangleListAdj.primitive_count_from_element_count(6),
+            1
+        );
+        assert_eq!(
+            CmdPrimitiveTopology::TriangleListAdj.primitive_count_from_element_count(12),
+            2
+        );
+
+        // Strip adjacency primitives use D3D's strip-adj primitive count formulas.
+        assert_eq!(
+            CmdPrimitiveTopology::LineStripAdj.primitive_count_from_element_count(4),
+            1
+        );
+        assert_eq!(
+            CmdPrimitiveTopology::LineStripAdj.primitive_count_from_element_count(5),
+            2
+        );
+        assert_eq!(
+            CmdPrimitiveTopology::TriangleStripAdj.primitive_count_from_element_count(6),
+            1
+        );
+        assert_eq!(
+            CmdPrimitiveTopology::TriangleStripAdj.primitive_count_from_element_count(8),
+            2
         );
     }
 
