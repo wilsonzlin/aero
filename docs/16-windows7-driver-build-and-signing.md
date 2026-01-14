@@ -166,7 +166,9 @@ See also the examples under `drivers/_template/`:
 >   - Enabling the alias does **not** change HWID matching behavior (it is a pure basename compatibility shim).
 >
 > Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
-> over the generic fallback match when both packages are present and the tablet subsystem ID matches.
+> over the generic fallback match when both packages are present and the tablet subsystem ID matches. If the tablet INF is not
+> installed (or the device does not expose the tablet subsystem ID), the strict generic fallback entry (when enabled via the
+> alias INF) can also bind to tablet devices (but will use the generic device name).
 >
 > Avoid shipping/installing both basenames at once (they overlap and can cause confusing driver selection). Prefer explicit
 > `ci-package.json` `infFiles` allowlists so only one of the two INF basenames is packaged.
