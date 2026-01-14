@@ -476,30 +476,6 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         }
-        AerogpuCmdOpcode::BindShaders => match pkt.decode_bind_shaders_payload_le() {
-            Ok((cmd, ex)) => {
-                out.insert("vs".into(), json!(cmd.vs));
-                out.insert("ps".into(), json!(cmd.ps));
-                out.insert("cs".into(), json!(cmd.cs));
-                match ex {
-                    Some(ex) => {
-                        out.insert("gs".into(), json!(ex.gs));
-                        out.insert("hs".into(), json!(ex.hs));
-                        out.insert("ds".into(), json!(ex.ds));
-                    }
-                    None => {
-                        // Legacy encoding: `reserved0` is used as an optional GS handle. HS/DS are
-                        // unavailable in the base packet format.
-                        out.insert("gs".into(), json!(cmd.gs()));
-                        out.insert("hs".into(), json!(0));
-                        out.insert("ds".into(), json!(0));
-                    }
-                }
-            }
-            Err(err) => {
-                out.insert("decode_error".into(), json!(format!("{:?}", err)));
-            }
-        }
         AerogpuCmdOpcode::DestroyShader => {
             if let (Some(shader_handle), Some(_reserved0)) =
                 (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
