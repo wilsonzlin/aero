@@ -181,26 +181,63 @@ fn upload_resource_b5_formats_expand_to_rgba8() -> Result<()> {
                 &b5,
             )?;
 
-            let tex = resources.texture2d(tex_handle)?;
-            assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
-            assert_eq!(
-                tex.desc.upload_transform,
-                TextureUploadTransform::B5G6R5ToRgba8
-            );
+            {
+                let tex = resources.texture2d(tex_handle)?;
+                assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+                assert_eq!(
+                    tex.desc.upload_transform,
+                    TextureUploadTransform::B5G6R5ToRgba8
+                );
 
-            let pixels = common::wgpu::read_texture_rgba8(
-                resources.device(),
-                resources.queue(),
-                &tex.texture,
-                width,
-                height,
-            )
-            .await?;
+                let pixels = common::wgpu::read_texture_rgba8(
+                    resources.device(),
+                    resources.queue(),
+                    &tex.texture,
+                    width,
+                    height,
+                )
+                .await?;
+                assert_eq!(
+                    pixels,
+                    vec![
+                        255, 0, 0, 255, // red
+                        0, 255, 0, 255, // green
+                        0, 0, 255, 255, // blue
+                        255, 255, 255, 255, // white
+                    ]
+                );
+            }
+
+            // Partial update: patch the top-right pixel (row0,col1) from green to black.
+            // This exercises byte-range validation and ensures the repack/expand path does not
+            // require full uploads for correctness (even though P0 reuploads from the host shadow).
+            let patch_offset = 2u64; // second u16 in row0
+            let patch: [u8; 2] = [0x00, 0x00]; // B5G6R5: 0x0000 => black
+            resources.upload_resource(
+                tex_handle,
+                DirtyRange {
+                    offset_bytes: patch_offset,
+                    size_bytes: patch.len() as u64,
+                },
+                &patch,
+            )?;
+
+            let pixels = {
+                let tex = resources.texture2d(tex_handle)?;
+                common::wgpu::read_texture_rgba8(
+                    resources.device(),
+                    resources.queue(),
+                    &tex.texture,
+                    width,
+                    height,
+                )
+                .await?
+            };
             assert_eq!(
                 pixels,
                 vec![
                     255, 0, 0, 255, // red
-                    0, 255, 0, 255, // green
+                    0, 0, 0, 255,   // black (patched)
                     0, 0, 255, 255, // blue
                     255, 255, 255, 255, // white
                 ]
@@ -253,28 +290,63 @@ fn upload_resource_b5_formats_expand_to_rgba8() -> Result<()> {
                 &b5,
             )?;
 
-            let tex = resources.texture2d(tex_handle)?;
-            assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
-            assert_eq!(
-                tex.desc.upload_transform,
-                TextureUploadTransform::B5G5R5A1ToRgba8
-            );
+            {
+                let tex = resources.texture2d(tex_handle)?;
+                assert_eq!(tex.desc.texture_format, wgpu::TextureFormat::Rgba8Unorm);
+                assert_eq!(
+                    tex.desc.upload_transform,
+                    TextureUploadTransform::B5G5R5A1ToRgba8
+                );
 
-            let pixels = common::wgpu::read_texture_rgba8(
-                resources.device(),
-                resources.queue(),
-                &tex.texture,
-                width,
-                height,
-            )
-            .await?;
+                let pixels = common::wgpu::read_texture_rgba8(
+                    resources.device(),
+                    resources.queue(),
+                    &tex.texture,
+                    width,
+                    height,
+                )
+                .await?;
+                assert_eq!(
+                    pixels,
+                    vec![
+                        255, 0, 0, 255, // red, a=1
+                        0, 255, 0, 0, // green, a=0
+                        0, 0, 255, 255, // blue, a=1
+                        255, 255, 255, 0, // white, a=0
+                    ]
+                );
+            }
+
+            // Partial update: patch the bottom-right pixel from white (a=0) to white (a=1).
+            let patch_offset = row_pitch_bytes as u64 + 2; // row1 + second u16
+            let patch: [u8; 2] = [0xFF, 0xFF]; // B5G5R5A1: 0xFFFF => white, a=1
+            resources.upload_resource(
+                tex_handle,
+                DirtyRange {
+                    offset_bytes: patch_offset,
+                    size_bytes: patch.len() as u64,
+                },
+                &patch,
+            )?;
+
+            let pixels = {
+                let tex = resources.texture2d(tex_handle)?;
+                common::wgpu::read_texture_rgba8(
+                    resources.device(),
+                    resources.queue(),
+                    &tex.texture,
+                    width,
+                    height,
+                )
+                .await?
+            };
             assert_eq!(
                 pixels,
                 vec![
                     255, 0, 0, 255, // red, a=1
-                    0, 255, 0, 0, // green, a=0
+                    0, 255, 0, 0,   // green, a=0
                     0, 0, 255, 255, // blue, a=1
-                    255, 255, 255, 0, // white, a=0
+                    255, 255, 255, 255, // white, a=1 (patched)
                 ]
             );
         }
