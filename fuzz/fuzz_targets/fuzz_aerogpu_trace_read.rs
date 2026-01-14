@@ -31,6 +31,11 @@ fn try_parse_trace(bytes: &[u8]) {
         Err(_) => return,
     };
 
+    let records_start =
+        (aero_gpu_trace::TRACE_HEADER_SIZE as u64).saturating_add(reader.meta_json.len() as u64);
+    let records_end = reader.footer.toc_offset;
+    let record_stream_range = clamp_record_range(file_len, records_start, records_end);
+
     // Exercise TOC-driven record parsing.
     let entries: Vec<_> = reader
         .frame_entries()
@@ -38,20 +43,35 @@ fn try_parse_trace(bytes: &[u8]) {
         .take(MAX_FRAMES)
         .copied()
         .collect();
+    let mut parsed_record_stream_range = false;
     for entry in entries {
         let Some((start, end)) = clamp_record_range(file_len, entry.start_offset, entry.end_offset)
         else {
             continue;
         };
+        if record_stream_range == Some((start, end)) {
+            parsed_record_stream_range = true;
+        }
         let _ = reader.read_records_in_range(start, end);
+
+        // If the TOC recorded a present offset, try parsing starting from there too. This gives the
+        // fuzzer a second entry point into the record stream that is often on a record boundary.
+        if entry.present_offset != 0 {
+            if let Some((start, end)) =
+                clamp_record_range(file_len, entry.present_offset, entry.end_offset)
+            {
+                let _ = reader.read_records_in_range(start, end);
+            }
+        }
     }
 
     // Also try parsing a small prefix of the record stream region (even if the TOC is empty).
-    let records_start =
-        (aero_gpu_trace::TRACE_HEADER_SIZE as u64).saturating_add(reader.meta_json.len() as u64);
-    let records_end = reader.footer.toc_offset;
-    if let Some((start, end)) = clamp_record_range(file_len, records_start, records_end) {
-        let _ = reader.read_records_in_range(start, end);
+    //
+    // Avoid duplicating work when a TOC entry already covers this clamped range.
+    if !parsed_record_stream_range {
+        if let Some((start, end)) = record_stream_range {
+            let _ = reader.read_records_in_range(start, end);
+        }
     }
 }
 
