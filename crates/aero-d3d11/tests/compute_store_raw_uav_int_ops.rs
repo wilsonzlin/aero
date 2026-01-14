@@ -208,6 +208,11 @@ fn compute_store_raw_with_integer_alu_addressing_writes_expected_words() {
         let translated =
             translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
         assert_wgsl_validates(&translated.wgsl);
+        assert!(
+            translated.wgsl.contains("& vec4<u32>(31u)"),
+            "expected shift-count masking in generated WGSL:\n{}",
+            translated.wgsl
+        );
 
         let (device, queue, supports_compute) =
             match common::wgpu::create_device_queue("compute_store_raw_uav_int_ops test device")
