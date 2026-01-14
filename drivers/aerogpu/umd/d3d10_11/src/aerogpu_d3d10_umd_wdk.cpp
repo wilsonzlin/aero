@@ -5452,6 +5452,13 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(res->kind));
     return E_NOTIMPL;
   }
+  if ((res->bind_flags & kD3D10BindRenderTarget) == 0) {
+    // D3D requires the resource to be created with the appropriate bind flag
+    // for the view type. Failing here avoids later host-side validation errors.
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV for resource missing BIND_RENDER_TARGET (bind=0x%08X)",
+                         static_cast<unsigned>(res->bind_flags));
+    return E_INVALIDARG;
+  }
 
   // Reject array resources / array-slice RTVs for now; the command stream does
   // not encode subresource view selection.
@@ -5600,6 +5607,11 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting non-texture2d resource kind=%u",
                          static_cast<unsigned>(res->kind));
     return E_NOTIMPL;
+  }
+  if ((res->bind_flags & kD3D10BindDepthStencil) == 0) {
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV for resource missing BIND_DEPTH_STENCIL (bind=0x%08X)",
+                         static_cast<unsigned>(res->bind_flags));
+    return E_INVALIDARG;
   }
   if (res->array_size != 1) {
     AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting array DSV resource array_size=%u",
@@ -5761,6 +5773,11 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting non-texture2d SRV resource kind=%u",
                          static_cast<unsigned>(res->kind));
     return E_NOTIMPL;
+  }
+  if ((res->bind_flags & kD3D10BindShaderResource) == 0) {
+    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV for resource missing BIND_SHADER_RESOURCE (bind=0x%08X)",
+                         static_cast<unsigned>(res->bind_flags));
+    return E_INVALIDARG;
   }
   if (res->array_size != 1) {
     AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting array SRV resource array_size=%u",
