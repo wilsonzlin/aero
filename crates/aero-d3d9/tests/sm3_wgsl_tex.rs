@@ -65,6 +65,7 @@ fn wgsl_ps3_texldp_is_valid() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
     // Textures/samplers are bound in their own bind group (separate from constants).
+    // Pixel-stage samplers use group(2); s0 maps to bindings 0 (texture) and 1 (sampler).
     assert!(wgsl.contains("@group(2) @binding(0) var tex0"), "{wgsl}");
     assert!(wgsl.contains("@group(2) @binding(1) var samp0"), "{wgsl}");
 

@@ -2200,7 +2200,38 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     ps_inputs.insert((*file, *index));
                 }
             }
-            let has_inputs = !ps_inputs.is_empty() || !usage.misc_inputs.is_empty();
+
+            // Some D3D9 pixel shader inputs are really system values, not inter-stage varyings.
+            // fxc can emit e.g. `dcl_position v0` and then read `v0` instead of using the
+            // dedicated `vPos` misc register file. Treat POSITION inputs as aliases for `vPos`,
+            // which maps to WGSL `@builtin(position)` in fragment stage.
+            let mut ps_position_inputs = BTreeSet::<u32>::new();
+            for (file, index) in &ps_inputs {
+                if *file != RegFile::Input {
+                    continue;
+                }
+                let semantic = input_semantics.get(&(*file, *index));
+                if matches!(semantic, Some(Semantic::Position(_)) | Some(Semantic::PositionT(_))) {
+                    ps_position_inputs.insert(*index);
+                }
+            }
+
+            // Builtin inputs (misc register file).
+            let mut needs_frag_pos = !ps_position_inputs.is_empty();
+            let mut needs_front_facing = false;
+            for idx in &usage.misc_inputs {
+                match *idx {
+                    0 => needs_frag_pos = true,
+                    1 => needs_front_facing = true,
+                    _ => {
+                        return Err(err(format!(
+                            "unsupported MiscType input misc{idx} (only misc0=vPos and misc1=vFace are supported)"
+                        )));
+                    }
+                }
+            }
+
+            let has_inputs = !ps_inputs.is_empty() || needs_frag_pos || needs_front_facing;
 
             if depth_out_regs.len() > 1 || depth_out_regs.iter().any(|&idx| idx != 0) {
                 return Err(err(format!(
@@ -2213,6 +2244,12 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             let mut loc_to_reg: BTreeMap<u32, (RegFile, u32)> = BTreeMap::new();
             for (file, index) in &ps_inputs {
                 let semantic = input_semantics.get(&(*file, *index));
+                if *file == RegFile::Input
+                    && matches!(semantic, Some(Semantic::Position(_)) | Some(Semantic::PositionT(_)))
+                {
+                    // POSITION input is mapped via `@builtin(position)`, not a location.
+                    continue;
+                }
                 let loc = varying_location(*file, *index, semantic)?;
                 if let Some((prev_file, prev_index)) = loc_to_reg.insert(loc, (*file, *index)) {
                     return Err(err(format!(
@@ -2252,23 +2289,11 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     let name = reg_var_name(&reg)?;
                     let _ = writeln!(wgsl, "  @location({loc}) {name}: vec4<f32>,");
                 }
-                // Builtin inputs (misc register file).
-                for idx in &usage.misc_inputs {
-                    match *idx {
-                        // D3D9 vPos (pixel position).
-                        0 => {
-                            wgsl.push_str("  @builtin(position) frag_pos: vec4<f32>,\n");
-                        }
-                        // D3D9 vFace (front-facing sign).
-                        1 => {
-                            wgsl.push_str("  @builtin(front_facing) front_facing: bool,\n");
-                        }
-                        _ => {
-                            return Err(err(format!(
-                                "unsupported MiscType input misc{idx} (only misc0=vPos and misc1=vFace are supported)"
-                            )));
-                        }
-                    }
+                if needs_frag_pos {
+                    wgsl.push_str("  @builtin(position) frag_pos: vec4<f32>,\n");
+                }
+                if needs_front_facing {
+                    wgsl.push_str("  @builtin(front_facing) front_facing: bool,\n");
                 }
                 wgsl.push_str("};\n\n");
                 wgsl.push_str("@fragment\nfn fs_main(input: FsIn) -> FsOut {\n");
@@ -2313,6 +2338,13 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             // Bind pixel inputs to locals that match the D3D register naming (`v#` / `t#`).
             if has_inputs {
                 for (file, index) in &ps_inputs {
+                    if *file == RegFile::Input && ps_position_inputs.contains(index) {
+                        let _ = writeln!(
+                            wgsl,
+                            "  let v{index}: vec4<f32> = input.frag_pos;"
+                        );
+                        continue;
+                    }
                     let reg = RegRef {
                         file: *file,
                         index: *index,

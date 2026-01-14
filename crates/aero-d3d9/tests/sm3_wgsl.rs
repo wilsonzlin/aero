@@ -149,6 +149,57 @@ fn wgsl_ps30_reads_vpos_compiles() {
 }
 
 #[test]
+fn wgsl_ps30_dcl_position_v0_uses_builtin_position() {
+    // ps_3_0:
+    //   dcl_position v0
+    //   mov r0, v0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_position v0
+        opcode_token(31, 1),
+        dst_token(1, 0, 0xF),
+        // mov r0, v0
+        opcode_token(1, 2),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(
+        wgsl.contains("@builtin(position) frag_pos"),
+        "expected POSITION input to map to fragment @builtin(position)\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("let v0: vec4<f32> = input.frag_pos;"),
+        "expected v0 to be bound from builtin frag_pos\n{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("@location(0) v0"),
+        "did not expect POSITION input to become a @location varying\n{wgsl}"
+    );
+}
+
+#[test]
 fn wgsl_ps30_reads_vface_compiles() {
     // ps_3_0:
     //   mov r0, vFace
