@@ -32,6 +32,14 @@ This helper connects message interrupts via `IoConnectInterruptEx(CONNECT_MESSAG
 - when `MessageCount >= (1 + QueueCount)`: vectors 1..QueueCount drain queues 0..QueueCount-1
 - otherwise: all queues are drained on vector 0.
 
+For WDM drivers that want a single **INTx-or-message** connect/disconnect API, use:
+
+- `drivers/windows7/virtio/common/include/virtio_pci_interrupts_wdm.h`
+- `drivers/windows7/virtio/common/src/virtio_pci_interrupts_wdm.c`
+
+This helper selects INTx vs MSI/MSI-X based on the translated interrupt descriptor and supports
+a caller-controlled MessageId→(IsConfig/QueueIndex) routing table for message interrupts.
+
 For the binding device/driver contract, see:
 [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md).
 
@@ -125,11 +133,13 @@ High-level sequencing for `IRP_MN_START_DEVICE` (omitting IRP forwarding boilerp
 4. **Allocate and program virtqueues**
 5. **Connect interrupts**:
    - Prefer MSI/MSI-X when the resource list contains `CM_RESOURCE_INTERRUPT_MESSAGE`:
-     - Connect via `VirtioMsixConnect` (from `virtio_pci_msix_wdm`)
-     - Program `common_cfg.msix_config` / `common_cfg.queue_msix_vector` using the helper's
-       `ConfigVector` / `QueueVectors[]` (and the transport helpers
-       `VirtioPciModernTransportSetConfigMsixVector` / `VirtioPciModernTransportSetQueueMsixVector`).
+      - Connect via `VirtioMsixConnect` (from `virtio_pci_msix_wdm`)
+      - Program `common_cfg.msix_config` / `common_cfg.queue_msix_vector` using the helper's
+        `ConfigVector` / `QueueVectors[]` (and the transport helpers
+        `VirtioPciModernTransportSetConfigMsixVector` / `VirtioPciModernTransportSetQueueMsixVector`).
    - Fall back to legacy INTx using `VirtioIntxConnect` (from `virtio_pci_intx_wdm`).
+   - Alternatively, use the combined helper `VirtioPciWdmInterruptConnect` (from `virtio_pci_interrupts_wdm`),
+     which selects INTx vs MSI/MSI-X based on the translated interrupt descriptor.
 6. **Set `DRIVER_OK`**
 
 For stop/remove, disconnect interrupts first, reset the device, free queue resources,
