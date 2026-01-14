@@ -684,6 +684,63 @@ static void TestMsixSingleVectorFallbackRouting(void)
     UninstallCommonCfgQueueVectorWindowHooks();
 }
 
+static void TestMsixSingleVectorQuiesceResumeVectors(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    WDFSPINLOCK commonCfgLock;
+    NTSTATUS st;
+    ULONG q;
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 4);
+
+    commonCfgLock = NULL;
+    PrepareMsix(&interrupts, &dev, &cb, 4 /* queues */, 1 /* message count */, &commonCfgLock);
+    assert(commonCfgLock != NULL);
+
+    assert(interrupts.u.Msix.UsedVectorCount == 1);
+    assert(interrupts.u.Msix.ConfigVector == 0);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(interrupts.u.Msix.QueueVectors[q] == 0);
+    }
+
+    st = VirtioPciInterruptsProgramMsixVectors(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(commonCfg.msix_config == 0);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == 0);
+    }
+
+    /* Quiesce must clear routing to NO_VECTOR. */
+    ResetSpinLockInstrumentation();
+    st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 1);
+    assert(interrupts.u.Msix.Interrupts[0]->Enabled == FALSE);
+    assert(interrupts.u.Msix.Interrupts[0]->DisableCalls == 1);
+    assert(commonCfg.msix_config == VIRTIO_PCI_MSI_NO_VECTOR);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == VIRTIO_PCI_MSI_NO_VECTOR);
+    }
+
+    /* Resume must restore routing and re-enable delivery. */
+    st = VirtioPciInterruptsResume(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 0);
+    assert(interrupts.u.Msix.Interrupts[0]->Enabled == TRUE);
+    assert(interrupts.u.Msix.Interrupts[0]->EnableCalls == 1);
+    assert(commonCfg.msix_config == 0);
+    for (q = 0; q < interrupts.QueueCount; q++) {
+        assert(ReadCommonCfgQueueVector(&commonCfg, (USHORT)q) == 0);
+    }
+
+    Cleanup(&interrupts, dev);
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
 static void TestMsixProgramQueueVectorReadbackFailure(void)
 {
     volatile VIRTIO_PCI_COMMON_CFG commonCfg;
@@ -1139,6 +1196,7 @@ int main(void)
     TestMsixPartialVectorProgramming();
     TestMsixVectorUtilizationOnePerQueueWhenPossible();
     TestMsixSingleVectorFallbackRouting();
+    TestMsixSingleVectorQuiesceResumeVectors();
     TestMsixProgramQueueVectorReadbackFailure();
     TestMsixProgramConfigVectorReadbackFailure();
     TestResetInProgressGating();
