@@ -100,8 +100,14 @@ variable "cors_allowed_origins" {
         !var.cors_allow_credentials
         || !contains([for o in var.cors_allowed_origins : lower(o)], "*")
       )
+      && (
+        # If you enable edge-handled CORS (response headers policy or preflight function),
+        # you must provide at least one allowed origin ("*" or an explicit origin).
+        !(var.enable_edge_cors || var.enable_edge_cors_preflight)
+        || length(var.cors_allowed_origins) > 0
+      )
     )
-    error_message = "The cors_allowed_origins values must be full origins (http:// or https://) or \"*\" (no trailing slash). When cors_allow_credentials is true, \"*\" is not allowed."
+    error_message = "cors_allowed_origins must be full origins (http:// or https://) or \"*\" (no trailing slash). When cors_allow_credentials is true, \"*\" is not allowed. If enable_edge_cors or enable_edge_cors_preflight is true, cors_allowed_origins must be non-empty."
   }
 }
 
