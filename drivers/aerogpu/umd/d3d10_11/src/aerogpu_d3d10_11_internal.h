@@ -220,6 +220,61 @@ struct has_member_alloc_offset_bytes : std::false_type {};
 template <typename T>
 struct has_member_alloc_offset_bytes<T, std::void_t<decltype(((T*)nullptr)->alloc_offset_bytes)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_viewport_x : std::false_type {};
+template <typename T>
+struct has_member_viewport_x<T, std::void_t<decltype(((T*)nullptr)->viewport_x)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_viewport_y : std::false_type {};
+template <typename T>
+struct has_member_viewport_y<T, std::void_t<decltype(((T*)nullptr)->viewport_y)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_viewport_width : std::false_type {};
+template <typename T>
+struct has_member_viewport_width<T, std::void_t<decltype(((T*)nullptr)->viewport_width)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_viewport_height : std::false_type {};
+template <typename T>
+struct has_member_viewport_height<T, std::void_t<decltype(((T*)nullptr)->viewport_height)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_viewport_min_depth : std::false_type {};
+template <typename T>
+struct has_member_viewport_min_depth<T, std::void_t<decltype(((T*)nullptr)->viewport_min_depth)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_viewport_max_depth : std::false_type {};
+template <typename T>
+struct has_member_viewport_max_depth<T, std::void_t<decltype(((T*)nullptr)->viewport_max_depth)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_scissor_valid : std::false_type {};
+template <typename T>
+struct has_member_scissor_valid<T, std::void_t<decltype(((T*)nullptr)->scissor_valid)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_scissor_left : std::false_type {};
+template <typename T>
+struct has_member_scissor_left<T, std::void_t<decltype(((T*)nullptr)->scissor_left)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_scissor_top : std::false_type {};
+template <typename T>
+struct has_member_scissor_top<T, std::void_t<decltype(((T*)nullptr)->scissor_top)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_scissor_right : std::false_type {};
+template <typename T>
+struct has_member_scissor_right<T, std::void_t<decltype(((T*)nullptr)->scissor_right)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_scissor_bottom : std::false_type {};
+template <typename T>
+struct has_member_scissor_bottom<T, std::void_t<decltype(((T*)nullptr)->scissor_bottom)>> : std::true_type {};
+
 // Shared resources can be opened multiple times (distinct Resource objects) yet
 // refer to the same underlying allocation. Treat those as aliasing for SRV/RTV
 // hazard mitigation.
@@ -2178,8 +2233,8 @@ inline int32_t clamp_i64_to_i32(int64_t v) {
   return static_cast<int32_t>(v);
 }
 
-template <typename ViewportT, typename SetErrorFn>
-inline void validate_and_emit_viewports_locked(Device* dev,
+template <typename DeviceT, typename ViewportT, typename SetErrorFn>
+inline void validate_and_emit_viewports_locked(DeviceT* dev,
                                                uint32_t num_viewports,
                                                const ViewportT* viewports,
                                                SetErrorFn&& set_error) {
@@ -2190,7 +2245,7 @@ inline void validate_and_emit_viewports_locked(Device* dev,
   // D3D11: NumViewports==0 disables viewports (runtime clear-state path). Encode this as a
   // zero-area viewport so the host runtime falls back to its default full-target viewport.
   if (num_viewports == 0) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+    auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
     if (!cmd) {
       set_error(E_OUTOFMEMORY);
       return;
@@ -2202,12 +2257,24 @@ inline void validate_and_emit_viewports_locked(Device* dev,
     cmd->min_depth_f32 = f32_bits(0.0f);
     cmd->max_depth_f32 = f32_bits(1.0f);
 
-    dev->viewport_x = 0.0f;
-    dev->viewport_y = 0.0f;
-    dev->viewport_width = 0.0f;
-    dev->viewport_height = 0.0f;
-    dev->viewport_min_depth = 0.0f;
-    dev->viewport_max_depth = 1.0f;
+    if constexpr (has_member_viewport_x<DeviceT>::value) {
+      dev->viewport_x = 0.0f;
+    }
+    if constexpr (has_member_viewport_y<DeviceT>::value) {
+      dev->viewport_y = 0.0f;
+    }
+    if constexpr (has_member_viewport_width<DeviceT>::value) {
+      dev->viewport_width = 0;
+    }
+    if constexpr (has_member_viewport_height<DeviceT>::value) {
+      dev->viewport_height = 0;
+    }
+    if constexpr (has_member_viewport_min_depth<DeviceT>::value) {
+      dev->viewport_min_depth = 0.0f;
+    }
+    if constexpr (has_member_viewport_max_depth<DeviceT>::value) {
+      dev->viewport_max_depth = 1.0f;
+    }
     return;
   }
 
@@ -2233,7 +2300,7 @@ inline void validate_and_emit_viewports_locked(Device* dev,
     set_error(E_NOTIMPL);
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
   if (!cmd) {
     set_error(E_OUTOFMEMORY);
     return;
@@ -2245,16 +2312,42 @@ inline void validate_and_emit_viewports_locked(Device* dev,
   cmd->min_depth_f32 = f32_bits(vp0.MinDepth);
   cmd->max_depth_f32 = f32_bits(vp0.MaxDepth);
 
-  dev->viewport_x = vp0.TopLeftX;
-  dev->viewport_y = vp0.TopLeftY;
-  dev->viewport_width = vp0.Width;
-  dev->viewport_height = vp0.Height;
-  dev->viewport_min_depth = vp0.MinDepth;
-  dev->viewport_max_depth = vp0.MaxDepth;
+  if constexpr (has_member_viewport_x<DeviceT>::value) {
+    dev->viewport_x = vp0.TopLeftX;
+    if constexpr (has_member_viewport_y<DeviceT>::value) {
+      dev->viewport_y = vp0.TopLeftY;
+    }
+    if constexpr (has_member_viewport_width<DeviceT>::value) {
+      dev->viewport_width = vp0.Width;
+    }
+    if constexpr (has_member_viewport_height<DeviceT>::value) {
+      dev->viewport_height = vp0.Height;
+    }
+    if constexpr (has_member_viewport_min_depth<DeviceT>::value) {
+      dev->viewport_min_depth = vp0.MinDepth;
+    }
+    if constexpr (has_member_viewport_max_depth<DeviceT>::value) {
+      dev->viewport_max_depth = vp0.MaxDepth;
+    }
+  } else {
+    // D3D10/D3D10.1 WDK UMDs track only integer viewport width/height for the
+    // bring-up software rasterizer. Preserve their behavior of only updating the
+    // cached dimensions when the viewport is actually enabled.
+    if (vp0.Width > 0.0f && vp0.Height > 0.0f) {
+      if constexpr (has_member_viewport_width<DeviceT>::value) {
+        using WidthT = std::remove_reference_t<decltype(dev->viewport_width)>;
+        dev->viewport_width = static_cast<WidthT>(vp0.Width);
+      }
+      if constexpr (has_member_viewport_height<DeviceT>::value) {
+        using HeightT = std::remove_reference_t<decltype(dev->viewport_height)>;
+        dev->viewport_height = static_cast<HeightT>(vp0.Height);
+      }
+    }
+  }
 }
 
-template <typename RectT, typename SetErrorFn>
-inline void validate_and_emit_scissor_rects_locked(Device* dev,
+template <typename DeviceT, typename RectT, typename SetErrorFn>
+inline void validate_and_emit_scissor_rects_locked(DeviceT* dev,
                                                    uint32_t num_rects,
                                                    const RectT* rects,
                                                    SetErrorFn&& set_error) {
@@ -2265,7 +2358,7 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
   // D3D11: NumRects==0 disables scissor rects. Encode this as a 0x0 rect; the host command executor
   // treats width/height <= 0 as "scissor disabled".
   if (num_rects == 0) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+    auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
     if (!cmd) {
       set_error(E_OUTOFMEMORY);
       return;
@@ -2275,11 +2368,21 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
     cmd->width = 0;
     cmd->height = 0;
 
-    dev->scissor_valid = false;
-    dev->scissor_left = 0;
-    dev->scissor_top = 0;
-    dev->scissor_right = 0;
-    dev->scissor_bottom = 0;
+    if constexpr (has_member_scissor_valid<DeviceT>::value) {
+      dev->scissor_valid = false;
+    }
+    if constexpr (has_member_scissor_left<DeviceT>::value) {
+      dev->scissor_left = 0;
+    }
+    if constexpr (has_member_scissor_top<DeviceT>::value) {
+      dev->scissor_top = 0;
+    }
+    if constexpr (has_member_scissor_right<DeviceT>::value) {
+      dev->scissor_right = 0;
+    }
+    if constexpr (has_member_scissor_bottom<DeviceT>::value) {
+      dev->scissor_bottom = 0;
+    }
     return;
   }
 
@@ -2307,7 +2410,7 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
 
   const int32_t w = clamp_i64_to_i32(static_cast<int64_t>(r0.right) - static_cast<int64_t>(r0.left));
   const int32_t h = clamp_i64_to_i32(static_cast<int64_t>(r0.bottom) - static_cast<int64_t>(r0.top));
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
   if (!cmd) {
     set_error(E_OUTOFMEMORY);
     return;
@@ -2317,11 +2420,21 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
   cmd->width = w;
   cmd->height = h;
 
-  dev->scissor_valid = (w > 0 && h > 0);
-  dev->scissor_left = r0.left;
-  dev->scissor_top = r0.top;
-  dev->scissor_right = r0.right;
-  dev->scissor_bottom = r0.bottom;
+  if constexpr (has_member_scissor_valid<DeviceT>::value) {
+    dev->scissor_valid = (w > 0 && h > 0);
+  }
+  if constexpr (has_member_scissor_left<DeviceT>::value) {
+    dev->scissor_left = r0.left;
+  }
+  if constexpr (has_member_scissor_top<DeviceT>::value) {
+    dev->scissor_top = r0.top;
+  }
+  if constexpr (has_member_scissor_right<DeviceT>::value) {
+    dev->scissor_right = r0.right;
+  }
+  if constexpr (has_member_scissor_bottom<DeviceT>::value) {
+    dev->scissor_bottom = r0.bottom;
+  }
 }
 
 template <typename THandle, typename TObject>

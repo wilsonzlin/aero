@@ -8040,79 +8040,11 @@ void AEROGPU_APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT num_viewports,
                                hDevice.pDrvPrivate,
                                static_cast<unsigned>(num_viewports));
 
-  bool report_notimpl = false;
-  if (num_viewports > 1 && pViewports) {
-    const auto& vp0 = pViewports[0];
-    for (UINT i = 1; i < num_viewports; ++i) {
-      const auto& vp = pViewports[i];
-      // Treat viewports with non-positive (or NaN) dimensions as disabled to
-      // avoid spurious E_NOTIMPL when runtimes pad the viewport array with
-      // unused entries.
-      if (!(vp.Width > 0.0f && vp.Height > 0.0f)) {
-        continue;
-      }
-      if (vp.TopLeftX != vp0.TopLeftX ||
-          vp.TopLeftY != vp0.TopLeftY ||
-          vp.Width != vp0.Width ||
-          vp.Height != vp0.Height ||
-          vp.MinDepth != vp0.MinDepth ||
-          vp.MaxDepth != vp0.MaxDepth) {
-        report_notimpl = true;
-        break;
-      }
-    }
-  }
-
   std::lock_guard<std::mutex> lock(dev->mutex);
-
-  if (num_viewports == 0) {
-    // Reset viewport state (Win7 runtimes call SetViewports(0, nullptr) for
-    // ClearState). Encode this using a degenerate viewport that the host treats
-    // as "use default viewport".
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
-      return;
-    }
-    cmd->x_f32 = f32_bits(0.0f);
-    cmd->y_f32 = f32_bits(0.0f);
-    cmd->width_f32 = f32_bits(0.0f);
-    cmd->height_f32 = f32_bits(0.0f);
-    cmd->min_depth_f32 = f32_bits(0.0f);
-    cmd->max_depth_f32 = f32_bits(1.0f);
-    dev->viewport_width = 0;
-    dev->viewport_height = 0;
-    return;
-  }
-
-  if (!pViewports) {
-    set_error(dev, E_INVALIDARG);
-    return;
-  }
-
-  const auto& vp = pViewports[0];
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
-  if (!cmd) {
-    set_error(dev, E_OUTOFMEMORY);
-    return;
-  }
-  cmd->x_f32 = f32_bits(vp.TopLeftX);
-  cmd->y_f32 = f32_bits(vp.TopLeftY);
-  cmd->width_f32 = f32_bits(vp.Width);
-  cmd->height_f32 = f32_bits(vp.Height);
-  cmd->min_depth_f32 = f32_bits(vp.MinDepth);
-  cmd->max_depth_f32 = f32_bits(vp.MaxDepth);
- 
-  if (vp.Width > 0.0f && vp.Height > 0.0f) {
-    dev->viewport_width = static_cast<uint32_t>(vp.Width);
-    dev->viewport_height = static_cast<uint32_t>(vp.Height);
-  }
-
-  if (report_notimpl) {
-    // Protocol supports only one viewport. Apply slot 0 as best-effort but
-    // surface unsupported multi-viewport usage.
-    set_error(dev, E_NOTIMPL);
-  }
+  aerogpu::d3d10_11::validate_and_emit_viewports_locked(dev,
+                                                       static_cast<uint32_t>(num_viewports),
+                                                       pViewports,
+                                                       [&](HRESULT hr) { set_error(dev, hr); });
 }
 
 void AEROGPU_APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT num_rects, const D3D10_DDI_RECT* pRects) {
@@ -8128,66 +8060,11 @@ void AEROGPU_APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT num_rects, 
                                hDevice.pDrvPrivate,
                                static_cast<unsigned>(num_rects));
 
-  bool report_notimpl = false;
-  if (num_rects > 1 && pRects) {
-    const auto& r0 = pRects[0];
-    for (UINT i = 1; i < num_rects; ++i) {
-      const auto& r = pRects[i];
-      const int64_t w = static_cast<int64_t>(r.right) - static_cast<int64_t>(r.left);
-      const int64_t h = static_cast<int64_t>(r.bottom) - static_cast<int64_t>(r.top);
-      // Treat empty rects as disabled/unbound so runtimes can pad the array
-      // without triggering E_NOTIMPL.
-      if (w <= 0 || h <= 0) {
-        continue;
-      }
-      if (r.left != r0.left || r.top != r0.top || r.right != r0.right || r.bottom != r0.bottom) {
-        report_notimpl = true;
-        break;
-      }
-    }
-  }
-
   std::lock_guard<std::mutex> lock(dev->mutex);
-
-  if (num_rects == 0) {
-    // Reset scissor. The host treats non-positive width/height as disabled.
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
-      return;
-    }
-    cmd->x = 0;
-    cmd->y = 0;
-    cmd->width = 0;
-    cmd->height = 0;
-    return;
-  }
-
-  if (!pRects) {
-    set_error(dev, E_INVALIDARG);
-    return;
-  }
- 
-  const auto& r = pRects[0];
-  const int32_t w =
-      aerogpu::d3d10_11::clamp_i64_to_i32(static_cast<int64_t>(r.right) - static_cast<int64_t>(r.left));
-  const int32_t h =
-      aerogpu::d3d10_11::clamp_i64_to_i32(static_cast<int64_t>(r.bottom) - static_cast<int64_t>(r.top));
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
-  if (!cmd) {
-    set_error(dev, E_OUTOFMEMORY);
-    return;
-  }
-  cmd->x = r.left;
-  cmd->y = r.top;
-  cmd->width = w;
-  cmd->height = h;
-
-  if (report_notimpl) {
-    // Protocol supports only one scissor rect. Apply slot 0 as best-effort but
-    // surface unsupported multi-scissor usage.
-    set_error(dev, E_NOTIMPL);
-  }
+  aerogpu::d3d10_11::validate_and_emit_scissor_rects_locked(dev,
+                                                           static_cast<uint32_t>(num_rects),
+                                                           pRects,
+                                                           [&](HRESULT hr) { set_error(dev, hr); });
 }
 
 void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
