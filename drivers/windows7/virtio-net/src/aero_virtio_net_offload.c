@@ -7,236 +7,19 @@
  */
 
 #include "../include/aero_virtio_net_offload.h"
+#include "../include/virtio_net_hdr_offload.h"
 
 #include <string.h>
-
-#define AEROVNET_ETH_HEADER_LEN 14u
-#define AEROVNET_ETHERTYPE_IPV4 0x0800u
-#define AEROVNET_ETHERTYPE_IPV6 0x86DDu
-#define AEROVNET_ETHERTYPE_VLAN 0x8100u
-#define AEROVNET_ETHERTYPE_QINQ 0x88A8u
-#define AEROVNET_ETHERTYPE_VLAN_ALT 0x9100u
-
-#define AEROVNET_IPPROTO_TCP 6u
-#define AEROVNET_IPPROTO_UDP 17u
-
-static uint16_t aerovnet_read_be16(const uint8_t* p) { return (uint16_t)((uint16_t)p[0] << 8) | (uint16_t)p[1]; }
-
-static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ethernet(const uint8_t* frame,
-                                                       size_t frame_len,
-                                                       uint16_t* ethertype_out,
-                                                       size_t* l2_len_out) {
-  uint16_t ethertype;
-  size_t l2_len;
-
-  if (!frame || !ethertype_out || !l2_len_out) {
-    return AEROVNET_OFFLOAD_ERR_INVAL;
-  }
-
-  if (frame_len < AEROVNET_ETH_HEADER_LEN) {
-    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-  }
-
-  ethertype = aerovnet_read_be16(frame + 12);
-  l2_len = AEROVNET_ETH_HEADER_LEN;
-
-  /* Support stacked VLAN tags (802.1Q/QinQ). */
-  while (ethertype == AEROVNET_ETHERTYPE_VLAN || ethertype == AEROVNET_ETHERTYPE_QINQ || ethertype == AEROVNET_ETHERTYPE_VLAN_ALT) {
-    if (frame_len < l2_len + 4u) {
-      return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-    }
-    ethertype = aerovnet_read_be16(frame + l2_len + 2u);
-    l2_len += 4u;
-  }
-
-  *ethertype_out = ethertype;
-  *l2_len_out = l2_len;
-  return AEROVNET_OFFLOAD_OK;
-}
-
-static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv4(const uint8_t* ipv4,
-                                                   size_t ipv4_len,
-                                                   size_t* header_len_out,
-                                                   uint8_t* proto_out) {
-  uint8_t version;
-  size_t ihl;
-  uint16_t frag_field;
-
-  if (!ipv4 || !header_len_out || !proto_out) {
-    return AEROVNET_OFFLOAD_ERR_INVAL;
-  }
-
-  if (ipv4_len < 20u) {
-    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-  }
-
-  version = (uint8_t)(ipv4[0] >> 4);
-  if (version != 4u) {
-    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_IP_VERSION;
-  }
-
-  ihl = (size_t)(ipv4[0] & 0x0Fu) * 4u;
-  if (ihl < 20u || ipv4_len < ihl) {
-    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-  }
-
-  /* Reject fragmented IPv4 packets: offload metadata refers to reassembled L4 payload. */
-  frag_field = aerovnet_read_be16(ipv4 + 6u);
-  if ((frag_field & 0x1FFFu) != 0u || (frag_field & 0x2000u) != 0u) {
-    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION;
-  }
-
-  *header_len_out = ihl;
-  *proto_out = ipv4[9];
-  return AEROVNET_OFFLOAD_OK;
-}
-
-static AEROVNET_OFFLOAD_RESULT aerovnet_parse_ipv6_l4_offset(const uint8_t* ipv6,
-                                                              size_t ipv6_len,
-                                                              size_t* l3_len_out,
-                                                              uint8_t* proto_out) {
-  uint8_t version;
-  uint8_t next;
-  size_t off;
-  size_t iter;
-
-  if (!ipv6 || !l3_len_out || !proto_out) {
-    return AEROVNET_OFFLOAD_ERR_INVAL;
-  }
-
-  if (ipv6_len < 40u) {
-    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-  }
-
-  version = (uint8_t)(ipv6[0] >> 4);
-  if (version != 6u) {
-    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_IP_VERSION;
-  }
-
-  next = ipv6[6];
-  off = 40u;
-
-  /*
-   * Minimal IPv6 extension header walker. This intentionally supports only the
-   * standard, length-delimited headers that Windows commonly emits.
-   */
-  /*
-   * Bound extension header traversal to avoid pathological header chains. This
-   * helper is used on potentially untrusted frames (host-provided in unit tests
-   * and guest-provided in the miniport), so keep parsing work deterministic.
-   */
-  for (iter = 0; iter < 8u; iter++) {
-    if (next == AEROVNET_IPPROTO_TCP || next == AEROVNET_IPPROTO_UDP) {
-      *l3_len_out = off;
-      *proto_out = next;
-      return AEROVNET_OFFLOAD_OK;
-    }
-
-    /* No Next Header / ESP are treated as unsupported. */
-    if (next == 59u || next == 50u) {
-      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_IPV6;
-    }
-
-    if (next == 0u || next == 43u || next == 60u) {
-      /* Hop-by-hop, Routing, Destination Options: len = (HdrExtLen+1)*8 */
-      uint8_t hdr_next;
-      uint8_t hdr_len;
-      size_t ext_len;
-
-      if (ipv6_len < off + 2u) {
-        return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-      }
-      hdr_next = ipv6[off];
-      hdr_len = ipv6[off + 1u];
-      ext_len = ((size_t)hdr_len + 1u) * 8u;
-      if (ipv6_len < off + ext_len) {
-        return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-      }
-      next = hdr_next;
-      off += ext_len;
-      continue;
-    }
-
-    if (next == 44u) {
-      /* Fragment header: offloads do not apply to fragmented packets. */
-      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION;
-    }
-
-    if (next == 51u) {
-      /* Authentication header: len = (PayloadLen+2)*4 */
-      uint8_t hdr_next;
-      uint8_t payload_len;
-      size_t ext_len;
-
-      if (ipv6_len < off + 2u) {
-        return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-      }
-      hdr_next = ipv6[off];
-      payload_len = ipv6[off + 1u];
-      ext_len = ((size_t)payload_len + 2u) * 4u;
-      if (ipv6_len < off + ext_len) {
-        return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-      }
-      next = hdr_next;
-      off += ext_len;
-      continue;
-    }
-
-    /* Unknown/unsupported extension header. */
-    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_IPV6;
-  }
-
-  return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_IPV6;
-}
-
-static AEROVNET_OFFLOAD_RESULT aerovnet_parse_tcp(const uint8_t* tcp, size_t tcp_len, size_t* tcp_header_len_out) {
-  size_t data_offset;
-
-  if (!tcp || !tcp_header_len_out) {
-    return AEROVNET_OFFLOAD_ERR_INVAL;
-  }
-
-  if (tcp_len < 20u) {
-    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-  }
-
-  data_offset = (size_t)(tcp[12] >> 4) * 4u;
-  if (data_offset < 20u || tcp_len < data_offset) {
-    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-  }
-
-  *tcp_header_len_out = data_offset;
-  return AEROVNET_OFFLOAD_OK;
-}
-
-static AEROVNET_OFFLOAD_RESULT aerovnet_parse_udp(const uint8_t* udp, size_t udp_len, size_t* udp_header_len_out) {
-  if (!udp || !udp_header_len_out) {
-    return AEROVNET_OFFLOAD_ERR_INVAL;
-  }
-
-  if (udp_len < 8u) {
-    return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
-  }
-
-  *udp_header_len_out = 8u;
-  return AEROVNET_OFFLOAD_OK;
-}
 
 AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
                                                     size_t frame_len,
                                                     const AEROVNET_TX_OFFLOAD_INTENT* intent,
                                                     AEROVNET_VIRTIO_NET_HDR* out_hdr,
                                                     AEROVNET_OFFLOAD_PARSE_INFO* out_info) {
-  AEROVNET_OFFLOAD_RESULT res;
-  uint16_t ethertype;
-  size_t l2_len;
-  uint8_t ip_version;
-  uint8_t l4_proto;
-  uint16_t csum_offset;
-  size_t l3_len;
-  size_t l4_off;
-  size_t l4_len;
-  size_t headers_len;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO FrameInfo;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Built;
 
   if (!out_hdr) {
     return AEROVNET_OFFLOAD_ERR_INVAL;
@@ -256,82 +39,62 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
     return AEROVNET_OFFLOAD_ERR_INVAL;
   }
 
-  res = aerovnet_parse_ethernet(frame, frame_len, &ethertype, &l2_len);
-  if (res != AEROVNET_OFFLOAD_OK) {
-    return res;
-  }
-
-  ip_version = 0;
-  l4_proto = 0;
-  l3_len = 0;
-  l4_off = 0;
-  l4_len = 0;
-
-  if (ethertype == AEROVNET_ETHERTYPE_IPV4) {
-    ip_version = 4u;
-    res = aerovnet_parse_ipv4(frame + l2_len, frame_len - l2_len, &l3_len, &l4_proto);
-    if (res != AEROVNET_OFFLOAD_OK) {
-      return res;
+  memset(&FrameInfo, 0, sizeof(FrameInfo));
+  St = VirtioNetHdrOffloadParseFrameHeaders(frame, frame_len, &FrameInfo);
+  if (St != VIRTIO_NET_HDR_OFFLOAD_STATUS_OK) {
+    if (St == VIRTIO_NET_HDR_OFFLOAD_STATUS_INVALID_ARGUMENT) {
+      return AEROVNET_OFFLOAD_ERR_INVAL;
     }
-    l4_off = l2_len + l3_len;
-  } else if (ethertype == AEROVNET_ETHERTYPE_IPV6) {
-    ip_version = 6u;
-    res = aerovnet_parse_ipv6_l4_offset(frame + l2_len, frame_len - l2_len, &l3_len, &l4_proto);
-    if (res != AEROVNET_OFFLOAD_OK) {
-      return res;
+    if (St == VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED || St == VIRTIO_NET_HDR_OFFLOAD_STATUS_MALFORMED) {
+      return AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT;
     }
-    l4_off = l2_len + l3_len;
-  } else {
     return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_ETHERTYPE;
   }
 
-  if (intent->WantTso != 0 || intent->WantTcpChecksum != 0) {
-    if (l4_proto != AEROVNET_IPPROTO_TCP) {
-      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
-    }
-    res = aerovnet_parse_tcp(frame + l4_off, frame_len - l4_off, &l4_len);
-    if (res != AEROVNET_OFFLOAD_OK) {
-      return res;
-    }
-    csum_offset = 16u;
-  } else if (intent->WantUdpChecksum != 0) {
-    if (l4_proto != AEROVNET_IPPROTO_UDP) {
-      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
-    }
-    res = aerovnet_parse_udp(frame + l4_off, frame_len - l4_off, &l4_len);
-    if (res != AEROVNET_OFFLOAD_OK) {
-      return res;
-    }
-    csum_offset = 6u;
-  } else {
-    return AEROVNET_OFFLOAD_OK;
+  if (FrameInfo.IsFragmented) {
+    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_FRAGMENTATION;
   }
 
-  headers_len = l4_off + l4_len;
+  if (FrameInfo.L3Proto != (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4 && FrameInfo.L3Proto != (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV6) {
+    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_ETHERTYPE;
+  }
+
+  /* Enforce the requested checksum type against the parsed L4 protocol. */
+  if (intent->WantTso != 0 || intent->WantTcpChecksum != 0) {
+    if (FrameInfo.L4Proto != 6u) {
+      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
+    }
+  } else if (intent->WantUdpChecksum != 0) {
+    if (FrameInfo.L4Proto != 17u) {
+      return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
+    }
+  }
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  TxReq.Tso = (intent->WantTso != 0) ? 1u : 0u;
+  TxReq.TsoMss = intent->TsoMss;
+
+  memset(&Built, 0, sizeof(Built));
+  St = VirtioNetHdrOffloadBuildTxHdr(&FrameInfo, &TxReq, &Built);
+  if (St != VIRTIO_NET_HDR_OFFLOAD_STATUS_OK) {
+    if (St == VIRTIO_NET_HDR_OFFLOAD_STATUS_INVALID_ARGUMENT) {
+      return (intent->WantTso != 0 && intent->TsoMss == 0) ? AEROVNET_OFFLOAD_ERR_BAD_MSS : AEROVNET_OFFLOAD_ERR_INVAL;
+    }
+    return AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL;
+  }
+
+  /* Copy the built header into the driver's portable header struct. */
+  memcpy(out_hdr, &Built, sizeof(*out_hdr));
 
   if (out_info) {
-    out_info->IpVersion = ip_version;
-    out_info->L4Protocol = l4_proto;
-    out_info->L2Len = (uint16_t)l2_len;
-    out_info->L3Len = (uint16_t)l3_len;
-    out_info->L4Len = (uint16_t)l4_len;
-    out_info->L4Offset = (uint16_t)l4_off;
-    out_info->HeadersLen = (uint16_t)headers_len;
-  }
-
-  /* Request checksum completion for TCP/UDP when any offload is requested. */
-  out_hdr->Flags = AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM;
-  out_hdr->CsumStart = (uint16_t)l4_off;
-  out_hdr->CsumOffset = csum_offset;
-
-  if (intent->WantTso != 0) {
-    if (intent->TsoMss == 0) {
-      return AEROVNET_OFFLOAD_ERR_BAD_MSS;
-    }
-
-    out_hdr->GsoSize = intent->TsoMss;
-    out_hdr->HdrLen = (uint16_t)headers_len;
-    out_hdr->GsoType = (ip_version == 4u) ? AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4 : AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6;
+    out_info->IpVersion = FrameInfo.L3Proto;
+    out_info->L4Protocol = FrameInfo.L4Proto;
+    out_info->L2Len = FrameInfo.L2Len;
+    out_info->L3Len = FrameInfo.L3Len;
+    out_info->L4Len = FrameInfo.L4Len;
+    out_info->L4Offset = FrameInfo.L4Offset;
+    out_info->HeadersLen = FrameInfo.PayloadOffset;
   }
 
   return AEROVNET_OFFLOAD_OK;

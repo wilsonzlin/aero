@@ -132,18 +132,28 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
   }
 
   TotalLen = VirtioNetHdrOffloadReadBe16(Ip + 2);
-  if (TotalLen < (uint16_t)IpHdrLen) {
-    return VIRTIO_NET_HDR_OFFLOAD_STATUS_MALFORMED;
-  }
-  if (StrictLength && TotalLen != 0 && (size_t)TotalLen > FrameLen - L3Offset) {
-    return VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED;
-  }
-
-  if (TotalLen != 0) {
-    size_t PacketEnd = L3Offset + (size_t)TotalLen;
-    MaxEnd = (PacketEnd < FrameLen) ? PacketEnd : FrameLen;
-  } else {
+  if (TotalLen == 0) {
+    /*
+     * IPv4 total_len must be non-zero, but allow `total_len == 0` in
+     * header-only parsing mode for robustness (treat it as "unknown" and bound
+     * parsing by the available bytes). Strict parsing still rejects this.
+     */
+    if (StrictLength) {
+      return VIRTIO_NET_HDR_OFFLOAD_STATUS_MALFORMED;
+    }
     MaxEnd = FrameLen;
+  } else {
+    if (TotalLen < (uint16_t)IpHdrLen) {
+      return VIRTIO_NET_HDR_OFFLOAD_STATUS_MALFORMED;
+    }
+    if (StrictLength && (size_t)TotalLen > FrameLen - L3Offset) {
+      return VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED;
+    }
+
+    {
+      size_t PacketEnd = L3Offset + (size_t)TotalLen;
+      MaxEnd = (PacketEnd < FrameLen) ? PacketEnd : FrameLen;
+    }
   }
 
   Info->L3Proto = (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4;

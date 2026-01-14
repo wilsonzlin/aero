@@ -6,6 +6,7 @@ enable_testing()
 add_executable(aero_virtio_net_offload_tests
     test_offload.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/aero_virtio_net_offload.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_net_hdr_offload.c
 )
 
 target_include_directories(aero_virtio_net_offload_tests PRIVATE
