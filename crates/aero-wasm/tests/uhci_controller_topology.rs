@@ -44,6 +44,15 @@ fn make_controller() -> UhciControllerBridge {
 }
 
 #[wasm_bindgen_test]
+fn uhci_attach_hub_rejects_zero_port_count() {
+    let mut uhci = make_controller();
+    assert!(
+        uhci.attach_hub(0, 0).is_err(),
+        "attach_hub should reject port_count=0"
+    );
+}
+
+#[wasm_bindgen_test]
 fn uhci_attach_hub_rejects_reserved_webusb_root_port() {
     let mut uhci = make_controller();
 
