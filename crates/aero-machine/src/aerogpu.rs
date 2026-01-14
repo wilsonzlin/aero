@@ -2564,6 +2564,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
         const TAG_RING_RESET_PENDING: u16 = 33;
 
         // Scanout dirty flag exists only when atomic shared scanout is enabled.
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         const TAG_SCANOUT0_DIRTY: u16 = 34;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -2660,6 +2661,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
         const TAG_DOORBELL_PENDING: u16 = 32;
         const TAG_RING_RESET_PENDING: u16 = 33;
 
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         const TAG_SCANOUT0_DIRTY: u16 = 34;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;

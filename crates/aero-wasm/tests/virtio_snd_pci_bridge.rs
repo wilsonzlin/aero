@@ -795,12 +795,12 @@ fn virtio_snd_pci_bridge_delivers_multiple_speaker_jack_events_into_cached_event
         u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER),
     );
 
-    bridge.mmio_write(COMMON + 0x00, 4, 0); // device_feature_select
+    bridge.mmio_write(COMMON, 4, 0); // device_feature_select
     let f0 = bridge.mmio_read(COMMON + 0x04, 4);
     bridge.mmio_write(COMMON + 0x08, 4, 0); // driver_feature_select
     bridge.mmio_write(COMMON + 0x0c, 4, f0); // driver_features
 
-    bridge.mmio_write(COMMON + 0x00, 4, 1);
+    bridge.mmio_write(COMMON, 4, 1);
     let f1 = bridge.mmio_read(COMMON + 0x04, 4);
     bridge.mmio_write(COMMON + 0x08, 4, 1);
     bridge.mmio_write(COMMON + 0x0c, 4, f1);
@@ -854,7 +854,7 @@ fn virtio_snd_pci_bridge_delivers_multiple_speaker_jack_events_into_cached_event
     guest.write_u16(used + 2, 0);
 
     // Notify queue 1. notify_mult is 4 in `VirtioPciDevice`.
-    let notify_off = bridge.mmio_read(COMMON + 0x1e, 2) as u32;
+    let notify_off = bridge.mmio_read(COMMON + 0x1e, 2);
     bridge.mmio_write(
         NOTIFY + notify_off * 4,
         2,

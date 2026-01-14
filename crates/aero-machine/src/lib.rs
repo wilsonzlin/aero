@@ -5246,12 +5246,12 @@ impl Machine {
                         let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
                         let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
-                        for x in 0..width_usize {
+                        for (x, dst) in dst_row.iter_mut().enumerate() {
                             let i = x * 4;
                             let b = src_row.get(i).copied().unwrap_or(0);
                             let g = src_row.get(i + 1).copied().unwrap_or(0);
                             let r = src_row.get(i + 2).copied().unwrap_or(0);
-                            dst_row[x] = 0xFF00_0000
+                            *dst = 0xFF00_0000
                                 | (u32::from(b) << 16)
                                 | (u32::from(g) << 8)
                                 | u32::from(r);
@@ -5262,12 +5262,12 @@ impl Machine {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
-                        for x in 0..width_usize {
+                        for (x, dst) in dst_row.iter_mut().enumerate() {
                             let i = x * 4;
                             let b = row.get(i).copied().unwrap_or(0);
                             let g = row.get(i + 1).copied().unwrap_or(0);
                             let r = row.get(i + 2).copied().unwrap_or(0);
-                            dst_row[x] = 0xFF00_0000
+                            *dst = 0xFF00_0000
                                 | (u32::from(b) << 16)
                                 | (u32::from(g) << 8)
                                 | u32::from(r);
@@ -11200,7 +11200,7 @@ impl snapshot::SnapshotSource for Machine {
                 let now_ns = self
                     .platform_clock
                     .as_ref()
-                    .map(|clock| aero_interrupts::clock::Clock::now_ns(clock))
+                    .map(aero_interrupts::clock::Clock::now_ns)
                     .unwrap_or(0);
                 data.extend_from_slice(&now_ns.to_le_bytes());
                 data
@@ -12006,7 +12006,7 @@ impl snapshot::SnapshotTarget for Machine {
                 // *early* so time-based devices (RTC/HPET/AeroGPU vblank scheduling) observe the
                 // correct time during their own `load_state()` calls.
                 if let Some(clock) = &self.platform_clock {
-                    if state.data.len() >= 1 + 8 {
+                    if state.data.len() > 8 {
                         let mut buf = [0u8; 8];
                         buf.copy_from_slice(&state.data[1..9]);
                         clock.set_ns(u64::from_le_bytes(buf));
