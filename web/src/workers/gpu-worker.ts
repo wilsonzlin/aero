@@ -254,6 +254,8 @@ type AerogpuLastPresentedFrame = NonNullable<AerogpuCpuExecutorState["lastPresen
 let aerogpuLastPresentedFrame: AerogpuLastPresentedFrame | null = null;
 let aerogpuPresentCount = 0n;
 let aerogpuWasmPresentCount = 0n;
+// Tracks which source was last uploaded to the presenter. Despite the name, this is used for
+// framebuffer + AeroGPU + WDDM scanout output selection (cursor redraw + screenshot force uploads).
 let aerogpuLastOutputSource: GpuRuntimeOutputSource = "framebuffer";
 
 const getAerogpuContextState = (contextId: number): AerogpuCpuExecutorState => {
@@ -538,7 +540,7 @@ const redrawCursor = (): void => {
 
   // Best-effort fallback: re-present the last output so backends that only apply cursor state
   // during present() can reflect the latest cursor updates without clobbering the current
-  // output source (framebuffer vs AeroGPU scanout).
+  // output source (framebuffer vs AeroGPU vs WDDM scanout).
   if (aerogpuLastOutputSource === "aerogpu") {
     const last = aerogpuLastPresentedFrame;
     if (!last) return;
