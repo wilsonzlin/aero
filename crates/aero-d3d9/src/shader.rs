@@ -1277,7 +1277,8 @@ pub fn parse(bytes: &[u8]) -> Result<ShaderProgram, ShaderError> {
         Err(err) => err,
     };
 
-    let normalized = match crate::token_stream::normalize_sm2_sm3_instruction_lengths(token_stream) {
+    let normalized = match crate::token_stream::normalize_sm2_sm3_instruction_lengths(token_stream)
+    {
         Ok(normalized) => normalized,
         Err(_) => return Err(err),
     };

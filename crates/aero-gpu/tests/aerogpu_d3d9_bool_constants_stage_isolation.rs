@@ -393,7 +393,7 @@ fn d3d9_bool_constants_are_isolated_between_vs_and_ps() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            // Payload: u32 per bool register (0 or 1).
+                              // Payload: u32 per bool register (0 or 1).
             push_u32(out, 0);
         });
         emit_packet(out, OPC_SET_SHADER_CONSTANTS_B, |out| {
@@ -401,7 +401,7 @@ fn d3d9_bool_constants_are_isolated_between_vs_and_ps() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            // Payload: u32 per bool register (0 or 1).
+                              // Payload: u32 per bool register (0 or 1).
             push_u32(out, 1);
         });
         emit_packet(out, OPC_DRAW, |out| {
@@ -419,7 +419,7 @@ fn d3d9_bool_constants_are_isolated_between_vs_and_ps() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            // Payload: u32 per bool register (0 or 1).
+                              // Payload: u32 per bool register (0 or 1).
             push_u32(out, 1);
         });
         emit_packet(out, OPC_SET_SHADER_CONSTANTS_B, |out| {
@@ -427,7 +427,7 @@ fn d3d9_bool_constants_are_isolated_between_vs_and_ps() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-            // Payload: u32 per bool register (0 or 1).
+                              // Payload: u32 per bool register (0 or 1).
             push_u32(out, 0);
         });
         emit_packet(out, OPC_DRAW, |out| {

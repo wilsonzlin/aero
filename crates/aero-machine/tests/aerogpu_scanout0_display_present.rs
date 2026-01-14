@@ -1,8 +1,9 @@
-use aero_devices_gpu::backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
-};
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
+use aero_devices_gpu::backend::{
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend,
+};
 use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use memory::MemoryBus;

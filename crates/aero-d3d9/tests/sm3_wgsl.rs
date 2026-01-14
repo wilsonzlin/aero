@@ -637,7 +637,10 @@ fn wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x() {
         wgsl.contains("textureSample(tex0, samp0, vec2<f32>("),
         "{wgsl}"
     );
-    assert!(wgsl.contains("/ (constants.c[CONST_BASE + 0u]).w"), "{wgsl}");
+    assert!(
+        wgsl.contains("/ (constants.c[CONST_BASE + 0u]).w"),
+        "{wgsl}"
+    );
     assert!(wgsl.contains("0.5"), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");

@@ -2342,9 +2342,7 @@ fn emit_op_line(
                     let uv = tex_coord_expr(&coord_e, tex_ty, false)?;
                     let ddx = tex_grad_expr(&ddx_e, tex_ty)?;
                     let ddy = tex_grad_expr(&ddy_e, tex_ty)?;
-                    format!(
-                        "textureSampleGrad({tex}, {samp}, {uv}, {ddx}, {ddy})"
-                    )
+                    format!("textureSampleGrad({tex}, {samp}, {uv}, {ddx}, {ddy})")
                 }
             };
 
