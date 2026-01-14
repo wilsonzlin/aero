@@ -21034,7 +21034,11 @@ mod tests {
 
             writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
             writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
-            writer.draw(3, 1, 0, 0);
+            // Use a huge draw count to ensure the patchlist-only placeholder path caps work to a
+            // single triangle (avoids allocating/dispatching work proportional to draw counts).
+            //
+            // `u32::MAX` is divisible by 3 so `PatchList3` sees an integral patch count.
+            writer.draw(u32::MAX, 1, 0, 0);
             let stream = writer.finish();
 
             let mut guest_mem = VecGuestMemory::new(0);
