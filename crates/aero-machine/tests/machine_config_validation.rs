@@ -185,6 +185,18 @@ fn enable_e1000_and_enable_virtio_net_are_mutually_exclusive() {
 }
 
 #[test]
+fn win7_storage_preset_is_valid_and_stable() {
+    let cfg = MachineConfig::win7_storage(2 * 1024 * 1024);
+    assert!(cfg.enable_pc_platform);
+
+    // Win7 storage preset should use the transitional VGA path by default.
+    assert!(cfg.enable_vga);
+    assert!(!cfg.enable_aerogpu);
+
+    Machine::new(cfg).expect("MachineConfig::win7_storage should pass Machine::new validation");
+}
+
+#[test]
 fn browser_defaults_preset_is_valid_and_stable() {
     let cfg = MachineConfig::browser_defaults(2 * 1024 * 1024);
 
