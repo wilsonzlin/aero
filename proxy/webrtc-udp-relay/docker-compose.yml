@@ -15,6 +15,12 @@ x-relay-env-base: &relay-env-base
   API_KEY: "${API_KEY:-}"
   JWT_SECRET: "${JWT_SECRET:-}"
 
+  # WebRTC DataChannel hardening (optional; defaults apply when unset).
+  WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES: "${WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES:-}"
+  WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES: "${WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES:-}"
+  # WebRTC session connect timeout (optional; defaults apply when unset).
+  WEBRTC_SESSION_CONNECT_TIMEOUT: "${WEBRTC_SESSION_CONNECT_TIMEOUT:-}"
+
   # Optional: bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
   # endpoint (typically `aero-l2-proxy`).
   #
