@@ -5726,8 +5726,15 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       write_f32_unaligned(dst + dst_layout.pos_offset + 8, out_z);
       write_f32_unaligned(dst + dst_layout.pos_offset + 12, out_rhw);
 
-      if (src_has_diffuse && dst_layout.has_diffuse) {
-        std::memcpy(dst + dst_layout.diffuse_offset, src + src_diffuse_offset, 4);
+      if (dst_layout.has_diffuse) {
+        if (src_has_diffuse) {
+          std::memcpy(dst + dst_layout.diffuse_offset, src + src_diffuse_offset, 4);
+        } else {
+          // Match fixed-function FVF behavior: when the input vertex format does
+          // not include a diffuse color, treat it as white.
+          const uint32_t white = 0xFFFFFFFFu;
+          std::memcpy(dst + dst_layout.diffuse_offset, &white, sizeof(white));
+        }
       }
       if (src_has_tex0 && dst_layout.has_tex0) {
         std::memcpy(dst + dst_layout.tex0_offset, src + src_tex0_offset, 8);

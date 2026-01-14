@@ -627,6 +627,81 @@ void test_xyz_tex1() {
   assert(std::fabs(v - 0.75f) < 1e-4f);
 }
 
+void test_xyz_tex1_defaults_white_diffuse() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyz | kFvfTex1;
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  dev.transform_matrices[256][12] = 1.0f;
+
+  // Source VB: XYZ|TEX1 = float3 + float2 = 20 bytes.
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 20;
+  src.storage.resize(20);
+  write_f32(src.storage, 0, 0.0f);
+  write_f32(src.storage, 4, 0.0f);
+  write_f32(src.storage, 8, 0.0f);
+  write_f32(src.storage, 12, 0.25f);
+  write_f32(src.storage, 16, 0.75f);
+
+  // Destination VB: request a diffuse color even though the source vertex format
+  // does not include one. Fixed-function behavior should treat it as white.
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 28;
+  dst.storage.resize(28);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0, 20, kDeclTypeFloat2, kDeclMethodDefault, kDeclUsageTexCoord, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 20;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  const float x = read_f32(dst.storage, 0);
+  const float y = read_f32(dst.storage, 4);
+  const float z = read_f32(dst.storage, 8);
+  const float rhw = read_f32(dst.storage, 12);
+  assert(std::fabs(x - 99.5f) < 1e-4f);
+  assert(std::fabs(y - 49.5f) < 1e-4f);
+  assert(std::fabs(z - 0.0f) < 1e-4f);
+  assert(std::fabs(rhw - 1.0f) < 1e-4f);
+
+  uint32_t diffuse = 0;
+  std::memcpy(&diffuse, dst.storage.data() + 16, 4);
+  assert(diffuse == 0xFFFFFFFFu);
+
+  const float u = read_f32(dst.storage, 20);
+  const float v = read_f32(dst.storage, 24);
+  assert(std::fabs(u - 0.25f) < 1e-4f);
+  assert(std::fabs(v - 0.75f) < 1e-4f);
+}
+
 void test_xyz_diffuse_tex1_padded_dest_stride() {
   Adapter adapter;
   Device dev(&adapter);
@@ -1275,6 +1350,7 @@ int main() {
   aerogpu::test_xyz_diffuse_z_stays_ndc();
   aerogpu::test_xyz_diffuse_tex1();
   aerogpu::test_xyz_tex1();
+  aerogpu::test_xyz_tex1_defaults_white_diffuse();
   aerogpu::test_xyz_diffuse_tex1_padded_dest_stride();
   aerogpu::test_xyz_diffuse_tex1_dest_decl_extra_elements();
   aerogpu::test_xyz_diffuse_offsets();
