@@ -1857,8 +1857,11 @@ impl AerogpuD3d11Executor {
         }
         dummy_uniform.unmap();
 
-        // Storage buffers are only valid on compute-capable backends.
-        let dummy_storage_usage = if caps.supports_compute {
+        // Storage buffers are only valid on compute-capable backends that actually expose storage
+        // buffer slots.
+        let supports_storage_buffers =
+            caps.supports_compute && device.limits().max_storage_buffers_per_shader_stage > 0;
+        let dummy_storage_usage = if supports_storage_buffers {
             // Include VERTEX so the executor can bind this buffer as a fallback vertex buffer when
             // the guest draws without binding a vertex buffer/input layout (D3D treats unbound
             // vertex inputs as zero).
@@ -14036,7 +14039,9 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             self.next_buffer_id = 1;
         }
 
-        let usage = map_buffer_usage_flags(usage_flags, self.caps.supports_compute);
+        let supports_storage_buffers = self.caps.supports_compute
+            && self.device.limits().max_storage_buffers_per_shader_stage > 0;
+        let usage = map_buffer_usage_flags(usage_flags, supports_storage_buffers);
         let gpu_size = align_copy_buffer_size(size_bytes)?;
 
         let backing = if backing_alloc_id != 0 {
@@ -21843,14 +21848,14 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn map_buffer_usage_flags(flags: u32, supports_compute: bool) -> wgpu::BufferUsages {
+fn map_buffer_usage_flags(flags: u32, supports_storage_buffers: bool) -> wgpu::BufferUsages {
     let mut usage = wgpu::BufferUsages::COPY_DST;
     // `STORAGE` usage is required both for:
     // - guest buffers explicitly used as SRV/UAV storage buffers, and
     // - internal compute-based emulation paths (vertex/index pulling).
     //
     // Some downlevel backends (notably WebGL2) do not support compute or storage buffers at all, so
-    // gate STORAGE usage on `supports_compute` to avoid wgpu validation panics.
+    // gate STORAGE usage on `supports_storage_buffers` to avoid wgpu validation panics.
     let mut needs_storage = flags & AEROGPU_RESOURCE_USAGE_STORAGE != 0;
     if flags & AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER != 0 {
         usage |= wgpu::BufferUsages::VERTEX;
@@ -21863,7 +21868,7 @@ fn map_buffer_usage_flags(flags: u32, supports_compute: bool) -> wgpu::BufferUsa
     // Compute-based GS emulation (vertex pulling + expansion) needs to read IA buffers via storage
     // bindings. Gate this on backend support; downlevel/WebGL2 backends do not support compute and
     // storage buffers.
-    if supports_compute && needs_storage {
+    if supports_storage_buffers && needs_storage {
         usage |= wgpu::BufferUsages::STORAGE;
     }
     if flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER != 0 {
@@ -25803,14 +25808,16 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             exec.exec_create_buffer(&cmd_bytes, &allocs)
                 .expect("CREATE_BUFFER should succeed");
 
-            let supports_compute = exec.caps.supports_compute;
+            let supports_storage_buffers = exec.caps.supports_compute
+                && exec.device.limits().max_storage_buffers_per_shader_stage > 0;
             let buf = exec.resources.buffers.get(&BUF).expect("buffer exists");
 
-            // The command-stream executor only enables STORAGE usage on compute-capable backends.
-            if supports_compute {
+            // The command-stream executor only enables STORAGE usage on backends that actually
+            // support storage buffers.
+            if supports_storage_buffers {
                 assert!(
                     buf.usage.contains(wgpu::BufferUsages::STORAGE),
-                    "AEROGPU_RESOURCE_USAGE_STORAGE must enable STORAGE usage when compute is supported"
+                    "AEROGPU_RESOURCE_USAGE_STORAGE must enable STORAGE usage when storage buffers are supported"
                 );
 
                 let bgl = exec
@@ -25848,7 +25855,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             } else {
                 assert!(
                     !buf.usage.contains(wgpu::BufferUsages::STORAGE),
-                    "AEROGPU_RESOURCE_USAGE_STORAGE must be ignored when compute/storage buffers are unsupported"
+                    "AEROGPU_RESOURCE_USAGE_STORAGE must be ignored when storage buffers are unsupported"
                 );
             }
         });
