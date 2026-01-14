@@ -511,7 +511,14 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     return FALSE;
   }
 
-  InterlockedExchange(&devExt->ResetInProgress, 1);
+  /*
+   * Prevent concurrent reset/reinit attempts. StorPort can issue multiple
+   * management SRBs (abort/reset) back-to-back; treat redundant bring-up calls
+   * as a no-op success while a reset is already in progress.
+   */
+  if (InterlockedCompareExchange(&devExt->ResetInProgress, 1, 0) != 0) {
+    return TRUE;
+  }
 
   devExt->Vdev.QueueNotifyAddrCache = devExt->QueueNotifyAddrCache;
   devExt->Vdev.QueueNotifyAddrCacheCount = RTL_NUMBER_OF(devExt->QueueNotifyAddrCache);
