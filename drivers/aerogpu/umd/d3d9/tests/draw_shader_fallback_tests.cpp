@@ -109,6 +109,35 @@ size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
   return count;
 }
 
+size_t CountFogConstantUploads(const uint8_t* buf, size_t capacity) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return 0;
+  }
+
+  constexpr uint32_t kPsStage = AEROGPU_SHADER_STAGE_PIXEL;
+  constexpr uint32_t kFogColorRegister = 1u;
+  constexpr uint32_t kFogVec4Count = 2u; // c1..c2
+
+  size_t count = 0;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
+        hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f)) {
+      const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(buf + offset);
+      if (cmd->stage == kPsStage && cmd->start_register == kFogColorRegister && cmd->vec4_count == kFogVec4Count) {
+        ++count;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return count;
+}
+
 bool ValidateNoBindAfterDestroy(const uint8_t* buf, size_t capacity) {
   const size_t stream_len = StreamBytesUsed(buf, capacity);
   if (!Check(stream_len != 0, "stream must be non-empty and finalized")) {
@@ -278,7 +307,7 @@ bool TestPsOnlyDrawBindsFallbackVs() {
     return false;
   }
 
-  // Set FVF: XYZRHW|DIFFUSE (the only fixed-function VS fallback path supported by the UMD today).
+  // Set FVF: XYZRHW|DIFFUSE (minimal fixed-function VS fallback path used by this test).
   if (!Check(ctx.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF")) {
     return false;
   }
@@ -859,6 +888,9 @@ bool TestFixedfuncFogRhwColorSelectsFogPs() {
     return false;
   }
 
+  // Capture only the fog-enabled draw and its associated constant uploads.
+  dev->cmd.reset();
+
   hr = ctx.device_funcs.pfnDrawPrimitiveUP(ctx.hDevice,
                                            D3DDDIPT_TRIANGLELIST,
                                            /*primitive_count=*/1,
@@ -880,6 +912,13 @@ bool TestFixedfuncFogRhwColorSelectsFogPs() {
     return false;
   }
   if (!Check(ShaderContainsToken(ps_on, kPsSrcConst1), "fog-on PS references c1 (fog color)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(CountFogConstantUploads(buf, len) >= 1, "fog enabled: emits fog PS constants (c1..c2)")) {
     return false;
   }
   return true;
