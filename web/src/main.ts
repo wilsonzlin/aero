@@ -348,7 +348,12 @@ function render(): void {
   if (!app) throw new Error("Missing #app element");
 
   const query = new URLSearchParams(location.search);
-  const showInputDiagnostics = query.get("input") === "1" || query.get("input") === "true";
+  // Enable the input diagnostics panel with any truthy `?input` value:
+  //   - `?input=1`, `?input=true`, or even just `?input`
+  // Disable explicitly with:
+  //   - `?input=0` or `?input=false`
+  const inputParam = query.get("input");
+  const showInputDiagnostics = inputParam !== null && inputParam !== "0" && inputParam !== "false";
 
   const report = detectPlatformFeatures();
   const missing = explainMissingRequirements(report);

@@ -73,7 +73,7 @@ export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { init
   help.className = "hint";
   help.textContent =
     "Shows current input backend selection and held state. " +
-    "Enable via ?input=1 (dev-only) to debug stuck keys and backend switching.";
+    "Enable via ?input=1 (or ?input) to debug stuck keys and backend switching.";
 
   const pre = document.createElement("pre");
   pre.className = "mono";
