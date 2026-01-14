@@ -84,6 +84,16 @@ python3 tools/disk-streaming-conformance/selftest_range_server.py
 
 This starts `server/range_server.js` on a random local port with a temporary test file, then runs the conformance suite in `--strict` mode against it.
 
+### Self-test against the repo dev chunk server (`server/chunk_server.js`)
+
+For a quick local sanity check of chunked mode, run:
+
+```bash
+python3 tools/disk-streaming-conformance/selftest_chunk_server.py
+```
+
+This starts `server/chunk_server.js` on a random local port with a temporary `manifest.json` + `chunks/*.bin`, then runs the conformance suite in `--mode chunked --strict` against it.
+
 ### Public image
 
 ```bash
