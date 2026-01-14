@@ -61,7 +61,20 @@ class VirtioNetDiagMarkerTests(unittest.TestCase):
         out = self._emit(tail)
         self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO|host_features=0x3")
 
+    def test_emits_queue_error_flags(self) -> None:
+        tail = (
+            b"virtio-net-diag|INFO|host_features=0x1|guest_features=0x2|irq_mode=msix|irq_message_count=3|"
+            b"rx_avail_idx=1|rx_used_idx=2|tx_avail_idx=3|tx_used_idx=4|"
+            b"rx_vq_error_flags=0x00000000|tx_vq_error_flags=0x00000001\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO|host_features=0x1|guest_features=0x2|"
+            "irq_mode=msix|irq_message_count=3|rx_avail_idx=1|rx_used_idx=2|tx_avail_idx=3|tx_used_idx=4|"
+            "rx_vq_error_flags=0x00000000|tx_vq_error_flags=0x00000001",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

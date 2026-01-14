@@ -5856,6 +5856,8 @@ def _emit_virtio_net_diag_host_marker(tail: bytes) -> None:
         "rx_used_idx",
         "tx_avail_idx",
         "tx_used_idx",
+        "rx_vq_error_flags",
+        "tx_vq_error_flags",
         "tx_csum_v4",
         "tx_csum_v6",
         "tx_tso_v4",

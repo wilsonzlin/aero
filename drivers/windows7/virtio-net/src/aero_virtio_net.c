@@ -81,6 +81,9 @@ typedef struct _AEROVNET_DIAG_INFO {
   ULONGLONG StatTxErrors;
   ULONGLONG StatRxErrors;
   ULONGLONG StatRxNoBuffers;
+
+  ULONG RxVqErrorFlags;
+  ULONG TxVqErrorFlags;
 } AEROVNET_DIAG_INFO;
 #pragma pack(pop)
 
@@ -4913,6 +4916,9 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   Info.StatTxErrors = Adapter->StatTxErrors;
   Info.StatRxErrors = Adapter->StatRxErrors;
   Info.StatRxNoBuffers = Adapter->StatRxNoBuffers;
+
+  Info.RxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->RxVq.Vq);
+  Info.TxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->TxVq.Vq);
   NdisReleaseSpinLock(&Adapter->Lock);
 
   // Read back the currently programmed MSI-X vectors from virtio common config.

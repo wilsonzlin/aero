@@ -572,6 +572,9 @@ struct AEROVNET_DIAG_INFO {
   ULONGLONG StatTxErrors;
   ULONGLONG StatRxErrors;
   ULONGLONG StatRxNoBuffers;
+
+  ULONG RxVqErrorFlags;
+  ULONG TxVqErrorFlags;
 };
 #pragma pack(pop)
 
@@ -1254,17 +1257,32 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
     }
   }
 
+  const char* rx_err_flags_s = "unknown";
+  const char* tx_err_flags_s = "unknown";
+  char rx_err_buf[16];
+  char tx_err_buf[16];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, RxVqErrorFlags) + sizeof(ULONG)) {
+    snprintf(rx_err_buf, sizeof(rx_err_buf), "0x%08lx", static_cast<unsigned long>(info.RxVqErrorFlags));
+    rx_err_flags_s = rx_err_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, TxVqErrorFlags) + sizeof(ULONG)) {
+    snprintf(tx_err_buf, sizeof(tx_err_buf), "0x%08lx", static_cast<unsigned long>(info.TxVqErrorFlags));
+    tx_err_flags_s = tx_err_buf;
+  }
+
   log.Logf(
       "virtio-net-diag|INFO|host_features=%s|guest_features=%s|irq_mode=%s|irq_message_count=%lu|"
       "msix_config_vector=0x%04x|msix_rx_vector=0x%04x|msix_tx_vector=0x%04x|"
       "rx_queue_size=%u|tx_queue_size=%u|"
       "rx_avail_idx=%u|rx_used_idx=%u|tx_avail_idx=%u|tx_used_idx=%u|"
+      "rx_vq_error_flags=%s|tx_vq_error_flags=%s|"
       "tx_csum_v4=%u|tx_csum_v6=%u|tx_tso_v4=%u|tx_tso_v6=%u|"
       "stat_tx_err=%llu|stat_rx_err=%llu|stat_rx_no_buf=%llu",
       VirtioFeaturesToString(info.HostFeatures).c_str(), VirtioFeaturesToString(info.GuestFeatures).c_str(), mode,
       static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
       static_cast<unsigned>(info.MsixRxVector), static_cast<unsigned>(info.MsixTxVector), info.RxQueueSize,
-      info.TxQueueSize, info.RxAvailIdx, info.RxUsedIdx, info.TxAvailIdx, info.TxUsedIdx, info.TxChecksumV4Enabled,
+      info.TxQueueSize, info.RxAvailIdx, info.RxUsedIdx, info.TxAvailIdx, info.TxUsedIdx, rx_err_flags_s,
+      tx_err_flags_s, info.TxChecksumV4Enabled,
       info.TxChecksumV6Enabled, info.TxTsoV4Enabled, info.TxTsoV6Enabled,
       static_cast<unsigned long long>(info.StatTxErrors), static_cast<unsigned long long>(info.StatRxErrors),
       static_cast<unsigned long long>(info.StatRxNoBuffers));
