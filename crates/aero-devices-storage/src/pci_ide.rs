@@ -1811,6 +1811,7 @@ mod tests {
     #[test]
     fn drive_address_reflects_head_bits_from_device_reg() {
         let mut ctl = IdeController::new(0xFFF0);
+        // Mark both drives present so DADR can be read for both master+slave selections.
         ctl.primary.drive_present[0] = true;
         ctl.primary.drive_present[1] = true;
 

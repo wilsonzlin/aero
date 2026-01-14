@@ -228,3 +228,36 @@ fn ide_ata_dma_snapshot_roundtrip_preserves_irq_and_status_bits() {
     // Reading STATUS clears the pending IRQ.
     assert!(!restored.borrow().controller.primary_irq_pending());
 }
+
+#[test]
+fn drive_address_snapshot_roundtrip_preserves_selection_and_head_bits() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master with head=7.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE7);
+    let before = ioports.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+    assert_eq!(before & 0x10, 0x00);
+    // DADR reports active-low head-select lines (nHS3..nHS0).
+    assert_eq!(before & 0x0F, 0x08);
+
+    let snap = ide.borrow().save_state();
+
+    let restored = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    restored.borrow_mut().load_state(&snap).unwrap();
+
+    let mut ioports2 = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports2, restored.clone());
+
+    let after = ioports2.read(PRIMARY_PORTS.ctrl_base + 1, 1) as u8;
+    assert_eq!(after, before);
+}
