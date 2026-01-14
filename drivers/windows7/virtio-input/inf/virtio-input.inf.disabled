@@ -11,14 +11,9 @@
 ; avoid accidentally shipping/installing **two** INFs that match the same HWIDs.
 ;
 ; Maintenance note: from the first section header (`[Version]`) onward, this
-; legacy alias must remain in sync with `aero_virtio_input.inf` in all functional
-; content **outside** the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`).
-;
-; The models sections are allowed to differ to provide an opt-in revision-gated
-; generic fallback HWID (`PCI\\VEN_1AF4&DEV_1052&REV_01`) for environments that do
-; not expose Aero's subsystem IDs (e.g. stock QEMU). CI enforces this via
-; `drivers/windows7/virtio-input/scripts/check-inf-alias.py` and the repo-level
-; Win7 virtio contract consistency check.
+; legacy alias must remain **byte-for-byte identical** to `aero_virtio_input.inf`
+; so driver behavior cannot drift between filenames (CI enforces this via the
+; repo-level Win7 virtio contract consistency check).
 ;
 ; Aero virtio-input PCI device -> HIDClass KMDF minidriver (Windows 7 SP1)
 ;
