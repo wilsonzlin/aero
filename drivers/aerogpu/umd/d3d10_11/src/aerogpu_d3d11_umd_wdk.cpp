@@ -1304,35 +1304,6 @@ static void SetShaderResourceSlotLocked(Device* dev, uint32_t shader_stage, uint
   table[slot] = texture;
 }
 
-static void SetShaderResourceBufferSlotLocked(Device* dev,
-                                              uint32_t shader_stage,
-                                              uint32_t slot,
-                                              aerogpu_handle_t buffer,
-                                              uint32_t offset_bytes,
-                                              uint32_t size_bytes) {
-  if (!dev || slot >= kMaxShaderResourceSlots) {
-    return;
-  }
-  aerogpu_shader_resource_buffer_binding* table = ShaderResourceBufferTableForStage(dev, shader_stage);
-  if (!table) {
-    return;
-  }
-  aerogpu_shader_resource_buffer_binding binding{};
-  binding.buffer = buffer;
-  binding.offset_bytes = offset_bytes;
-  binding.size_bytes = size_bytes;
-  binding.reserved0 = 0;
-  const aerogpu_shader_resource_buffer_binding& cur = table[slot];
-  if (cur.buffer == binding.buffer && cur.offset_bytes == binding.offset_bytes && cur.size_bytes == binding.size_bytes &&
-      cur.reserved0 == binding.reserved0) {
-    return;
-  }
-  if (!BindShaderResourceBuffersRangeLocked(dev, shader_stage, slot, /*buffer_count=*/1, &binding)) {
-    return;
-  }
-  table[slot] = binding;
-}
-
 static bool ResourcesAlias(const Resource* a, const Resource* b) {
   if (!a || !b) {
     return false;
@@ -8045,6 +8016,62 @@ void AEROGPU_APIENTRY Dispatch11(D3D11DDI_HDEVICECONTEXT hCtx,
   cmd->reserved0 = 0;
 }
 
+void AEROGPU_APIENTRY DispatchIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                         D3D11DDI_HRESOURCE hBufferForArgs,
+                                         UINT AlignedByteOffsetForArgs) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  if (!hBufferForArgs.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  auto* buf = FromHandle<D3D11DDI_HRESOURCE, Resource>(hBufferForArgs);
+  if (!buf || buf->kind != ResourceKind::Buffer) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if ((AlignedByteOffsetForArgs & 3u) != 0) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint64_t off = static_cast<uint64_t>(AlignedByteOffsetForArgs);
+  if (off > buf->size_bytes || buf->size_bytes - off < 12) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (buf->storage.size() < off + 12) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  uint32_t group_count_x = 0;
+  uint32_t group_count_y = 0;
+  uint32_t group_count_z = 0;
+  std::memcpy(&group_count_x, buf->storage.data() + static_cast<size_t>(off) + 0, sizeof(group_count_x));
+  std::memcpy(&group_count_y, buf->storage.data() + static_cast<size_t>(off) + 4, sizeof(group_count_y));
+  std::memcpy(&group_count_z, buf->storage.data() + static_cast<size_t>(off) + 8, sizeof(group_count_z));
+
+  if (group_count_x == 0 || group_count_y == 0 || group_count_z == 0) {
+    return;
+  }
+
+  TrackComputeStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_dispatch>(AEROGPU_CMD_DISPATCH);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  cmd->group_count_x = group_count_x;
+  cmd->group_count_y = group_count_y;
+  cmd->group_count_z = group_count_z;
+  cmd->reserved0 = 0;
+}
+
 void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
                                                 D3D11DDI_HRESOURCE hDstResource,
                                                 UINT dst_subresource,
@@ -10358,6 +10385,14 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs->pfnDrawInstanced = &DrawInstanced11;
   ctx_funcs->pfnDrawIndexedInstanced = &DrawIndexedInstanced11;
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDispatch) { ctx_funcs->pfnDispatch = &Dispatch11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDispatchIndirect) {
+    using Fn = decltype(ctx_funcs->pfnDispatchIndirect);
+    if constexpr (std::is_convertible_v<decltype(&DispatchIndirect11), Fn>) {
+      ctx_funcs->pfnDispatchIndirect = &DispatchIndirect11;
+    } else {
+      ctx_funcs->pfnDispatchIndirect = &DdiStub<Fn>::Call;
+    }
+  }
 
   ctx_funcs->pfnCopyResource = &CopyResource11;
   ctx_funcs->pfnCopySubresourceRegion = &CopySubresourceRegion11;
