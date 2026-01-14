@@ -2683,6 +2683,8 @@ static BOOLEAN AerovNetCtrlVqRegistryReadDword(_In_ HANDLE Key, _In_ PCWSTR Name
 static BOOLEAN AerovNetCtrlVqRegistryReadMultiSz(_In_ HANDLE Key, _In_ PCWSTR Name, _Outptr_result_bytebuffer_(*BytesOut) PWCHAR* ValueOut,
                                                 _Out_ ULONG* BytesOut) {
   UNICODE_STRING ValueName;
+  ULONG MaxDataBytes;
+  ULONG MaxQueryBytes;
   ULONG ResultLen;
   NTSTATUS Status;
   UCHAR SmallBuf[sizeof(KEY_VALUE_PARTIAL_INFORMATION)];
@@ -2703,6 +2705,14 @@ static BOOLEAN AerovNetCtrlVqRegistryReadMultiSz(_In_ HANDLE Key, _In_ PCWSTR Na
     return FALSE;
   }
 
+  // Defensive bound: this is a best-effort configuration knob and should never
+  // allocate large nonpaged buffers based on untrusted registry data.
+  //
+  // The driver only applies up to 64 VLAN IDs, so a few KiB is more than enough.
+  MaxDataBytes = 4096u;
+  // `ZwQueryValueKey` requires space for KEY_VALUE_PARTIAL_INFORMATION + data.
+  MaxQueryBytes = MaxDataBytes + 256u;
+
   RtlInitUnicodeString(&ValueName, Name);
   ResultLen = 0;
   Info = (PKEY_VALUE_PARTIAL_INFORMATION)SmallBuf;
@@ -2710,6 +2720,9 @@ static BOOLEAN AerovNetCtrlVqRegistryReadMultiSz(_In_ HANDLE Key, _In_ PCWSTR Na
   RtlZeroMemory(SmallBuf, sizeof(SmallBuf));
   Status = ZwQueryValueKey(Key, &ValueName, KeyValuePartialInformation, Info, sizeof(SmallBuf), &ResultLen);
   if (Status == STATUS_BUFFER_TOO_SMALL || Status == STATUS_BUFFER_OVERFLOW) {
+    if (ResultLen == 0 || ResultLen > MaxQueryBytes) {
+      return FALSE;
+    }
     AllocBytes = ResultLen;
     Info = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePoolWithTag(NonPagedPool, AllocBytes, AEROVNET_TAG);
     if (!Info) {
@@ -2728,6 +2741,12 @@ static BOOLEAN AerovNetCtrlVqRegistryReadMultiSz(_In_ HANDLE Key, _In_ PCWSTR Na
   }
 
   DataBytes = Info->DataLength;
+  if (DataBytes > MaxDataBytes) {
+    if (NeedFree) {
+      ExFreePoolWithTag(Info, AEROVNET_TAG);
+    }
+    return FALSE;
+  }
   if (Info->Type != REG_MULTI_SZ || DataBytes < sizeof(WCHAR) || (DataBytes % sizeof(WCHAR)) != 0) {
     if (NeedFree) {
       ExFreePoolWithTag(Info, AEROVNET_TAG);
