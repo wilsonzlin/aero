@@ -61,8 +61,13 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
 
   if (!devExt->UseMsi) {
     /*
-     * INTx path: ensure MSI-X vectors are unassigned so the device must fall
-     * back to INTx + ISR semantics even if MSI-X is present/enabled.
+     * INTx path: ensure MSI-X vectors are unassigned.
+     *
+     * On Aero contract devices:
+     * - If MSI-X is disabled at the PCI layer (INTx resources), the device delivers interrupts
+     *   via INTx + ISR semantics.
+     * - If MSI-X is enabled, `VIRTIO_PCI_MSI_NO_VECTOR` suppresses interrupts for that source
+     *   (no MSI-X message and no INTx fallback).
      */
     devExt->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
     devExt->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
