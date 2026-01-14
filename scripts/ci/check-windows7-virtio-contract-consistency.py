@@ -1131,6 +1131,63 @@ def _self_test_inf_functional_bytes_utf16() -> None:
             fail(format_error("internal unit-test failed: check_inf_alias_drift unexpectedly reported drift:", [drift]))
 
 
+def _self_test_inf_alias_drift_excluding_sections_utf16() -> None:
+    """
+    Ensure check_inf_alias_drift_excluding_sections remains robust for UTF-16 INFs.
+
+    This drift check is used to validate legacy INF filename aliases while ignoring
+    comment-only drift and normalizing section-header casing. It must behave the
+    same for UTF-16 (with BOM and BOM-less) content.
+    """
+
+    canonical_header = "; canonical banner\r\n; line2\r\n\r\n"
+    alias_header = "; alias banner\r\n\r\n"
+
+    canonical_body = "[Version]\r\nSignature=\"$WINDOWS NT$\" ; comment\r\n\r\n[Foo]\r\nBar=baz ; comment\r\n"
+    # Vary header casing + inline comment text; this should not count as drift.
+    alias_body = "[Version]\r\nSignature=\"$WINDOWS NT$\" ; different\r\n\r\n[FOO]\r\nBar=baz ; different\r\n"
+
+    # Introduce functional drift outside comments.
+    alias_body_bad = "[Version]\r\nSignature=\"$WINDOWS NT$\" ; different\r\n\r\n[FOO]\r\nBar=qux ; different\r\n"
+
+    def _run_case(*, encoding: str) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td)
+            canonical = repo_root / "canonical.inf"
+            alias = repo_root / "alias.inf"
+
+            canonical.write_bytes((canonical_header + canonical_body).encode(encoding))
+            alias.write_bytes((alias_header + alias_body).encode(encoding))
+            drift = check_inf_alias_drift_excluding_sections(
+                canonical=canonical,
+                alias=alias,
+                repo_root=repo_root,
+                label="unit-test",
+                drop_sections=set(),
+            )
+            if drift is not None:
+                fail(
+                    format_error(
+                        "internal unit-test failed: check_inf_alias_drift_excluding_sections unexpectedly reported drift when only comments/casing differed:",
+                        [drift],
+                    )
+                )
+
+            alias.write_bytes((alias_header + alias_body_bad).encode(encoding))
+            drift = check_inf_alias_drift_excluding_sections(
+                canonical=canonical,
+                alias=alias,
+                repo_root=repo_root,
+                label="unit-test",
+                drop_sections=set(),
+            )
+            if drift is None:
+                fail("internal unit-test failed: check_inf_alias_drift_excluding_sections failed to detect functional drift")
+
+    _run_case(encoding="utf-16")
+    _run_case(encoding="utf-16-le")
+
+
 def _self_test_parse_queue_table_sizes() -> None:
     sample = r"""
 | Queue index | Name | Direction | Queue size |
@@ -3139,6 +3196,7 @@ def main() -> None:
     _self_test_read_text_utf16()
     _self_test_scan_text_tree_for_substrings_utf16()
     _self_test_inf_functional_bytes_utf16()
+    _self_test_inf_alias_drift_excluding_sections_utf16()
     _self_test_parse_queue_table_sizes()
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
