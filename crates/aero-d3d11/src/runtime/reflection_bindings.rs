@@ -641,6 +641,24 @@ mod tests {
     }
 
     #[test]
+    fn binding_to_layout_entry_rejects_cbuffer_slot_out_of_range() {
+        let slot = D3D11_MAX_CONSTANT_BUFFER_SLOTS;
+        let binding = crate::Binding {
+            group: 0,
+            binding: BINDING_BASE_CBUFFER + slot,
+            visibility: wgpu::ShaderStages::VERTEX,
+            kind: crate::BindingKind::ConstantBuffer { slot, reg_count: 1 },
+        };
+
+        let err = binding_to_layout_entry(&binding).expect_err("slot 14 must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("D3D11") && msg.contains("max 13"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn pipeline_bindings_info_deduplicates_and_unions_visibility() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
