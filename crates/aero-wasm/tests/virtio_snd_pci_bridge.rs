@@ -442,30 +442,21 @@ fn virtio_snd_pci_bridge_legacy_only_eventq_is_gated_on_pci_bus_master_enable() 
         size: guest_size,
     };
 
-    let mut bridge = VirtioSndPciBridge::new(
-        guest_base,
-        guest_size,
-        Some(JsValue::from_str("legacy")),
-    )
-    .expect("VirtioSndPciBridge::new");
+    let mut bridge =
+        VirtioSndPciBridge::new(guest_base, guest_size, Some(JsValue::from_str("legacy")))
+            .expect("VirtioSndPciBridge::new");
     // Enable legacy I/O decoding but keep bus mastering disabled.
     bridge.set_pci_command(0x0001);
 
     // Legacy feature negotiation (low 32 bits only).
     let host_features = bridge.io_read(VIRTIO_PCI_LEGACY_HOST_FEATURES as u32, 4);
-    bridge.io_write(
-        VIRTIO_PCI_LEGACY_GUEST_FEATURES as u32,
-        4,
-        host_features,
-    );
+    bridge.io_write(VIRTIO_PCI_LEGACY_GUEST_FEATURES as u32, 4, host_features);
 
     // Set device status.
     bridge.io_write(
         VIRTIO_PCI_LEGACY_STATUS as u32,
         1,
-        u32::from(
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
-        ),
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK),
     );
 
     // Configure event queue 1 via legacy registers.
@@ -492,15 +483,7 @@ fn virtio_snd_pci_bridge_legacy_only_eventq_is_gated_on_pci_bus_master_enable() 
     // Post a single event buffer.
     let buf = 0x4000u32;
     guest.fill(buf, 8, 0xAA);
-    write_desc(
-        &guest,
-        desc_table,
-        0,
-        buf as u64,
-        8,
-        VIRTQ_DESC_F_WRITE,
-        0,
-    );
+    write_desc(&guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
     guest.write_u16(avail, 0);
     guest.write_u16(avail + 2, 1);
     guest.write_u16(avail + 4, 0);
