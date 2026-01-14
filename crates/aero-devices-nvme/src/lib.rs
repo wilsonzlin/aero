@@ -4565,6 +4565,25 @@ mod tests {
         assert_eq!(ctrl.feature_num_io_sqs, 1);
         assert_eq!(ctrl.feature_num_io_cqs, 3);
 
+        // SEL=2 (saved) is treated the same as current/default for implemented features.
+        let get_nq_saved = NvmeCommand {
+            opc: 0x0a,
+            cid: 0,
+            nsid: 0,
+            psdt: 0,
+            prp1: 0,
+            prp2: 0,
+            cdw10: 0x07 | (2u32 << 8),
+            cdw11: 0,
+            cdw12: 0,
+            cdw13: 0,
+            cdw14: 0,
+            cdw15: 0,
+        };
+        let (status, result) = ctrl.cmd_get_features(get_nq_saved);
+        assert_eq!(status, NvmeStatus::SUCCESS);
+        assert_eq!(result, (1u32 << 16) | 3u32);
+
         // Interrupt Coalescing roundtrip.
         let set_ic = NvmeCommand {
             opc: 0x09,
