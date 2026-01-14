@@ -19694,14 +19694,14 @@ fn main() {{
                 }
             };
 
-            async fn read_staging(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
+            async fn read_staging(_device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
                 let slice = buffer.slice(..);
                 let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
                 slice.map_async(wgpu::MapMode::Read, move |res| {
                     sender.send(res).ok();
                 });
                 #[cfg(not(target_arch = "wasm32"))]
-                device.poll(wgpu::Maintain::Wait);
+                _device.poll(wgpu::Maintain::Wait);
                 receiver
                     .receive()
                     .await
@@ -22837,9 +22837,9 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view: &exec.dummy_texture_view,
                 default_sampler: &exec.default_sampler,
+                internal_buffers: &[],
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
-                internal_buffers: &[],
             };
             let bound = provider
                 .srv_buffer(0)
