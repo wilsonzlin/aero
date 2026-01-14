@@ -77,11 +77,13 @@ async function sendListDisks(): Promise<any> {
 
   // Pre-seed OPFS with a sparse aerospar file + metadata that has the *wrong* sizeBytes (file length).
   const id = "disk1";
+  const fileName = `${id}.aerospar`;
+  const format = "aerospar";
   const logicalSize = 1024 * 1024;
   const bytes = makeAerosparBytes({ diskSizeBytes: logicalSize, blockSizeBytes: 4096 });
 
   const disksDir = await opfsGetDisksDir();
-  const fh = await disksDir.getFileHandle(`${id}.aerospar`, { create: true });
+  const fh = await disksDir.getFileHandle(fileName, { create: true });
   const w = await fh.createWritable({ keepExistingData: false });
   await w.write(bytes);
   await w.close();
@@ -98,8 +100,8 @@ async function sendListDisks(): Promise<any> {
         name: "test",
         backend: "opfs",
         kind: "hdd",
-        format: "aerospar",
-        fileName: `${id}.aerospar`,
+        format,
+        fileName,
         // Intentionally wrong: physical file length, not logical disk capacity.
         sizeBytes: physicalSize,
         createdAtMs: Date.now(),
@@ -137,5 +139,85 @@ describe("disk_worker list_disks repairs aerospar sizeBytes", () => {
     const state = await opfsReadState();
     expect(state.disks["disk1"]?.sizeBytes).toBe(1024 * 1024);
   });
-});
 
+  it("repairs mislabeled aerospar files that were imported as raw", async () => {
+    vi.resetModules();
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    const id = "disk2";
+    const fileName = `${id}.img`;
+    const logicalSize = 1024 * 1024;
+    const bytes = makeAerosparBytes({ diskSizeBytes: logicalSize, blockSizeBytes: 4096 });
+
+    const disksDir = await opfsGetDisksDir();
+    const fh = await disksDir.getFileHandle(fileName, { create: true });
+    const w = await fh.createWritable({ keepExistingData: false });
+    await w.write(bytes);
+    await w.close();
+    const physicalSize = (await fh.getFile()).size;
+    expect(physicalSize).toBeLessThan(logicalSize);
+
+    const state: DiskManagerState = {
+      version: METADATA_VERSION,
+      disks: {
+        [id]: {
+          source: "local",
+          id,
+          name: "test2",
+          backend: "opfs",
+          kind: "hdd",
+          // Intentionally wrong: old import path inferred from `.img` extension.
+          format: "raw",
+          fileName,
+          sizeBytes: physicalSize,
+          createdAtMs: Date.now(),
+          lastUsedAtMs: undefined,
+        },
+      },
+      mounts: {},
+    };
+    await opfsWriteState(state);
+
+    await import("./disk_worker.ts");
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "list_disks",
+        payload: {},
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(true);
+    expect(Array.isArray(resp.result)).toBe(true);
+    expect(resp.result[0].format).toBe("aerospar");
+    expect(resp.result[0].sizeBytes).toBe(logicalSize);
+
+    const repaired = await opfsReadState();
+    expect(repaired.disks[id]?.format).toBe("aerospar");
+    expect(repaired.disks[id]?.sizeBytes).toBe(logicalSize);
+  });
+});

@@ -262,17 +262,28 @@ function idbOverlayBindingKey(overlayDiskId: string): string {
 }
 
 async function bestEffortRepairOpfsAerosparMetadata(store: ReturnType<typeof getStore>, meta: DiskImageMetadata): Promise<void> {
-  if (meta.source !== "local" || meta.backend !== "opfs" || meta.format !== "aerospar") return;
+  if (meta.source !== "local" || meta.backend !== "opfs") return;
   try {
     const handle = await opfsGetDiskFileHandle(meta.fileName, { create: false, dirPath: meta.opfsDirectory });
     const file = await handle.getFile();
     const diskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
     if (diskSizeBytes === null) return;
-    if (diskSizeBytes === meta.sizeBytes) return;
-    meta.sizeBytes = diskSizeBytes;
-    // Defensive: aerosparse disks are always HDD images; older imports may have inferred `kind`
-    // incorrectly based on file name.
-    meta.kind = "hdd";
+    const nextFormat: DiskFormat = "aerospar";
+    const nextKind: DiskKind = "hdd";
+    let changed = false;
+    if (meta.format !== nextFormat) {
+      meta.format = nextFormat;
+      changed = true;
+    }
+    if (meta.kind !== nextKind) {
+      meta.kind = nextKind;
+      changed = true;
+    }
+    if (meta.sizeBytes !== diskSizeBytes) {
+      meta.sizeBytes = diskSizeBytes;
+      changed = true;
+    }
+    if (!changed) return;
     await store.putDisk(meta);
   } catch {
     // best-effort only (missing file, corrupt header, unsupported environment, etc.)
@@ -482,9 +493,12 @@ async function requireDisk(backend: DiskBackend, id: string): Promise<DiskImageM
   const meta = await store.getDisk(id);
   if (!meta) throw new Error(`Disk not found: ${id}`);
   if (backend === "opfs") {
-    // Best-effort migration: early versions of `import_file` stored `sizeBytes=file.size` for
-    // aerosparse images, which is the *physical* file length (header+table+allocated blocks),
-    // not the logical disk capacity. Repair these records lazily so future opens succeed.
+    // Best-effort migration: early versions of `import_file` did not sniff aerosparse headers, so:
+    // - `format` could be incorrectly stored as `raw`/`unknown` for aerosparse files (e.g. mislabeled `.img`),
+    //   which would expose aerosparse headers to the guest.
+    // - `sizeBytes` could be incorrectly stored as the *physical* file length (header+table+allocated blocks),
+    //   not the logical disk capacity.
+    // Repair these records lazily so future opens succeed.
     await bestEffortRepairOpfsAerosparMetadata(store, meta);
   }
   return meta;
