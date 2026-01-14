@@ -387,8 +387,8 @@ static int RunD3D101Triangle(int argc, char** argv) {
   verts[2].pos[0] = 1.0f;
   verts[2].pos[1] = -1.0f;
   for (int i = 0; i < 3; ++i) {
-    // Vertex colors are intentionally not used by the shader. Keep them as red so the test
-    // fails if the wrong shader is accidentally compiled/bound.
+    // Vertex colors should not affect output; keep them as red so the test fails if the wrong
+    // shader is accidentally compiled/bound (e.g. one that directly uses vertex color).
     verts[i].color[0] = 1.0f;
     verts[i].color[1] = 0.0f;
     verts[i].color[2] = 0.0f;

@@ -51,6 +51,12 @@ VSOut vs_main(VSIn input) {
   VSOut o;
   o.pos = float4(input.pos.xy, 0.0f, 1.0f);
   o.color = vs_color;
+  // Ensure COLOR0 is retained in the VS input signature so CreateInputLayout can
+  // still validate the COLOR element. The condition is expected to be false for
+  // all test vertices, so this should not affect output.
+  if (input.color.x < -1.0e20f) {
+    o.color = input.color;
+  }
   return o;
 }
 
