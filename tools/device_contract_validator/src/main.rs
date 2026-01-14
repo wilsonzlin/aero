@@ -1272,7 +1272,8 @@ fn normalized_inf_lines_for_alias_diff(inf_text: &str, ignore_models: bool) -> R
         if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
             let name = line[1..line.len() - 1].trim().to_string();
             let name_lower = name.to_ascii_lowercase();
-            dropping = ignore_models && (name_lower == "aero.ntx86" || name_lower == "aero.ntamd64");
+            dropping =
+                ignore_models && (name_lower == "aero.ntx86" || name_lower == "aero.ntamd64");
             if !dropping {
                 out.push(format!("[{}]", name_lower));
             }
@@ -1994,14 +1995,16 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         .with_context(|| {
                             format!("{name}: normalize virtio-input canonical INF for alias drift check")
                         })?;
-                        let alias_lines =
-                            normalized_inf_lines_for_alias_diff(&alias_text, /* ignore_models */ true)
-                                .with_context(|| {
-                                    format!(
-                                        "{name}: normalize virtio-input alias INF for drift check: {}",
-                                        alias.display()
-                                    )
-                                })?;
+                        let alias_lines = normalized_inf_lines_for_alias_diff(
+                            &alias_text,
+                            /* ignore_models */ true,
+                        )
+                        .with_context(|| {
+                            format!(
+                                "{name}: normalize virtio-input alias INF for drift check: {}",
+                                alias.display()
+                            )
+                        })?;
                         if canonical_lines != alias_lines {
                             let first_diff = canonical_lines
                                 .iter()
@@ -2010,7 +2013,8 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                                 .unwrap_or_else(|| canonical_lines.len().min(alias_lines.len()));
                             let canonical_line =
                                 canonical_lines.get(first_diff).cloned().unwrap_or_default();
-                            let alias_line = alias_lines.get(first_diff).cloned().unwrap_or_default();
+                            let alias_line =
+                                alias_lines.get(first_diff).cloned().unwrap_or_default();
                             bail!(
                                 "{name}: virtio-input legacy alias INF drift detected outside models sections.\n\
 canonical: {}\n\
