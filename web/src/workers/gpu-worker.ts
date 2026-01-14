@@ -3415,19 +3415,21 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
               }
 
+              const rgba8 =
+                out.buffer instanceof ArrayBuffer && out.byteOffset === 0 && out.byteLength === out.buffer.byteLength
+                  ? out.buffer
+                  : out.slice().buffer;
               postToMain(
                 {
                   type: "screenshot",
                   requestId: req.requestId,
                   width,
                   height,
-                  // `Uint8Array.buffer` is typed as `ArrayBufferLike` (because views can be backed
-                  // by SharedArrayBuffer), but this `out` buffer is always a fresh ArrayBuffer.
-                  rgba8: out.buffer as ArrayBuffer,
+                  rgba8,
                   origin: "top-left",
                   ...(typeof seq === "number" ? { frameSeq: seq } : {}),
                 },
-                [out.buffer as ArrayBuffer],
+                [rgba8],
               );
               return true;
             } catch {

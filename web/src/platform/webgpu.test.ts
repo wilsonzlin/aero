@@ -19,7 +19,10 @@ describe("requestWebGpuDevice()", () => {
   });
 
   it("registers an uncapturederror handler via addEventListener when available", async () => {
-    let uncapturedHandler: ((ev: any) => void) | null = null;
+    const unset = (_ev: any) => {
+      throw new Error("uncapturederror handler was not installed");
+    };
+    let uncapturedHandler: (ev: any) => void = unset;
 
     const device = {
       addEventListener: vi.fn((type: string, handler: (ev: any) => void) => {
@@ -46,13 +49,10 @@ describe("requestWebGpuDevice()", () => {
     expect(info.preferredFormat).toBe("bgra8unorm");
 
     expect(device.addEventListener).toHaveBeenCalled();
-    expect(typeof uncapturedHandler).toBe("function");
+    expect(uncapturedHandler).not.toBe(unset);
 
     const preventDefault = vi.fn();
-    // TypeScript control-flow analysis doesn't model the callback write into `uncapturedHandler`
-    // inside the addEventListener mock, so it may narrow the variable to `null` here. Assert the
-    // expected callable shape for the test.
-    (uncapturedHandler as ((ev: any) => void) | null)?.({ preventDefault, error: "boom" });
+    uncapturedHandler({ preventDefault, error: "boom" });
     expect(preventDefault).toHaveBeenCalled();
     expect(onUncapturedError).toHaveBeenCalledWith("boom");
   });
@@ -82,7 +82,10 @@ describe("requestWebGpuDevice()", () => {
   });
 
   it("defaults to console.error logging when onUncapturedError is not provided", async () => {
-    let uncapturedHandler: ((ev: any) => void) | null = null;
+    const unset = (_ev: any) => {
+      throw new Error("uncapturederror handler was not installed");
+    };
+    let uncapturedHandler: (ev: any) => void = unset;
     const device = {
       addEventListener: vi.fn((type: string, handler: (ev: any) => void) => {
         if (type === "uncapturederror") uncapturedHandler = handler;
@@ -99,14 +102,18 @@ describe("requestWebGpuDevice()", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     await requestWebGpuDevice();
 
-    expect(typeof uncapturedHandler).toBe("function");
-    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom3" });
+    expect(uncapturedHandler).not.toBe(unset);
+    uncapturedHandler({ error: "boom3" });
+    uncapturedHandler({ error: "boom3" });
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
 
   it("treats non-function onUncapturedError values as unset", async () => {
-    let uncapturedHandler: ((ev: any) => void) | null = null;
+    const unset = (_ev: any) => {
+      throw new Error("uncapturederror handler was not installed");
+    };
+    let uncapturedHandler: (ev: any) => void = unset;
     const device = {
       addEventListener: vi.fn((type: string, handler: (ev: any) => void) => {
         if (type === "uncapturederror") uncapturedHandler = handler;
@@ -124,8 +131,9 @@ describe("requestWebGpuDevice()", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await requestWebGpuDevice({ onUncapturedError: 123 as any });
 
-    expect(typeof uncapturedHandler).toBe("function");
-    (uncapturedHandler as ((ev: any) => void) | null)?.({ error: "boom4" });
+    expect(uncapturedHandler).not.toBe(unset);
+    uncapturedHandler({ error: "boom4" });
+    uncapturedHandler({ error: "boom4" });
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
