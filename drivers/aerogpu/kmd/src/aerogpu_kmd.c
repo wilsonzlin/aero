@@ -9337,25 +9337,35 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         const ULONG unknown = status & ~known;
         if (handled == 0) {
             if (status != 0) {
-                if (unknown != 0) {
-                    InterlockedIncrement64(&adapter->PerfIrqSpurious);
-                }
                 /*
                  * Defensive: if the device reports an IRQ_STATUS bit we don't understand,
                  * still ACK it to avoid interrupt storms from a stuck level-triggered line.
                  */
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
-                InterlockedIncrement(&adapter->IrqIsrCount);
                 static LONG g_UnexpectedIrqWarned = 0;
-                if (unknown != 0 && InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
-                    DbgPrintEx(DPFLTR_IHVVIDEO_ID,
-                               DPFLTR_ERROR_LEVEL,
-                               "aerogpu-kmd: unexpected IRQ_STATUS bits (status=0x%08lx pending=0x%08lx enable=0x%08lx)\n",
-                               status,
-                               pending,
-                               enableMask);
+                if (unknown != 0) {
+                    InterlockedIncrement64(&adapter->PerfIrqSpurious);
+                    InterlockedIncrement(&adapter->IrqIsrCount);
+
+                    if (InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
+                        DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                                   DPFLTR_ERROR_LEVEL,
+                                   "aerogpu-kmd: unexpected IRQ_STATUS bits (status=0x%08lx pending=0x%08lx enable=0x%08lx)\n",
+                                   status,
+                                   pending,
+                                   enableMask);
+                    }
+                    return TRUE;
                 }
-                return TRUE;
+                /*
+                 * `status` has only known bits, but none of them are currently enabled.
+                 *
+                 * This can happen due to ControlInterrupt races (e.g. a vblank bit latched while
+                 * masked) or due to unrelated shared interrupts. We ACK the status bits so they
+                 * don't remain sticky, but return FALSE so a shared-interrupt chain can continue
+                 * dispatching other ISR handlers.
+                 */
+                return FALSE;
             }
             return FALSE;
         }
