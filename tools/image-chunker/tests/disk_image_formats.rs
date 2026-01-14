@@ -10,6 +10,7 @@ use tempfile::NamedTempFile;
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
 const VHD_DISK_TYPE_FIXED: u32 = 2;
 const VHD_DISK_TYPE_DYNAMIC: u32 = 3;
+const VHD_DISK_TYPE_DIFFERENCING: u32 = 4;
 
 fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
     buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
@@ -227,6 +228,64 @@ fn make_vhd_dynamic_with_pattern() -> MemBackend {
     backend.write_at(new_footer_offset, &footer).unwrap();
 
     backend
+}
+
+#[test]
+fn chunking_rejects_qcow2_backing_file_without_parent() {
+    let disk_size_bytes = 16 * 1024u64;
+    let mut backend = make_qcow2_with_pattern(disk_size_bytes);
+
+    // Patch in a fake backing file reference. The qcow2 parser supports backing files only when
+    // an explicit parent disk is provided, so the chunker (single-file open) must reject it.
+    let backing_file_offset = 104u64;
+    let backing_file_size = 8u32;
+    backend.write_at(8, &backing_file_offset.to_be_bytes()).unwrap();
+    backend.write_at(16, &backing_file_size.to_be_bytes()).unwrap();
+
+    let tmp = persist_mem_backend(backend);
+
+    let err = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        4096,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("qcow2 backing file"),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn chunking_rejects_vhd_differencing_without_parent() {
+    let virtual_size = SECTOR_SIZE as u64;
+    let dyn_header_offset = SECTOR_SIZE as u64;
+    let file_len = dyn_header_offset + 1024 + SECTOR_SIZE as u64;
+
+    // A differencing VHD (disk_type=4) requires an explicit parent; the chunker only opens a
+    // single file and should reject it.
+    let footer = make_vhd_footer(virtual_size, VHD_DISK_TYPE_DIFFERENCING, dyn_header_offset);
+
+    let mut backend = MemBackend::with_len(file_len).unwrap();
+    backend
+        .write_at(file_len - SECTOR_SIZE as u64, &footer)
+        .unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let err = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        SECTOR_SIZE as u64,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("differencing") && err.to_string().contains("parent"),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[test]
