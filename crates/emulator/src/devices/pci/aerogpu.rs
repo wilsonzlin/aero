@@ -502,12 +502,14 @@ impl AeroGpuPciDevice {
 
         // Consume any pending doorbells after catching up vblank state so vsync-paced submissions
         // cannot complete on an already-elapsed vblank edge.
-        if self.doorbell_pending {
+        //
+        // If bus mastering is disabled, preserve the pending doorbell so it can be processed once
+        // the guest enables COMMAND.BME. This matches the canonical machine behavior and avoids
+        // requiring guests to re-ring the doorbell after enabling bus mastering.
+        if self.doorbell_pending && dma_enabled {
             self.doorbell_pending = false;
-            if dma_enabled {
-                self.executor.process_doorbell(&mut self.regs, mem);
-                self.update_irq_level();
-            }
+            self.executor.process_doorbell(&mut self.regs, mem);
+            self.update_irq_level();
         }
     }
 
