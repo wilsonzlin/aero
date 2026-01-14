@@ -859,7 +859,7 @@ function Wait-AeroSelftestResult {
         $matches = [regex]::Matches($tail, [regex]::Escape($prefix) + "[^`r`n]*")
         if ($matches.Count -gt 0) {
           $line = $matches[$matches.Count - 1].Value
-          if ($line -match "(?:^|\\|)expect_blk_msi=(0|1)(?:\\||$)") {
+          if ($line -match "(?:^|\|)expect_blk_msi=(0|1)(?:\||$)") {
             $configExpectBlkMsi = $Matches[1]
             $sawConfigExpectBlkMsi = $true
             if ($configExpectBlkMsi -ne "1") {
