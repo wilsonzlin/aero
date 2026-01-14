@@ -218,6 +218,7 @@ param(
   #
   # This is required when running the host harness with `-WithBlkReset` / `--with-blk-reset`.
   [Parameter(Mandatory = $false)]
+  [Alias("TestVirtioBlkReset")]
   [switch]$TestBlkReset,
 
   # If set, enable virtio-input "CompatIdName" mode in the guest by writing:
