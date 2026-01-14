@@ -437,6 +437,12 @@ The web runtime uses fixed constants for BAR placement:
   [`crates/aero-wasm/src/guest_layout.rs`](../crates/aero-wasm/src/guest_layout.rs).
 - `VRAM_BASE_PADDR = PCI_MMIO_BASE` (i.e. VRAM lives inside the canonical PC/Q35 PCI/MMIO hole).
 
+Note: this is a **web-runtime implementation contract**. It differs from the canonical
+`aero_machine` model where BAR bases are assigned by BIOS and must be treated as dynamic by the
+guest. In the browser runtime today, VRAM is reserved at a fixed guest-physical address to keep
+multi-worker mapping simple; if/when BAR1 becomes a fully dynamic PCI BAR in the web runtime, this
+contract may be revisited.
+
 To avoid overlapping the contiguous wasm linear-memory guest RAM buffer with the PCI BAR window,
 the web runtime clamps `guest_size <= PCI_MMIO_BASE` (see `computeGuestRamLayout(...)` in
 `web/src/runtime/shared_layout.ts`).
@@ -471,6 +477,12 @@ helpers:
   - `guestRangeInBounds(ramBytes, paddr, len)` → `boolean`
 - Rust mirror (used by wasm-side DMA bridges): [`crates/aero-wasm/src/guest_phys.rs`](../crates/aero-wasm/src/guest_phys.rs)
   (`translate_guest_paddr_range`, `translate_guest_paddr_chunk`, etc.)
+
+In addition to scanout/cursor readback, the GPU worker’s TypeScript AeroGPU command executor uses
+the same “RAM vs VRAM aperture” resolution policy when it needs to slice guest physical memory for
+DMA-style operations (uploads/copies/etc):
+
+- `web/src/workers/aerogpu-acmd-executor.ts` (`sliceGuestChecked(...)`)
 
 ### How the GPU worker resolves scanout `base_paddr` (RAM vs VRAM)
 
