@@ -135,7 +135,7 @@ Note: the `@group(N)` index is **stage-scoped** in Aero. The stable stage→grou
 - `@group(0)`: vertex shader (VS)
 - `@group(1)`: pixel/fragment shader (PS)
 - `@group(2)`: compute shader (CS)
-- `@group(3)`: reserved internal group for emulated D3D11 stages (GS/HS/DS) and helper bindings
+- `@group(3)`: reserved internal / emulation group (GS/HS/DS resources + compute-expansion scratch)
 
 The example above shows the vertex shader group; a pixel shader cbuffer declaration would use
 `@group(1)` instead (see “Resource binding mapping”).
@@ -860,6 +860,83 @@ common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(270)`: `gs_out_indices` (read_write storage)
 - `@binding(271)`: `indirect_args` (read_write storage)
 - `@binding(272)`: `counters` (read_write storage; atomics)
+
+**`ExpandParams` layout (concrete; `@binding(256)`)**
+
+The expansion pipeline needs a small, stable parameter block that covers:
+
+- the original D3D draw parameters (`Draw` / `DrawIndexed`),
+- IA topology,
+- IA buffer offsets/strides (because D3D offsets are not guaranteed to be 256-byte aligned and
+  therefore cannot be expressed purely via WebGPU buffer-binding offsets), and
+- output capacities (for overflow protection).
+
+Recommended packed layout (little-endian, 4-byte fields):
+
+```c
+// Total size: 128 bytes (aligned to 16 for convenience).
+struct AerogpuExpandParams {
+  uint32_t draw_kind;   // 0 = Draw, 1 = DrawIndexed
+  uint32_t topology;    // enum aerogpu_primitive_topology (including adj/patchlist extensions)
+  uint32_t vertex_count;
+  uint32_t index_count; // 0 for Draw
+
+  uint32_t instance_count;
+  uint32_t first_vertex;
+  uint32_t first_index;    // 0 for Draw
+  uint32_t first_instance;
+
+  int32_t  base_vertex;    // 0 for Draw
+  uint32_t index_format;   // enum aerogpu_index_format (valid only for DrawIndexed)
+  uint32_t index_offset_bytes; // IA index-buffer binding offset in bytes
+  uint32_t expanded_vertex_stride_bytes;
+
+  uint32_t out_max_vertices; // capacity of the current output vertex buffer (elements)
+  uint32_t out_max_indices;  // capacity of the current output index buffer (elements; 0 if unused)
+
+  // Compact IA vertex-buffer bindings (after slot compaction).
+  // Each entry corresponds to vbN in `@binding(257 + N)`.
+  struct {
+    uint32_t base_offset_bytes; // IA VB binding offset in bytes
+    uint32_t stride_bytes;      // IA VB binding stride in bytes
+  } vb[8];
+
+  uint32_t reserved0;
+  uint32_t reserved1;
+};
+```
+
+WGSL-side, this is typically declared as:
+
+```wgsl
+struct ExpandParams { /* same fields */ }
+@group(3) @binding(256) var<uniform> params: ExpandParams;
+```
+
+**`counters` layout (concrete; `@binding(272)`)**
+
+The counters buffer is written by expansion passes and read when finalizing indirect args:
+
+```wgsl
+struct ExpandCounters {
+  out_vertex_count: atomic<u32>;
+  out_index_count: atomic<u32>;
+  overflow: atomic<u32>; // 0/1 (set when any pass exceeds out_*_max)
+  _pad0: u32;
+}
+@group(3) @binding(272) var<storage, read_write> counters: ExpandCounters;
+```
+
+**Initialization requirements**
+
+Before running expansion for a draw, the runtime MUST initialize the per-draw scratch state:
+
+- Zero `counters` (all fields, including atomics).
+- Zero the relevant `indirect_args` struct (so a failed/overflowed expansion deterministically draws
+  nothing).
+
+This can be done with `CommandEncoder::clear_buffer` / `wgpu::CommandEncoder::clear_buffer` when
+available, or via a small `queue.write_buffer`/copy-from-zero-buffer fallback.
 
 Note: vertex pulling requires reading the guest’s bound vertex/index buffers from compute. The
 host must therefore create buffers with `AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER` /
