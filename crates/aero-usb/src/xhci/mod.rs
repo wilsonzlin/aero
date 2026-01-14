@@ -56,7 +56,8 @@ use aero_io_snapshot::io::state::{
 };
 
 use crate::device::AttachedUsbDevice;
-use crate::{MemoryBus, UsbDeviceModel};
+use crate::hub::UsbHubDevice;
+use crate::{MemoryBus, UsbDeviceModel, UsbHubAttachError};
 
 use self::port::XhciPort;
 use self::trb::{CompletionCode, Trb, TrbType};
@@ -294,6 +295,91 @@ impl XhciController {
 
         ctrl.rebuild_ext_caps();
         ctrl
+    }
+
+    pub fn port_count(&self) -> u8 {
+        self.port_count
+    }
+
+    /// Attach a USB device model at a host-visible topology path.
+    ///
+    /// Path numbering matches the `hub::RootHub` contract used by UHCI:
+    /// - `path[0]` is the root port index (0-based).
+    /// - `path[1..]` are downstream hub ports (1-based, per USB spec).
+    pub fn attach_at_path(
+        &mut self,
+        path: &[u8],
+        model: Box<dyn UsbDeviceModel>,
+    ) -> Result<(), UsbHubAttachError> {
+        let Some((&root_port, rest)) = path.split_first() else {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+        let root_port = root_port as usize;
+        if root_port >= self.ports.len() {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+
+        if rest.is_empty() {
+            if self.ports[root_port].has_device() {
+                return Err(UsbHubAttachError::PortOccupied);
+            }
+            self.attach_device(root_port, model);
+            return Ok(());
+        }
+
+        let Some(root_dev) = self.ports[root_port].device_mut() else {
+            return Err(UsbHubAttachError::NoDevice);
+        };
+
+        let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
+        let mut hub_dev = root_dev;
+        for &hop in hub_path {
+            hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
+        }
+        hub_dev.model_mut().hub_attach_device(leaf_port, model)
+    }
+
+    /// Detach any USB device model at a host-visible topology path.
+    pub fn detach_at_path(&mut self, path: &[u8]) -> Result<(), UsbHubAttachError> {
+        let Some((&root_port, rest)) = path.split_first() else {
+            return Err(UsbHubAttachError::InvalidPort);
+        };
+        let root_port = root_port as usize;
+        if root_port >= self.ports.len() {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+
+        if rest.is_empty() {
+            if !self.ports[root_port].has_device() {
+                return Err(UsbHubAttachError::NoDevice);
+            }
+            self.detach_device(root_port);
+            return Ok(());
+        }
+
+        let Some(root_dev) = self.ports[root_port].device_mut() else {
+            return Err(UsbHubAttachError::NoDevice);
+        };
+
+        let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
+        let mut hub_dev = root_dev;
+        for &hop in hub_path {
+            hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
+        }
+        hub_dev.model_mut().hub_detach_device(leaf_port)
+    }
+
+    /// Convenience helper for attaching an external USB hub device to a root port.
+    pub fn attach_hub(&mut self, root_port: u8, port_count: u8) -> Result<(), UsbHubAttachError> {
+        if port_count == 0 {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        let root_port = root_port as usize;
+        if root_port >= self.ports.len() {
+            return Err(UsbHubAttachError::InvalidPort);
+        }
+        self.attach_device(root_port, Box::new(UsbHubDevice::with_port_count(port_count)));
+        Ok(())
     }
 
     pub fn mmio_read_u32(&mut self, mem: &mut dyn MemoryBus, offset: u64) -> u32 {

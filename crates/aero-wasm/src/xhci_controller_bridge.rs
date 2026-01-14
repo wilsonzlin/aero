@@ -19,9 +19,11 @@ use js_sys::Uint8Array;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::xhci::XhciController;
 use aero_usb::MemoryBus;
+use aero_usb::{UsbDeviceModel, UsbHubAttachError};
 
 const XHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"XHCB";
 const XHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+const XHCI_MAX_ROUTE_PORT: u32 = 15;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -36,6 +38,64 @@ fn validate_mmio_size(size: u8) -> usize {
     match size {
         1 | 2 | 4 => size as usize,
         _ => 0,
+    }
+}
+
+fn map_attach_error(err: UsbHubAttachError) -> JsValue {
+    match err {
+        UsbHubAttachError::NotAHub => js_error("device is not a USB hub"),
+        UsbHubAttachError::InvalidPort => js_error("invalid hub/root port"),
+        UsbHubAttachError::PortOccupied => js_error("USB hub port already occupied"),
+        UsbHubAttachError::NoDevice => js_error("no device attached at hub port"),
+    }
+}
+
+fn parse_xhci_usb_path(path: JsValue, port_count: u8) -> Result<Vec<u8>, JsValue> {
+    let parts: Vec<u32> = serde_wasm_bindgen::from_value(path)
+        .map_err(|e| js_error(format!("Invalid USB topology path: {e}")))?;
+    if parts.is_empty() {
+        return Err(js_error("USB topology path must not be empty"));
+    }
+
+    let root = parts[0];
+    if root >= port_count as u32 {
+        // Root ports are 0-based in the guest-facing contract; xHCI itself uses 1-based port IDs.
+        let max = port_count.saturating_sub(1);
+        return Err(js_error(format!(
+            "xHCI root port out of range (expected 0..={max})"
+        )));
+    }
+
+    let mut out = Vec::with_capacity(parts.len());
+    out.push(root as u8);
+    for &part in &parts[1..] {
+        if !(1..=XHCI_MAX_ROUTE_PORT).contains(&part) {
+            return Err(js_error(format!(
+                "xHCI hub port numbers must be in 1..={XHCI_MAX_ROUTE_PORT}"
+            )));
+        }
+        out.push(part as u8);
+    }
+
+    Ok(out)
+}
+
+fn attach_device_at_path(
+    ctrl: &mut XhciController,
+    path: &[u8],
+    device: Box<dyn UsbDeviceModel>,
+) -> Result<(), JsValue> {
+    // Replace semantics: detach any existing device at the path first.
+    let _ = ctrl.detach_at_path(path);
+    ctrl.attach_at_path(path, device).map_err(map_attach_error)
+}
+
+fn detach_device_at_path(ctrl: &mut XhciController, path: &[u8]) -> Result<(), JsValue> {
+    match ctrl.detach_at_path(path) {
+        Ok(()) => Ok(()),
+        // Detach is intentionally idempotent for host-side topology management.
+        Err(UsbHubAttachError::NoDevice) => Ok(()),
+        Err(e) => Err(map_attach_error(e)),
     }
 }
 
@@ -374,5 +434,57 @@ impl XhciControllerBridge {
     /// Restore xHCI controller state from deterministic snapshot bytes.
     pub fn restore_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         self.load_state(bytes)
+    }
+
+    /// Attach a USB hub device to a root port.
+    ///
+    /// `port_count` is the number of downstream ports on the hub (1..=15). This is capped to 15 to
+    /// preserve xHCI route-string constraints (hub port numbers are encoded as 4-bit nibbles).
+    pub fn attach_hub(&mut self, root_port: u32, port_count: u32) -> Result<(), JsValue> {
+        let ctrl_ports = self.ctrl.port_count();
+        if root_port >= ctrl_ports as u32 {
+            let max = ctrl_ports.saturating_sub(1);
+            return Err(js_error(format!(
+                "xHCI root port out of range (expected 0..={max})"
+            )));
+        }
+        if !(1..=XHCI_MAX_ROUTE_PORT).contains(&port_count) {
+            return Err(js_error(format!(
+                "xHCI hub port count must be in 1..={XHCI_MAX_ROUTE_PORT}"
+            )));
+        }
+
+        let root_port = root_port as u8;
+        let port_count = port_count as u8;
+
+        // Replace semantics: detach any existing device at the root port first.
+        let _ = self.ctrl.detach_at_path(&[root_port]);
+        self.ctrl.attach_hub(root_port, port_count).map_err(map_attach_error)
+    }
+
+    /// Detach any USB device attached at the given topology path.
+    pub fn detach_at_path(&mut self, path: JsValue) -> Result<(), JsValue> {
+        let path = parse_xhci_usb_path(path, self.ctrl.port_count())?;
+        detach_device_at_path(&mut self.ctrl, &path)
+    }
+
+    /// Attach a WebHID-backed USB HID device at the given topology path.
+    pub fn attach_webhid_device(
+        &mut self,
+        path: JsValue,
+        device: &crate::WebHidPassthroughBridge,
+    ) -> Result<(), JsValue> {
+        let path = parse_xhci_usb_path(path, self.ctrl.port_count())?;
+        attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
+    }
+
+    /// Attach a generic USB HID passthrough device at the given topology path.
+    pub fn attach_usb_hid_passthrough_device(
+        &mut self,
+        path: JsValue,
+        device: &crate::UsbHidPassthroughBridge,
+    ) -> Result<(), JsValue> {
+        let path = parse_xhci_usb_path(path, self.ctrl.port_count())?;
+        attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
     }
 }
