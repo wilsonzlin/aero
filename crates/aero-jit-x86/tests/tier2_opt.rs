@@ -351,6 +351,66 @@ fn cse_removes_duplicate_expressions() {
 }
 
 #[test]
+fn const_fold_simplifies_idempotent_and_or() {
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::And,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Value(v(0)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Or,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Value(v(1)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(2)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let env = RuntimeEnv::default();
+    let mut base_state = T2State::default();
+    base_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0x1234_5678_9abc_def0;
+    let mut opt_state = base_state.clone();
+    let mut bus0 = SimpleBus::new(256);
+    let mut bus1 = bus0.clone();
+
+    let baseline = run_trace(&trace, &env, &mut bus0, &mut base_state, 1);
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    // Both idempotent ops should fold away.
+    assert!(
+        !optimized
+            .iter_instrs()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::And | BinOp::Or, .. })),
+        "expected idempotent And/Or to be simplified away"
+    );
+
+    let out = passes::regalloc::run(&optimized);
+    let opt_run = run_trace_with_cached_regs(&optimized, &env, &mut bus1, &mut opt_state, 1, &out.cached);
+
+    assert_eq!(baseline.exit, opt_run.exit);
+    assert_eq!(base_state, opt_state);
+    assert_eq!(bus0.mem(), bus1.mem());
+}
+
+#[test]
 fn boolean_simplify_removes_nested_eq_and_simplifies_guards() {
     // This pattern is produced by Tier-2 lowering for booleanization:
     //   is_zero    = (x == 0)

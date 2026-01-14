@@ -276,11 +276,13 @@ fn algebraic_simplify(op: BinOp, lhs: Operand, rhs: Operand) -> Option<Operand> 
             (_, Operand::Const(0)) | (Operand::Const(0), _) => Some(Operand::Const(0)),
             (x, Operand::Const(u64::MAX)) => Some(x),
             (Operand::Const(u64::MAX), x) => Some(x),
+            (x, y) if x == y => Some(x),
             _ => None,
         },
         BinOp::Or => match (lhs, rhs) {
             (x, Operand::Const(0)) => Some(x),
             (Operand::Const(0), x) => Some(x),
+            (x, y) if x == y => Some(x),
             _ => None,
         },
         BinOp::Xor => match (lhs, rhs) {
@@ -289,8 +291,9 @@ fn algebraic_simplify(op: BinOp, lhs: Operand, rhs: Operand) -> Option<Operand> 
             (x, y) if x == y => Some(Operand::Const(0)),
             _ => None,
         },
-        BinOp::Shl | BinOp::Shr | BinOp::Sar => match rhs {
-            Operand::Const(0) => Some(lhs),
+        BinOp::Shl | BinOp::Shr | BinOp::Sar => match (lhs, rhs) {
+            (Operand::Const(0), _) => Some(Operand::Const(0)),
+            (_, Operand::Const(0)) => Some(lhs),
             _ => None,
         },
         BinOp::Eq => (lhs == rhs).then_some(Operand::Const(1)),
