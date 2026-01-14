@@ -564,10 +564,12 @@ In the canonical machine, this is implemented by:
 Separately, VBE graphics modes use a linear framebuffer (LFB) at a different physical address:
 
 - With the transitional standalone VGA/VBE path (`MachineConfig::enable_vga=true`), the LFB base is
-  a configuration knob (defaulting to `aero_gpu_vga::SVGA_LFB_BASE`, i.e. `0xE000_0000`). When the PC
-  platform is enabled, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA” PCI
-  function (currently `00:0c.0`) and routes the LFB through its BAR0 inside the ACPI-reported PCI
-  MMIO window (BAR base assigned by BIOS POST / the PCI allocator).
+  a configuration knob when the PC platform is disabled (defaulting to `aero_gpu_vga::SVGA_LFB_BASE`,
+  i.e. `0xE000_0000`). When the PC platform is enabled, the canonical machine exposes a
+  Bochs/QEMU-compatible VGA PCI stub (currently `00:0c.0`) whose BAR0 is assigned by BIOS POST / the
+  PCI resource allocator (and may be relocated when other PCI devices are present). The machine
+  mirrors that assigned BAR base into the BIOS VBE `PhysBasePtr` and the VGA device model so MMIO
+  routing and BIOS-reported mode info remain coherent.
 - In the intended AeroGPU-owned VGA/VBE path (`MachineConfig::enable_aerogpu=true`), the firmware
   VBE mode-info `PhysBasePtr` is derived from AeroGPU BAR1:
   `PhysBasePtr = BAR1_BASE + 0x40000` (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; see

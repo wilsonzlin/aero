@@ -907,7 +907,7 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 /// VGA/VBE boot display path is enabled (`MachineConfig::enable_vga=true`, `enable_aerogpu=false`)
 /// and the PC platform is enabled (`enable_pc_platform=true`). In that configuration, the VBE LFB
 /// is routed through the stub's BAR0 inside the PCI MMIO window (BAR base assigned by BIOS POST /
-/// the PCI allocator).
+/// the PCI allocator, and may be relocated when other PCI devices are present).
 ///
 /// This stub is intentionally absent when AeroGPU is enabled to avoid exposing two VGA-class PCI
 /// display controllers to the guest (which can confuse Windows driver binding).
@@ -915,7 +915,7 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 /// It is *not* AeroGPU. The canonical AeroGPU contract is [`AEROGPU`].
 pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
     name: "vga-transitional-stub",
-    // Historical fixed BDF used by Aero's deprecated transitional VGA PCI stub (`00:0c.0`).
+    // Historical fixed BDF used by Aero's transitional VGA PCI stub (`00:0c.0`).
     //
     // The canonical `aero_machine::Machine` exposes this PCI function only in `enable_vga=true` +
     // `enable_pc_platform=true` mode (see above). When `enable_aerogpu=true`, the stub is absent.
@@ -954,8 +954,9 @@ pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
 ///
 /// When `enable_pc_platform=true`, the canonical machine exposes the Bochs/QEMU-compatible
 /// “Standard VGA” PCI stub [`VGA_TRANSITIONAL_STUB`] and routes the LFB through its BAR0 inside the
-/// PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator). When `enable_pc_platform=false`,
-/// the LFB is mapped directly as a fixed MMIO window at the configured physical address.
+/// PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator, and may be relocated when
+/// other PCI devices are present). When `enable_pc_platform=false`, the LFB is mapped directly as a
+/// fixed MMIO window at the configured physical address.
 pub const AEROGPU: PciDeviceProfile = PciDeviceProfile {
     name: "aerogpu",
     bdf: PciBdf::new(0, 7, 0),
