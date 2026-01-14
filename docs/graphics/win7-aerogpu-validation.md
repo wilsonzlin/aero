@@ -342,6 +342,7 @@ For quick guest-side sanity checks:
   * Alloc table READONLY propagation (validates Win7/WDDM `WriteOperation` metadata is surfaced as `AEROGPU_ALLOC_FLAG_READONLY` so the host can reject unintended guest-memory writeback): `drivers/aerogpu/tests/win7/alloc_table_readonly_sanity`
   * D3D9Ex DWM-critical device probes (must be non-blocking; checks `CheckDeviceState`, `PresentEx` throttling, `WaitForVBlank`, `GetPresentStats`, residency, GPU thread priority, etc.): `drivers/aerogpu/tests/win7/d3d9ex_dwm_ddi_sanity`
   * Cross-process shared surface open (validates `DxgkDdiOpenAllocation` + ShareToken-backed shared-surface interop across runtimes):
+    * Canonical `share_token` contract: `docs/graphics/win7-shared-surfaces-share-token.md`
     * D3D9Ex: `drivers/aerogpu/tests/win7/d3d9ex_shared_surface` and `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_ipc`
     * D3D9Ex (open/close churn stress; catches hangs/crashes under repeated create→open→destroy): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_stress`
     * D3D9Ex (Win7 x64 cross-bitness; DWM scenario): `drivers/aerogpu/tests/win7/d3d9ex_shared_surface_wow64`
