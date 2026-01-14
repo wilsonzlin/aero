@@ -385,6 +385,9 @@ Notes:
     - `virtio-<dev>-irq|INFO|mode=intx`
     - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>` (message interrupts; does not distinguish MSI vs MSI-X)
     - `virtio-<dev>-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when a driver exposes richer MSI-X diagnostics)
+      - For virtio-snd, when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface, the MSI-X variant includes:
+        - `msix_queue0_vector..msix_queue3_vector` (per-queue MSI-X routing)
+        - `interrupt_count`, `dpc_count`, and `drain0..drain3` counters (diagnostics)
     - `virtio-snd-irq|INFO|mode=none|...` (polling-only; no interrupt objects are connected)
       (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
   The host harness mirrors the per-test `irq_*` fields into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` markers, and the
@@ -396,7 +399,7 @@ Notes:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n|none>|rx_vector=<n|none>|tx_vector=<n|none>`
     - Newer virtio-net driver/selftest builds may append additional diagnostic fields (best-effort), for example:
       `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
-  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=intx/msix/none/unknown|messages=<n>|config_vector=<v>|queue0_vector=<v>|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n|none>|queue0_vector=<n|none>|queue1_vector=<n|none>|queue2_vector=<n|none>|queue3_vector=<n|none>|interrupts=<n>|dpcs=<n>|drain0=<n>|drain1=<n>|drain2=<n>|drain3=<n>`
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=intx/msix/unknown|messages=<n>|mapping=...|...`
     (the marker is always emitted; `--require-input-msix` makes non-`mode=msix` fail the overall selftest)
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
