@@ -827,6 +827,27 @@ row_start(r) = r * (T + 1) - (r * (r - 1)) / 2
 idx(r, c) = row_start(r) + c
 ```
 
+**Inverse mapping (linear id → `(r, c)`)**
+
+Some implementations will dispatch DS evaluation with a single linear `domain_vertex_id` in
+`0..V_patch`. To derive `(r, c)` from `domain_vertex_id` deterministically (without floating-point
+math), use the row-lengths:
+
+```wgsl
+// Precondition: 0 <= domain_vertex_id < V_patch.
+var id: u32 = domain_vertex_id;
+var r: u32 = 0u;
+loop {
+  let row_len: u32 = T - r + 1u;
+  if (id < row_len) { break; }
+  id -= row_len;
+  r += 1u;
+}
+let c: u32 = id;
+```
+
+Then compute `SV_DomainLocation` using the formulas above.
+
 **Triangle list indices**
 
 For each row `r = 0..(T - 1)`:
@@ -834,8 +855,8 @@ For each row `r = 0..(T - 1)`:
 - Emit the “lower-left” triangle for `c = 0..(T - r - 1)`:
   - `a = idx(r, c)`
   - `b = idx(r, c + 1)`
-  - `c0 = idx(r + 1, c)`
-  - triangle = `(a, b, c0)`
+ - `c0 = idx(r + 1, c)`
+ - triangle = `(a, b, c0)`
 - Emit the “upper-right” triangle for `c = 0..(T - r - 2)`:
   - `a = idx(r, c + 1)`
   - `b = idx(r + 1, c + 1)`
@@ -848,6 +869,15 @@ Winding:
 
 - For `outputtopology("triangle_ccw")`, use the triangle order above.
 - For `outputtopology("triangle_cw")`, swap `b` and `c0` for each triangle (reverse winding).
+
+**Writing into global buffers**
+
+The indices above are *patch-local* vertex indices. When writing into the shared output buffers:
+
+- `tess_out_vertices[base_vertex + local_vertex_id] = ...`
+- `tess_out_indices[base_index + local_index_id] = base_vertex + patch_local_vertex_id`
+
+Where `base_vertex` / `base_index` are read from `tess_patch_state[patch_instance_id]`.
 
 Total sizes for a draw (pre-GS) are:
 
@@ -868,6 +898,85 @@ The runtime may:
   scratch runs out, or
 - allocate dynamically based on per-patch `T` (recommended; requires per-patch allocation state,
   e.g. `tess_patch_state`).
+
+#### 2.1.2b) Tessellation sizing (P2b: quad domain, integer partitioning; conservative)
+
+For `domain("quad")` we need two tessellation levels: one along U and one along V.
+
+As with P2a, we use a conservative, uniform policy based on the HS patch-constant tess factors:
+
+- Clamp tess factors:
+  - `tf = clamp(tf, 1.0, 64.0)`
+- Convert to integer segment counts:
+  - `seg = ceil(tf)` (as `u32`)
+- Choose conservative U/V tessellation levels:
+  - `T_u = max(edge_seg[0], edge_seg[2], inside_seg[0])`
+  - `T_v = max(edge_seg[1], edge_seg[3], inside_seg[1])`
+
+Store:
+
+- `tess_patch_state[patch_instance_id].tess_level_u = T_u`
+- `tess_patch_state[patch_instance_id].tess_level_v = T_v`
+
+For a quad-domain patch tessellated at `(T_u, T_v)`:
+
+- Domain vertices per patch: `V_patch = (T_u + 1) * (T_v + 1)`
+- Triangles per patch (triangle list): `P_patch = 2 * T_u * T_v`
+- Indices per patch (triangle list): `I_patch = 3 * P_patch = 6 * T_u * T_v`
+
+**Quad-domain grid enumeration (P2b; concrete)**
+
+Let `T_u >= 1` and `T_v >= 1`.
+
+**Vertex enumeration**
+
+Vertices are enumerated in rows `r = 0..T_v`, each containing `T_u + 1` vertices with column
+`c = 0..T_u`.
+
+The `SV_DomainLocation` for vertex `(r, c)` is:
+
+- `u = f32(c) / f32(T_u)`
+- `v = f32(r) / f32(T_v)`
+
+The linear index of `(r, c)` within the patch vertex array is:
+
+```
+idx(r, c) = r * (T_u + 1) + c
+```
+
+Inverse mapping (linear id → `(r, c)`):
+
+```
+r = domain_vertex_id / (T_u + 1)
+c = domain_vertex_id % (T_u + 1)
+```
+
+**Triangle list indices**
+
+For each cell `r = 0..(T_v - 1)`, `c = 0..(T_u - 1)`:
+
+- `a = idx(r, c)`
+- `b = idx(r, c + 1)`
+- `c0 = idx(r + 1, c)`
+- `d = idx(r + 1, c + 1)`
+- Emit triangles:
+  - `(a, b, c0)`
+  - `(b, d, c0)`
+
+Winding:
+
+- For `outputtopology("triangle_ccw")`, use the triangle order above.
+- For `outputtopology("triangle_cw")`, swap the last two indices of each triangle (reverse winding).
+
+Writing into global buffers uses the same `{base_vertex, base_index}` offsetting rule as tri-domain.
+
+Total sizes for a draw (pre-GS) are:
+
+- `V_total = patch_count * instance_count * V_patch`
+- `I_total = patch_count * instance_count * I_patch`
+
+Final output topology (when no GS is bound) is triangle list, and the render pass uses
+`drawIndexedIndirect`.
 
 #### 2.1.3) Geometry shader instancing (`SV_GSInstanceID`)
 
@@ -1165,8 +1274,11 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         `SV_InsideTessFactor`).
       - Computes tessellation level(s) and stores them in `tess_patch_state[patch_instance_id]`:
         - P2a tri-domain: `tess_level_u = T`, `tess_level_v = 0`
+        - P2b quad-domain: `tess_level_u = T_u`, `tess_level_v = T_v`
       - Computes per-patch output sizes and allocates output ranges (recommended; uses atomics):
-        - `vertex_count = V_patch(T)`, `index_count = I_patch(T)` (see tess sizing formulas)
+        - Per-patch counts (triangle list output):
+          - tri domain: `vertex_count = (T + 1)(T + 2)/2`, `index_count = 3*T*T`
+          - quad domain: `vertex_count = (T_u + 1)(T_v + 1)`, `index_count = 6*T_u*T_v`
         - `base_vertex = atomicAdd(&counters.out_vertex_count, vertex_count)`
         - `base_index  = atomicAdd(&counters.out_index_count, index_count)`
         - Store `{base_vertex, vertex_count, base_index, index_count}` into
@@ -1187,6 +1299,7 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Generates tessellated domain points and evaluates DS.
       - For P2a tri-domain, the doc specifies a concrete uniform grid enumeration and triangle-list
         index generation (see “Tri-domain grid enumeration” above).
+      - For P2b quad-domain, see “Quad-domain grid enumeration” above.
       - Uses `tess_patch_state[patch_instance_id]` to coordinate per-patch output ranges
         (`base_vertex/base_index`) when emitting into the shared `tess_out_*` buffers.
       - DS consumes the HS patch-constant outputs (at minimum tess factors) via
