@@ -4034,6 +4034,43 @@ function renderAudioPanel(): HTMLElement {
       : { version: "dev", gitSha: "unknown", builtAt: "unknown" };
   }
 
+  function snapshotHostEnvForExport(): Record<string, unknown> {
+    const navAny = navigator as unknown as {
+      userAgentData?: {
+        platform?: unknown;
+        mobile?: unknown;
+        brands?: unknown;
+      };
+      deviceMemory?: unknown;
+      platform?: unknown;
+      hardwareConcurrency?: unknown;
+    };
+    const userAgentData = navAny.userAgentData
+      ? {
+          platform: typeof navAny.userAgentData.platform === "string" ? navAny.userAgentData.platform : null,
+          mobile: typeof navAny.userAgentData.mobile === "boolean" ? navAny.userAgentData.mobile : null,
+          brands: Array.isArray(navAny.userAgentData.brands) ? navAny.userAgentData.brands : null,
+        }
+      : null;
+    const deviceMemoryGiB = typeof navAny.deviceMemory === "number" && Number.isFinite(navAny.deviceMemory) ? navAny.deviceMemory : null;
+    const platform = typeof navAny.platform === "string" ? navAny.platform : null;
+    const hardwareConcurrency =
+      typeof navAny.hardwareConcurrency === "number" && Number.isFinite(navAny.hardwareConcurrency) ? navAny.hardwareConcurrency : null;
+    return {
+      userAgent: navigator.userAgent,
+      userAgentData,
+      platform,
+      hardwareConcurrency,
+      deviceMemoryGiB,
+      isSecureContext: typeof isSecureContext === "boolean" ? isSecureContext : false,
+      crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
+      location: {
+        origin: typeof location?.origin === "string" ? location.origin : null,
+        pathname: typeof location?.pathname === "string" ? location.pathname : null,
+      },
+    };
+  }
+
   function snapshotAudioOutput(out: unknown): unknown {
     if (!out || (typeof out !== "object" && typeof out !== "function")) return null;
     const o = out as any;
@@ -4426,11 +4463,12 @@ function renderAudioPanel(): HTMLElement {
           build: getBuildInfoForExport(),
           userAgent: navigator.userAgent,
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
+          host: snapshotHostEnvForExport(),
           // Include all known audio outputs so QA can tell which ring was actually active.
-           audioOutputs: {
-             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
-             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
-             __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
+          audioOutputs: {
+            __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
+            __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
+            __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
              __aeroAudioOutputVirtioSndDemo: snapshotAudioOutput(g.__aeroAudioOutputVirtioSndDemo),
              __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
            },
@@ -4612,6 +4650,7 @@ function renderAudioPanel(): HTMLElement {
           build: getBuildInfoForExport(),
           userAgent: navigator.userAgent,
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
+          host: snapshotHostEnvForExport(),
           audioOutputs: {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
