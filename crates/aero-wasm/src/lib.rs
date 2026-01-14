@@ -3397,7 +3397,7 @@ mod cow_base_format_tests {
 pub enum MachineBootDevice {
     /// Boot from the primary HDD (AHCI port 0 / BIOS disk).
     Hdd = 0,
-    /// Prefer booting from the install media CD-ROM (IDE secondary master ATAPI).
+    /// Boot from the install media CD-ROM (IDE secondary master ATAPI).
     Cdrom = 1,
 }
 

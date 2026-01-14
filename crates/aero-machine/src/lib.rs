@@ -288,8 +288,11 @@ pub enum BootDevice {
     /// Boot from the primary HDD (the machine's canonical [`SharedDisk`]).
     #[default]
     Hdd,
-    /// Prefer booting from the install media ISO (IDE secondary master ATAPI) when present,
-    /// otherwise fall back to the primary HDD.
+    /// Boot from the install media ISO (IDE secondary master ATAPI) as the first CD-ROM drive
+    /// number (`DL=0xE0`).
+    ///
+    /// Note: For a “CD-first when present, otherwise fall back to HDD” boot policy, use the
+    /// firmware-level `boot_from_cd_if_present` flag (see [`Machine::set_boot_from_cd_if_present`]).
     Cdrom,
 }
 
@@ -325,8 +328,15 @@ pub struct MachineConfig {
     pub cpu_count: u8,
     /// Preferred BIOS boot device (HDD vs CD-ROM).
     ///
-    /// This is a higher-level selection knob intended for runtimes that want a simple "CD-first vs
-    /// HDD" policy without dealing with raw BIOS drive numbers.
+    /// This is a higher-level selector for choosing a raw BIOS drive number without the caller
+    /// needing to know the conventional `DL` ranges.
+    ///
+    /// - [`BootDevice::Hdd`] corresponds to `boot_drive=0x80` (HDD0).
+    /// - [`BootDevice::Cdrom`] corresponds to `boot_drive=0xE0` (CD0).
+    ///
+    /// Note: This is an **explicit selection** (it does not automatically fall back). For a
+    /// “CD-first when present, otherwise HDD” policy, enable
+    /// [`Machine::set_boot_from_cd_if_present`].
     ///
     /// When using the provided [`Machine`] setters (`set_boot_device` / `set_boot_drive`), this is
     /// kept in sync with [`MachineConfig::boot_drive`].
