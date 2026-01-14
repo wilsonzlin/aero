@@ -1,4 +1,4 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
@@ -386,7 +386,10 @@ fn bios_vbe_sync_mode_and_lfb_base() {
 
 #[test]
 fn bios_vbe_sync_mode_and_custom_lfb_base() {
-    let custom_lfb_base = SVGA_LFB_BASE + 0x0100_0000;
+    // Pick a base outside the BIOS PCI BAR allocator default window
+    // (`PciResourceAllocatorConfig::default().mmio_base..+mmio_size`, currently
+    // `0xE000_0000..0xF000_0000`) to ensure the custom-base path does not rely on that range.
+    let custom_lfb_base = 0xD000_0000;
     let cfg = MachineConfig {
         ram_size_bytes: 64 * 1024 * 1024,
         enable_pc_platform: true,
