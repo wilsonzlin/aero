@@ -189,11 +189,9 @@ const wasmInitPromise = perf.spanAsync("wasm:init", async () => {
 });
 let frameScheduler: FrameSchedulerHandle | null = null;
 
+type BootDiskSelection = { mounts: MountConfig; hdd?: DiskImageMetadata; cd?: DiskImageMetadata };
 type OpenedDisk = { meta: DiskImageMetadata; open: OpenResult };
 type OpenedBootDisks = { client: RuntimeDiskClient; mounts: MountConfig; hdd?: OpenedDisk; cd?: OpenedDisk };
-type BootDiskSelection = { mounts: MountConfig; hdd?: DiskImageMetadata; cd?: DiskImageMetadata };
-
-let bootDiskSelection: BootDiskSelection | null = null;
 
 async function getBootDiskSelection(manager: DiskManager): Promise<BootDiskSelection> {
   const [disks, mounts] = await Promise.all([manager.listDisks(), manager.getMounts()]);
@@ -3019,6 +3017,17 @@ function renderDisksPanel(): HTMLElement {
 
     disks = await manager.listDisks();
     mounts = await manager.getMounts();
+
+    // Keep the coordinator's cached boot disk selection in sync with DiskManager mounts so that
+    // automatic worker restarts always inherit the latest disk attachments.
+    try {
+      const byId = new Map(disks.map((d) => [d.id, d]));
+      const hdd = mounts.hddId ? byId.get(mounts.hddId) ?? null : null;
+      const cd = mounts.cdId ? byId.get(mounts.cdId) ?? null : null;
+      workerCoordinator.setBootDisks(mounts, hdd, cd);
+    } catch {
+      // ignore best-effort runtime sync
+    }
     renderMountSelects();
     renderTable();
   }
@@ -6415,10 +6424,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
         const diskManager = await diskManagerPromise;
         const selection = await getBootDiskSelection(diskManager);
-        bootDiskSelection = selection;
+        workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
 
         workerCoordinator.start(config, { platformFeatures });
-        workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
           usbBroker.attachWorkerPort(ioWorker);
@@ -6484,7 +6492,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         }
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
-        bootDiskSelection = null;
+        workerCoordinator.setBootDisks({}, null, null);
       } finally {
         booting = false;
       }
@@ -6506,7 +6514,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       schedulerFrameStateSab = null;
       schedulerSharedFramebuffer = null;
       workerCoordinator.stop();
-      bootDiskSelection = null;
+      workerCoordinator.setBootDisks({}, null, null);
       useWorkerPresentation = false;
       teardownVgaPresenter();
       if (canvasTransferred) resetVgaCanvas();
@@ -6528,10 +6536,11 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         // latest disk mounts from DiskManager, even if the user changed them since
         // the last boot.
         const diskManager = await diskManagerPromise;
-        bootDiskSelection = await getBootDiskSelection(diskManager);
+        const selection = await getBootDiskSelection(diskManager);
+        workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
-        bootDiskSelection = null;
+        workerCoordinator.setBootDisks({}, null, null);
       }
       try {
         stopWorkersInputCapture();
@@ -6757,11 +6766,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       if (ioWorker) {
         usbBroker.attachWorkerPort(ioWorker);
         wireIoWorkerForWebHid(ioWorker, webHidManager);
-        // io.worker waits for the first `setBootDisks` message before reporting READY.
-        // Ensure we always send *something* so non-VM worker harnesses (audio demos, etc)
-        // don't wedge the io worker in "starting" forever.
-        const selection = bootDiskSelection;
-        workerCoordinator.setBootDisks(selection?.mounts ?? {}, selection?.hdd ?? null, selection?.cd ?? null);
         void webHidManager.resyncAttachedDevices();
       }
       syncWebHidInputReportRing(ioWorker);
@@ -6790,6 +6794,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       `ring[Heartbeat]=${workerCoordinator.getLastHeartbeatFromRing()}  ` +
       `guestI32[0]=${workerCoordinator.getGuestCounter0()}`;
 
+    const bootDiskSelection = workerCoordinator.getBootDisks();
     if (!bootDiskSelection) {
       diskLine.textContent = "disks: (not configured)";
     } else {

@@ -9,6 +9,7 @@ import { WorkerKind } from "../perf/record.js";
 import type { PerfChannel } from "../perf/shared.js";
 import type { PlatformFeatureReport } from "../platform/features";
 import type { DiskImageMetadata, MountConfig } from "../storage/metadata";
+import type { SetBootDisksMessage } from "./boot_disks_protocol";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -198,13 +199,6 @@ type LastSentMicRingAttachment = {
   instanceId: number;
   ringBuffer: SharedArrayBuffer | null;
   sampleRate: number;
-};
-
-type SetBootDisksMessage = {
-  type: "setBootDisks";
-  mounts: MountConfig;
-  hdd: DiskImageMetadata | null;
-  cd: DiskImageMetadata | null;
 };
 
 function nowMs(): number {
@@ -874,6 +868,10 @@ export class WorkerCoordinator {
 
   getGuestMemory(): WebAssembly.Memory | null {
     return this.shared?.segments.guestMemory ?? null;
+  }
+
+  getBootDisks(): SetBootDisksMessage | null {
+    return this.bootDisks;
   }
 
   /**
@@ -2013,16 +2011,27 @@ export class WorkerCoordinator {
     worker.onerror = (ev) => this.onWorkerScriptError(role, instanceId, ev);
     worker.onmessageerror = () => this.onWorkerMessageError(role, instanceId);
 
-    // Re-apply the most recent boot disk selection to restarted CPU/IO workers so they
-    // don't fall back to demo-mode behaviour after an automatic restart.
-    if ((role === "cpu" || role === "io") && this.bootDisks) {
+    // `io.worker.ts` blocks READY on receiving its first `setBootDisks` message so that disk open
+    // happens before the CPU issues its first diskRead. Even in demo mode (no disks), we must
+    // still send an empty message so the IO worker can become READY.
+    if (role === "io") {
       try {
         const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";
-        const msg =
-          role === "io" && vmRuntime === "machine" ? { ...this.bootDisks, hdd: null, cd: null } : this.bootDisks;
+        const base: SetBootDisksMessage = this.bootDisks ?? { type: "setBootDisks", mounts: {}, hdd: null, cd: null };
+        // In machine runtime mode, the CPU worker owns OPFS disks. Never send disk metadata to IO
+        // so it doesn't open a competing SyncAccessHandle (InUse).
+        const msg = vmRuntime === "machine" ? { ...base, hdd: null, cd: null } : base;
         worker.postMessage(msg);
       } catch {
         // Best-effort; worker may not be ready to accept structured messages yet.
+      }
+    } else if (role === "cpu" && this.bootDisks) {
+      // Re-apply the most recent boot disk selection to restarted CPU workers so they don't fall
+      // back to demo-mode behaviour after an automatic restart.
+      try {
+        worker.postMessage(this.bootDisks);
+      } catch {
+        // Best-effort.
       }
     }
 
