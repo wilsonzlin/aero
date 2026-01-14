@@ -70,8 +70,9 @@ export async function requestWebGpuDevice(
       const err = ev?.error;
       const errorName =
         (typeof err?.name === "string" && err.name) ||
-        (typeof err?.constructor?.name === "string" && err.constructor.name) ||
-        "";
+        (err && typeof err === "object" && typeof (err as any).constructor?.name === "string"
+          ? (err as any).constructor.name
+          : "");
       const errorMessage = typeof err?.message === "string" ? err.message : "";
       let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
       if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
