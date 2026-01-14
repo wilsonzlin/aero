@@ -6113,22 +6113,22 @@ impl Machine {
     }
 
     fn idle_tick_platform_1ms(&mut self) {
-        // Only tick while halted when *some* vCPU can be woken by maskable interrupts.
+        // Only tick while halted when *some* vCPU could observe maskable interrupts (or is still
+        // running).
         //
         // In a uniprocessor configuration, `cli; hlt` is effectively terminal (until NMI/SMI/reset,
         // which we do not model yet), so ticking would just burn host time.
         //
-        // In SMP bring-up tests, however, the BSP may intentionally park itself in `cli; hlt` while
-        // another vCPU (`sti; hlt`) waits for a timer interrupt. Allow time to advance as long as at
-        // least one vCPU has IF=1 so devices like PIT/HPET/LAPIC timers can make progress and wake
-        // the system.
-        let maskable_interrupts_enabled_any_vcpu =
-            (self.cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) != 0
-                || self
-                    .ap_cpus
-                    .iter()
-                    .any(|cpu| (cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) != 0);
-        if !maskable_interrupts_enabled_any_vcpu {
+        // In SMP bring-up tests, the BSP may intentionally park itself in `cli; hlt` while another
+        // vCPU waits in `sti; hlt` for a timer interrupt. Allow time to advance as long as at least
+        // one vCPU can accept a maskable interrupt (IF=1) or is currently executing, so devices
+        // like PIT/HPET/LAPIC timers can make progress and wake the system.
+        let should_tick = (self.cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) != 0
+            || self.ap_cpus.iter().any(|cpu| {
+                !cpu.state.halted
+                    || (cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) != 0
+            });
+        if !should_tick {
             return;
         }
 
