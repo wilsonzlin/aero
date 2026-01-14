@@ -40,8 +40,11 @@ It:
     their output files before verification
   - verify QEMU-emitted virtio PCI Vendor/Device/Revision IDs via `query-pci` (when `--qemu-preflight-pci` is enabled)
   - trigger a virtio-blk runtime resize via `blockdev-resize` / legacy `block_resize` (when `--with-blk-resize` is enabled)
-  - inject deterministic virtio-input events via `input-send-event` (when `--with-input-events` /
-    `--with-virtio-input-events` or `--with-input-tablet-events`/`--with-tablet-events` is enabled)
+  - inject deterministic virtio-input events via `input-send-event`:
+    - keyboard + relative mouse: `--with-input-events` / `--with-virtio-input-events`
+    - mouse wheel: `--with-input-wheel` / `--with-virtio-input-wheel`
+    - Consumer Control (media keys): `--with-input-media-keys` / `--with-virtio-input-media-keys`
+    - tablet / absolute pointer: `--with-input-tablet-events` / `--with-tablet-events`
   - verify host-side MSI-X enablement on virtio PCI functions via QMP/QEMU introspection (when `--require-virtio-*-msix` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
@@ -51,6 +54,7 @@ It:
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
+  - when --with-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
   - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
 
