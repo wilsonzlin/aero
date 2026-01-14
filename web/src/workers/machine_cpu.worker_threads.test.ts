@@ -1650,3 +1650,69 @@ describe("workers/machine_cpu.worker (boot drive API compat)", () => {
     }
   }, 20_000);
 });
+
+describe("workers/machine_cpu.worker (network API compat)", () => {
+  it("uses camelCase attach/detach network methods when proxyUrl toggles (dummy machine)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 8,
+      vramBytes: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine", enableNetworkSpy: true });
+      await dummyReady;
+
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      const attached = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.attachL2TunnelFromIoIpcSab",
+        10_000,
+      ) as Promise<{ kind: string; byteLength: number }>;
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig({ proxyUrl: "https://gateway.example.com" }),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const attachMsg = await attached;
+      expect(attachMsg.byteLength).toBe(8);
+
+      const detached = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.detachNetwork",
+        10_000,
+      );
+      worker.postMessage({
+        kind: "config.update",
+        version: 2,
+        config: makeConfig(),
+      });
+      await detached;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+});

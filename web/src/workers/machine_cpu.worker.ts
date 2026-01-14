@@ -1019,7 +1019,9 @@ function detachMachineNetwork(): void {
   try {
     const fn =
       (m as unknown as { detach_network?: unknown }).detach_network ??
-      (m as unknown as { detach_net_rings?: unknown }).detach_net_rings;
+      (m as unknown as { detachNetwork?: unknown }).detachNetwork ??
+      (m as unknown as { detach_net_rings?: unknown }).detach_net_rings ??
+      (m as unknown as { detachNetRings?: unknown }).detachNetRings;
     if (typeof fn === "function") {
       (fn as () => void).call(m);
     }
@@ -1037,7 +1039,9 @@ function attachMachineNetwork(): void {
   if (!sab) return;
 
   try {
-    const attachFromSab = (m as unknown as { attach_l2_tunnel_from_io_ipc_sab?: unknown }).attach_l2_tunnel_from_io_ipc_sab;
+    const attachFromSab =
+      (m as unknown as { attach_l2_tunnel_from_io_ipc_sab?: unknown }).attach_l2_tunnel_from_io_ipc_sab ??
+      (m as unknown as { attachL2TunnelFromIoIpcSab?: unknown }).attachL2TunnelFromIoIpcSab;
     if (typeof attachFromSab === "function") {
       (attachFromSab as (sab: SharedArrayBuffer) => void).call(m, sab);
       networkAttached = true;
@@ -1046,7 +1050,9 @@ function attachMachineNetwork(): void {
 
     const attachRings =
       (m as unknown as { attach_l2_tunnel_rings?: unknown }).attach_l2_tunnel_rings ??
-      (m as unknown as { attach_net_rings?: unknown }).attach_net_rings;
+      (m as unknown as { attachL2TunnelRings?: unknown }).attachL2TunnelRings ??
+      (m as unknown as { attach_net_rings?: unknown }).attach_net_rings ??
+      (m as unknown as { attachNetRings?: unknown }).attachNetRings;
     const openRing = wasmApi?.open_ring_by_kind;
     if (typeof attachRings === "function" && typeof openRing === "function") {
       const tx = openRing(sab, IO_IPC_NET_TX_QUEUE_KIND, 0);
@@ -2602,10 +2608,16 @@ ctx.onmessage = (ev) => {
   // Test-only hook (Node worker_threads): allow unit tests to enable a dummy machine instance so
   // input-batch parsing + telemetry can be exercised without loading WASM.
   if (isNodeWorkerThreads() && (msg as { kind?: unknown }).kind === "__test.machine_cpu.enableDummyMachine") {
-    const payload = msg as Partial<{ virtioKeyboardOk: unknown; virtioMouseOk: unknown; enableBootDriveSpy?: unknown }>;
+    const payload = msg as Partial<{
+      virtioKeyboardOk: unknown;
+      virtioMouseOk: unknown;
+      enableBootDriveSpy?: unknown;
+      enableNetworkSpy?: unknown;
+    }>;
     const virtioKeyboardOk = payload.virtioKeyboardOk === true;
     const virtioMouseOk = payload.virtioMouseOk === true;
     const enableBootDriveSpy = payload.enableBootDriveSpy === true;
+    const enableNetworkSpy = payload.enableNetworkSpy === true;
 
     // Keep some minimal internal state so we can exercise boot-device reporting without loading WASM.
     let dummyBootDrive = BIOS_DRIVE_HDD0;
@@ -2678,6 +2690,28 @@ ctx.onmessage = (ev) => {
         recomputeDummyActiveBootDevice();
       },
     };
+    if (enableNetworkSpy) {
+      dummy.attachL2TunnelFromIoIpcSab = function (sab: SharedArrayBuffer) {
+        if (this !== dummy) {
+          throw new Error("attachL2TunnelFromIoIpcSab called with wrong this binding");
+        }
+        try {
+          ctx.postMessage({ kind: "__test.machine_cpu.attachL2TunnelFromIoIpcSab", byteLength: sab.byteLength });
+        } catch {
+          void 0;
+        }
+      };
+      dummy.detachNetwork = function () {
+        if (this !== dummy) {
+          throw new Error("detachNetwork called with wrong this binding");
+        }
+        try {
+          ctx.postMessage({ kind: "__test.machine_cpu.detachNetwork" });
+        } catch {
+          void 0;
+        }
+      };
+    }
     if (enableBootDriveSpy) {
       const baseSetBootDrive = dummy.setBootDrive as (drive: number) => void;
       dummy.setBootDrive = (drive: number) => {
