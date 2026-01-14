@@ -1782,7 +1782,11 @@ impl AerogpuD3d11Executor {
             //
             // Note: `new_with_caps` does not have access to the originating `wgpu::Adapter`, so we
             // cannot query `adapter.get_texture_format_features` here.
-            for format in [
+            //
+            // Avoid formats that are not part of the core WebGPU storage texture format set unless
+            // the device explicitly enables adapter-specific format features. This prevents wgpu
+            // validation errors on downlevel backends that only expose the core set.
+            let mut formats = vec![
                 crate::StorageTextureFormat::Rgba8Unorm,
                 crate::StorageTextureFormat::Rgba8Snorm,
                 crate::StorageTextureFormat::Rgba8Uint,
@@ -1790,16 +1794,26 @@ impl AerogpuD3d11Executor {
                 crate::StorageTextureFormat::Rgba16Float,
                 crate::StorageTextureFormat::Rgba16Uint,
                 crate::StorageTextureFormat::Rgba16Sint,
-                crate::StorageTextureFormat::Rg32Float,
-                crate::StorageTextureFormat::Rg32Uint,
-                crate::StorageTextureFormat::Rg32Sint,
-                crate::StorageTextureFormat::Rgba32Float,
-                crate::StorageTextureFormat::Rgba32Uint,
-                crate::StorageTextureFormat::Rgba32Sint,
                 crate::StorageTextureFormat::R32Float,
                 crate::StorageTextureFormat::R32Uint,
                 crate::StorageTextureFormat::R32Sint,
-            ] {
+            ];
+
+            if device
+                .features()
+                .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+            {
+                formats.extend_from_slice(&[
+                    crate::StorageTextureFormat::Rg32Float,
+                    crate::StorageTextureFormat::Rg32Uint,
+                    crate::StorageTextureFormat::Rg32Sint,
+                    crate::StorageTextureFormat::Rgba32Float,
+                    crate::StorageTextureFormat::Rgba32Uint,
+                    crate::StorageTextureFormat::Rgba32Sint,
+                ]);
+            }
+
+            for format in formats {
                 #[cfg(not(target_arch = "wasm32"))]
                 device.push_error_scope(wgpu::ErrorFilter::Validation);
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
