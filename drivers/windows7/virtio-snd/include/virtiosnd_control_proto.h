@@ -25,11 +25,15 @@ extern "C" {
 /*
  * A single negotiated PCM configuration for a virtio-snd stream.
  *
- * The Win7 driver exposes a fixed render and a fixed capture pin (contract v1),
- * so the driver selects one configuration per stream at initialization time and
- * uses it consistently for:
- *   - WaveRT/PortCls format exposure
- *   - VIRTIO_SND_R_PCM_SET_PARAMS requests
+ * The driver tracks a "selected" configuration per stream:
+ *
+ * - A default configuration is selected at device start time from `PCM_INFO`
+ *   (preferring the contract-v1 baseline).
+ * - The WaveRT miniport may update the selection when Windows opens a stream in
+ *   a different supported format/rate/channel count.
+ *
+ * The selected configuration is used when building `VIRTIO_SND_R_PCM_SET_PARAMS`
+ * requests.
  */
 typedef struct _VIRTIOSND_PCM_CONFIG {
     UCHAR Channels;
@@ -44,12 +48,12 @@ typedef struct _VIRTIOSND_PCM_CONFIG {
  * Deterministic selection policy (in priority order):
  *   1) S16 @ 48kHz  (legacy contract v1 default)
  *   2) S16 @ 44.1kHz
- *   3) S24 @ 48kHz  (packed 24-bit)
+ *   3) S24 @ 48kHz  (24-bit samples in a 32-bit container)
  *   4) S24 @ 44.1kHz
  *   5) S32 @ 48kHz
  *   6) S32 @ 44.1kHz
  *
- * Channel policy:
+ * Channel policy (default selection):
  *   - Playback stream 0: require stereo (2ch)
  *   - Capture stream 1: require mono (1ch)
  *
