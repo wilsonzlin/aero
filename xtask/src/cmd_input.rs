@@ -227,6 +227,11 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let needs_node = opts.wasm || !opts.rust_only;
     if needs_node {
         let mut cmd = tools::check_node_version(&repo_root);
+        if opts.wasm {
+            // wasm-pack/wasm-bindgen tooling is sensitive to Node major versions. Keep `input --wasm`
+            // aligned with CI's pinned major to avoid hard-to-debug hangs in unsupported releases.
+            cmd.env("AERO_ENFORCE_NODE_MAJOR", "1");
+        }
         match runner.run_step("Node: check version", &mut cmd) {
             Ok(()) => {}
             Err(XtaskError::Message(msg)) if msg == "missing required command: node" => {

@@ -66,7 +66,7 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
     let log_path = tmp.path().join("argv.log");
 
     write_fake_argv_logger(&bin_dir.join("cargo"), "cargo")?;
-    write_fake_argv_logger(&bin_dir.join("node"), "node")?;
+    write_fake_node_version_checker(&bin_dir.join("node"))?;
     write_fake_argv_logger(&bin_dir.join("npm"), "npm")?;
     write_fake_argv_logger(&bin_dir.join("wasm-pack"), "wasm-pack")?;
 
@@ -480,6 +480,32 @@ echo "__END__" >> "$log"
 exit 0
 "#
     );
+    fs::write(path, script)?;
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_fake_node_version_checker(path: &Path) -> std::io::Result<()> {
+    let script = r#"#!/bin/bash
+set -euo pipefail
+log="${AERO_XTASK_TEST_LOG:?}"
+echo "node" >> "$log"
+for arg in "$@"; do
+  echo "$arg" >> "$log"
+done
+echo "__END__" >> "$log"
+
+if [[ "${AERO_ENFORCE_NODE_MAJOR-}" != "1" ]]; then
+  echo "expected AERO_ENFORCE_NODE_MAJOR=1 when running cargo xtask input --wasm" >&2
+  exit 1
+fi
+
+exit 0
+"#;
+
     fs::write(path, script)?;
     let mut perms = fs::metadata(path)?.permissions();
     perms.set_mode(0o755);
