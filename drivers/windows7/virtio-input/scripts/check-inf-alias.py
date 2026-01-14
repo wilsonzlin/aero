@@ -18,7 +18,7 @@ Policy:
 
 Comparison notes:
   - Comments and empty lines are ignored.
-  - Section names are treated case-insensitively.
+  - Section names are treated case-insensitively (normalized to lowercase for comparison).
 
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
@@ -153,4 +153,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

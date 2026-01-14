@@ -1852,6 +1852,7 @@ def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str
     - strips full-line and inline comments
     - drops empty lines
     - optionally removes entire sections (by name, case-insensitive)
+    - normalizes section headers to lowercase (INF section names are case-insensitive)
     """
 
     drop = {s.lower() for s in drop_sections}
@@ -1871,7 +1872,9 @@ def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str
             current_section = m.group("section").strip()
             dropping = current_section.lower() in drop
             if not dropping:
-                out.append(f"[{current_section}]")
+                # INF section names are case-insensitive, so avoid false drift reports when
+                # only the casing differs (e.g. `[Strings]` vs `[strings]`).
+                out.append(f"[{current_section.lower()}]")
             continue
 
         if current_section is None or dropping:

@@ -68,8 +68,9 @@ aero_virtio_input.sys = 1
 ; in Device Manager.
 ;
 ; The canonical INF intentionally does NOT include a generic (no SUBSYS) fallback
-; HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`). For environments that do not expose Aero's
-; subsystem IDs, use the legacy alias INF `virtio-input.inf.disabled` (rename to
+; HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`). A generic fallback can overlap with other
+; virtio-input functions (e.g. tablets). For environments that do not expose Aero's
+; subsystem IDs, enable the legacy alias INF `virtio-input.inf.disabled` (rename to
 ; `virtio-input.inf` to enable) which adds the strict revision-gated fallback.
 ;
 ; Note: tablet-style virtio-input devices (absolute pointer / EV_ABS) typically
