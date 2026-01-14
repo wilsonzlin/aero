@@ -6817,7 +6817,9 @@ def main() -> int:
                                 break
                         if args.fail_on_blk_recovery:
                             msg = _check_fail_on_blk_recovery_requirement(
-                                tail, blk_counters_line=virtio_blk_counters_marker_line
+                                tail,
+                                blk_test_line=virtio_blk_marker_line,
+                                blk_counters_line=virtio_blk_counters_marker_line,
                             )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
@@ -8837,7 +8839,9 @@ def main() -> int:
                                     break
                             if args.fail_on_blk_recovery:
                                 msg = _check_fail_on_blk_recovery_requirement(
-                                    tail, blk_counters_line=virtio_blk_counters_marker_line
+                                    tail,
+                                    blk_test_line=virtio_blk_marker_line,
+                                    blk_counters_line=virtio_blk_counters_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -11140,6 +11144,7 @@ def _check_fail_on_blk_recovery_requirement(
     tail: bytes,
     *,
     threshold: int = 0,
+    blk_test_line: Optional[str] = None,
     blk_counters_line: Optional[str] = None,
 ) -> Optional[str]:
     """
@@ -11157,29 +11162,64 @@ def _check_fail_on_blk_recovery_requirement(
         blk_counters_line = _try_extract_last_marker_line(
             tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
         )
-    if not blk_counters_line:
-        return None
-
-    toks = blk_counters_line.split("|")
-    status = toks[3] if len(toks) >= 4 else ""
-    if status == "SKIP":
-        return None
-
-    fields = _parse_marker_kv_fields(blk_counters_line)
-    want = ("abort", "reset_device", "reset_bus")
-    counters: dict[str, int] = {}
-    for k in want:
-        if k not in fields:
+    if blk_counters_line:
+        toks = blk_counters_line.split("|")
+        status = toks[3] if len(toks) >= 4 else ""
+        if status == "SKIP":
             return None
-        v = _try_parse_int_base0(fields[k])
+
+        fields = _parse_marker_kv_fields(blk_counters_line)
+        want = ("abort", "reset_device", "reset_bus")
+        counters: dict[str, int] = {}
+        for k in want:
+            if k not in fields:
+                return None
+            v = _try_parse_int_base0(fields[k])
+            if v is None:
+                return None
+            counters[k] = v
+
+        if (
+            counters["abort"] > threshold
+            or counters["reset_device"] > threshold
+            or counters["reset_bus"] > threshold
+        ):
+            return (
+                "FAIL: VIRTIO_BLK_RECOVERY_DETECTED:"
+                f" abort={counters['abort']} reset_device={counters['reset_device']} reset_bus={counters['reset_bus']}"
+            )
+        return None
+
+    # Backward compatible fallback: older guest selftests emitted the counters on the virtio-blk
+    # per-test marker rather than the dedicated virtio-blk-counters marker.
+    if blk_test_line is None:
+        blk_test_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+    if not blk_test_line:
+        return None
+
+    fields = _parse_marker_kv_fields(blk_test_line)
+    mapping = {
+        "abort_srb": "abort",
+        "reset_device_srb": "reset_device",
+        "reset_bus_srb": "reset_bus",
+    }
+    counters2: dict[str, int] = {}
+    for src, dst in mapping.items():
+        if src not in fields:
+            return None
+        v = _try_parse_int_base0(fields[src])
         if v is None:
             return None
-        counters[k] = v
+        counters2[dst] = v
 
-    if counters["abort"] > threshold or counters["reset_device"] > threshold or counters["reset_bus"] > threshold:
+    if (
+        counters2["abort"] > threshold
+        or counters2["reset_device"] > threshold
+        or counters2["reset_bus"] > threshold
+    ):
         return (
             "FAIL: VIRTIO_BLK_RECOVERY_DETECTED:"
-            f" abort={counters['abort']} reset_device={counters['reset_device']} reset_bus={counters['reset_bus']}"
+            f" abort={counters2['abort']} reset_device={counters2['reset_device']} reset_bus={counters2['reset_bus']}"
         )
     return None
 

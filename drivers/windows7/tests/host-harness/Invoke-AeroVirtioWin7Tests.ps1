@@ -7411,6 +7411,56 @@ try {
           }
         }
       }
+    } else {
+      # Backward compatible fallback: older guest selftests emitted the recovery counters on the virtio-blk
+      # per-test marker rather than the dedicated virtio-blk-counters marker.
+      $blkPrefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"
+      $blkLine = Try-ExtractLastAeroMarkerLine -Tail $result.Tail -Prefix $blkPrefix -SerialLogPath $SerialLogPath
+      if ($null -ne $blkLine) {
+        $fields2 = @{}
+        foreach ($tok in $blkLine.Split("|")) {
+          $idx = $tok.IndexOf("=")
+          if ($idx -le 0) { continue }
+          $k = $tok.Substring(0, $idx).Trim()
+          $v = $tok.Substring($idx + 1).Trim()
+          if (-not [string]::IsNullOrEmpty($k)) {
+            $fields2[$k] = $v
+          }
+        }
+ 
+        $mapping = @{
+          abort_srb        = "abort"
+          reset_device_srb = "reset_device"
+          reset_bus_srb    = "reset_bus"
+        }
+        $vals2 = @{}
+        $okAll2 = $true
+        foreach ($src in $mapping.Keys) {
+          if (-not $fields2.ContainsKey($src)) { $okAll2 = $false; break }
+          $raw = [string]$fields2[$src]
+          $v = 0L
+          $ok = [int64]::TryParse($raw, [ref]$v)
+          if (-not $ok) {
+            if ($raw -match "^0x[0-9a-fA-F]+$") {
+              try {
+                $v = [Convert]::ToInt64($raw.Substring(2), 16)
+                $ok = $true
+              } catch {
+                $ok = $false
+              }
+            }
+          }
+          if (-not $ok) { $okAll2 = $false; break }
+          $vals2[[string]$mapping[$src]] = $v
+        }
+ 
+        if ($okAll2) {
+          if ([int64]$vals2["abort"] -gt 0 -or [int64]$vals2["reset_device"] -gt 0 -or [int64]$vals2["reset_bus"] -gt 0) {
+            $result["Result"] = "VIRTIO_BLK_RECOVERY_DETECTED"
+            $result["BlkCounters"] = $vals2
+          }
+        }
+      }
     }
   }
 

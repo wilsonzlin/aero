@@ -117,6 +117,28 @@ class VirtioBlkCountersMarkerTests(unittest.TestCase):
         msg = self.harness._check_fail_on_blk_recovery_requirement(tail)
         self.assertIsNone(msg)
 
+    def test_fail_on_blk_recovery_gate_falls_back_to_legacy_blk_marker(self) -> None:
+        # Older guest selftests encoded the recovery counters on the virtio-blk per-test marker
+        # rather than the dedicated virtio-blk-counters marker.
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|abort_srb=0|reset_device_srb=3|reset_bus_srb=0\n"
+        )
+        msg = self.harness._check_fail_on_blk_recovery_requirement(tail)
+        self.assertEqual(
+            msg,
+            "FAIL: VIRTIO_BLK_RECOVERY_DETECTED: abort=0 reset_device=3 reset_bus=0",
+        )
+
+    def test_fail_on_blk_recovery_gate_does_not_fallback_on_skip(self) -> None:
+        # If the dedicated marker is present but explicitly SKIP, preserve its semantics and do
+        # not attempt to fall back to the legacy virtio-blk marker fields.
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|abort_srb=0|reset_device_srb=3|reset_bus_srb=0\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=16\n"
+        )
+        msg = self.harness._check_fail_on_blk_recovery_requirement(tail)
+        self.assertIsNone(msg)
+
     def test_fail_on_blk_recovery_gate_uses_override_line(self) -> None:
         tail = b""
         line = (
