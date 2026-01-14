@@ -10,6 +10,7 @@ use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterruptMode,
 };
+use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use pretty_assertions::{assert_eq, assert_ne};
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
@@ -238,6 +239,102 @@ fn xhci_tick_platform_advances_mfindex_with_sub_ms_remainder() {
     m.tick_platform(1);
     let mfindex_after = m.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
     assert_eq!(mfindex_after, mfindex_before.wrapping_add(8) & 0x3fff);
+}
+
+#[test]
+fn xhci_command_ring_progress_is_gated_by_pci_bme() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep the test focused on xHCI.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+    let bar0_base = m.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Ensure MMIO decode is enabled.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        0x04,
+        2,
+        u32::from((cmd | (1 << 1)) & !(1 << 2)),
+    );
+
+    // Guest ring memory.
+    let cmd_ring = 0x10_000u64; // 64B-aligned
+    let erstba = 0x20_000u64; // 64B-aligned
+    let event_ring = 0x30_000u64; // 16B-aligned
+
+    // Zero the first event TRB so we can detect when it becomes written.
+    m.write_physical(event_ring, &[0u8; TRB_LEN]);
+
+    // ERST entry 0: segment base + size (in TRBs).
+    m.write_physical_u64(erstba, event_ring);
+    m.write_physical_u32(erstba + 8, 256);
+    m.write_physical_u32(erstba + 12, 0);
+
+    // Configure interrupter 0 event ring (MMIO writes do not require DMA).
+    m.write_physical_u32(bar0_base + regs::REG_INTR0_ERSTSZ, 1);
+    m.write_physical_u64(bar0_base + regs::REG_INTR0_ERSTBA_LO, erstba);
+    m.write_physical_u64(bar0_base + regs::REG_INTR0_ERDP_LO, event_ring);
+    m.write_physical_u32(bar0_base + regs::REG_INTR0_IMAN, regs::IMAN_IE);
+
+    // Program CRCR + start controller (RUN=1).
+    m.write_physical_u64(bar0_base + regs::REG_CRCR_LO, cmd_ring | 1);
+    m.write_physical_u32(bar0_base + regs::REG_USBCMD, regs::USBCMD_RUN);
+
+    // Write a single No-Op command TRB (cycle=1) then a cycle-mismatch stop marker.
+    let mut trb = Trb::new(0, 0, 0);
+    trb.set_trb_type(TrbType::NoOpCommand);
+    trb.set_cycle(true);
+    m.write_physical(cmd_ring, &trb.to_bytes());
+
+    let mut stop = Trb::new(0, 0, 0);
+    stop.set_trb_type(TrbType::NoOpCommand);
+    stop.set_cycle(false);
+    m.write_physical(cmd_ring + TRB_LEN as u64, &stop.to_bytes());
+
+    // Ring doorbell 0 (Command Ring).
+    m.write_physical_u32(bar0_base + u64::from(regs::DBOFF_VALUE), 0);
+
+    // With BME disabled, ticks should not process the command ring or write an event.
+    m.tick_platform(10_000_000); // 10ms
+    let before = m.read_physical_bytes(event_ring, TRB_LEN);
+    assert_eq!(
+        before,
+        vec![0u8; TRB_LEN],
+        "expected event ring to remain untouched while COMMAND.BME=0"
+    );
+
+    // Enable bus mastering (BME) and tick again; command completion should be written.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        0x04,
+        2,
+        u32::from(cmd | (1 << 1) | (1 << 2)),
+    );
+    m.tick_platform(10_000_000); // 10ms
+
+    let after = m.read_physical_bytes(event_ring, TRB_LEN);
+    let evt = Trb::from_bytes(after.try_into().unwrap());
+    assert_eq!(evt.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(evt.completion_code_raw(), CompletionCode::Success.as_u8());
+    assert_eq!(evt.parameter & !0x0f, cmd_ring);
 }
 
 #[test]
