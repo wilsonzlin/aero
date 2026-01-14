@@ -994,6 +994,42 @@ static void test_ipv6_hopbyhop_tcp_lso_large_ext_hdr(void)
     assert(info.HeadersLen == (uint16_t)(14 + 40 + kExtBytes + 20));
 }
 
+static void test_ipv6_hopbyhop_tcp_lso_large_ext_hdr_truncated(void)
+{
+    /* Same layout as test_ipv6_hopbyhop_tcp_lso_large_ext_hdr, but only provide the first 256 bytes. */
+    enum { kExtBytes = 248 };
+    uint8_t pkt[14 + 40 + kExtBytes + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+    const uint16_t payload = (uint16_t)(kExtBytes + 20 + 4000);
+
+    build_eth(pkt, 0x86DD);
+
+    /* IPv6 base header. */
+    memset(pkt + 14, 0, 40);
+    pkt[14] = (6u << 4);
+    pkt[14 + 4] = (uint8_t)(payload >> 8);
+    pkt[14 + 5] = (uint8_t)(payload & 0xff);
+    pkt[14 + 6] = 0;  /* Hop-by-Hop */
+    pkt[14 + 7] = 64; /* hop limit */
+
+    /* Hop-by-Hop extension header: NextHeader=TCP, HdrExtLen=30 (248 bytes total). */
+    memset(pkt + 14 + 40, 0, kExtBytes);
+    pkt[14 + 40] = 6;  /* next = TCP */
+    pkt[14 + 41] = 30; /* (30 + 1) * 8 = 248 bytes */
+
+    build_tcp_header(pkt + 14 + 40 + kExtBytes);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoMss = 1440;
+
+    /* Provide only the first 256 bytes: not enough to cover the full extension header. */
+    res = AerovNetBuildTxVirtioNetHdr(pkt, 256, &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT);
+}
+
 static void test_ipv6_tcp_lso_ecn_when_cwr_and_enabled(void)
 {
     uint8_t pkt[14 + 40 + 20 + 4000];
@@ -1278,6 +1314,7 @@ int main(void)
     test_ipv6_tcp_lso();
     test_ipv6_hopbyhop_tcp_lso();
     test_ipv6_hopbyhop_tcp_lso_large_ext_hdr();
+    test_ipv6_hopbyhop_tcp_lso_large_ext_hdr_truncated();
     test_ipv6_tcp_lso_ecn_when_cwr_and_enabled();
     test_ipv6_tcp_lso_partial_headers();
     test_ipv4_fragment_rejected();
