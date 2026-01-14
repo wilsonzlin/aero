@@ -254,8 +254,8 @@ NTSTATUS IoConnectInterruptEx(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameter
         intr->MessageServiceRoutine = Parameters->MessageBased.ServiceRoutine;
         intr->ServiceContext = Parameters->MessageBased.ServiceContext;
         intr->Vector = i;
-        intr->Irql = (KIRQL)0;
-        intr->SynchronizeIrql = (KIRQL)0;
+        intr->Irql = (KIRQL)Parameters->MessageBased.SynchronizeIrql;
+        intr->SynchronizeIrql = (KIRQL)Parameters->MessageBased.SynchronizeIrql;
         intr->InterruptMode = LevelSensitive;
         intr->ShareVector = FALSE;
         intr->ProcessorEnableMask = 1;

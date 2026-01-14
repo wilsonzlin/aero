@@ -318,6 +318,7 @@ static void test_message_connect_disconnect_calls_wdk_routines(void)
     assert(intr.u.Message.MessageCount == 4);
     assert(intr.u.Message.MessageInfo != NULL);
     assert(intr.u.Message.MessageInfo->MessageCount == 4);
+    assert(intr.u.Message.MessageInfo->MessageInfo[0].InterruptObject->SynchronizeIrql == (KIRQL)desc.u.MessageInterrupt.Level);
     assert(WdkTestGetIoConnectInterruptExCount() == 1);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 0);
     assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == &pdo);

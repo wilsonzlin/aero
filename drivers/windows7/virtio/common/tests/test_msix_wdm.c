@@ -205,6 +205,7 @@ static void test_connect_disconnect_calls_wdk_routines(void)
     DEVICE_OBJECT pdo;
     CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
     NTSTATUS status;
+    PKINTERRUPT intr0;
 
     desc = make_msg_desc(1);
 
@@ -219,6 +220,10 @@ static void test_connect_disconnect_calls_wdk_routines(void)
     assert(WdkTestGetLastIoConnectInterruptExPhysicalDeviceObject() == &pdo);
     assert(WdkTestGetLastIoConnectInterruptExMessageCount() == 1);
     assert(WdkTestGetLastIoConnectInterruptExSynchronizeIrql() == desc.u.MessageInterrupt.Level);
+    assert(msix.MessageInfo != NULL);
+    intr0 = msix.MessageInfo->MessageInfo[0].InterruptObject;
+    assert(intr0 != NULL);
+    assert(intr0->SynchronizeIrql == (KIRQL)desc.u.MessageInterrupt.Level);
 
     VirtioMsixDisconnect(&msix);
     assert(WdkTestGetIoDisconnectInterruptExCount() == 1);
@@ -280,6 +285,9 @@ static void test_multivector_mapping(void)
     assert(WdkTestGetLastIoConnectInterruptExSynchronizeIrql() == desc.u.MessageInterrupt.Level);
     assert(msix.MessageInfo != NULL);
     assert(msix.MessageInfo->MessageCount == 3);
+    assert(msix.MessageInfo->MessageInfo[0].InterruptObject->SynchronizeIrql == (KIRQL)desc.u.MessageInterrupt.Level);
+    assert(msix.MessageInfo->MessageInfo[1].InterruptObject->SynchronizeIrql == (KIRQL)desc.u.MessageInterrupt.Level);
+    assert(msix.MessageInfo->MessageInfo[2].InterruptObject->SynchronizeIrql == (KIRQL)desc.u.MessageInterrupt.Level);
     /* MessageData is an APIC vector in real systems; ensure it differs from message number indices. */
     assert(msix.MessageInfo->MessageInfo[0].MessageData == 0x50u);
     assert(msix.MessageInfo->MessageInfo[1].MessageData == 0x51u);
