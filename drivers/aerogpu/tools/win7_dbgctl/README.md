@@ -81,7 +81,8 @@ Minimum supported commands:
   - a stall warning if the completed fence does not advance for multiple intervals while work is pending.
 
 - `aerogpu_dbgctl --query-perf` *(alias: `--perf`)*  
-  Dumps a KMD-provided perf/health counter snapshot (fence/ring progress, submit counts, IRQ counts, reset counts, vblank counters).
+  Dumps a KMD-provided perf/health counter snapshot (fence/ring progress, submit counts, IRQ counts,
+  reset counts, vblank counters, and error IRQ / last-error diagnostics when available).
   On older KMD builds this may print `(not supported)`; upgrade the driver to enable it.
 
 - `aerogpu_dbgctl --query-scanout`  
@@ -364,6 +365,9 @@ This tool currently supports JSON output for snapshot-style commands and other b
 - `--read-gpa`
 - `--selftest`
 - `--list-displays`
+
+Notes:
+- `--query-perf --json` includes a best-effort `last_error` object (via `AEROGPU_ESCAPE_OP_QUERY_ERROR`) when supported by the installed KMD.
 
 ## Build (Windows 7)
 
