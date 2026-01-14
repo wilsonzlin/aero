@@ -3488,6 +3488,7 @@ mod tests {
                                 408 => "Request Timeout",
                                 429 => "Too Many Requests",
                                 500 => "Internal Server Error",
+                                501 => "Not Implemented",
                                 _ => "Unknown",
                             };
                             let content_length = extra_headers
