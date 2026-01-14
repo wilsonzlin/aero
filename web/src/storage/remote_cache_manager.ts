@@ -149,6 +149,10 @@ function normalizeOptionalHeader(v: string | null | undefined): string | undefin
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function isNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const name = (err as { name?: unknown }).name;
@@ -196,17 +200,22 @@ function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
 export function validateRemoteCacheMetaV1(parsed: unknown): RemoteCacheMetaV1 | null {
   if (!parsed || typeof parsed !== "object") return null;
   const obj = parsed as Partial<RemoteCacheMetaV1>;
-  if (obj.version !== META_VERSION) return null;
-  if (typeof obj.imageId !== "string") return null;
-  if (typeof obj.imageVersion !== "string") return null;
-  if (typeof obj.deliveryType !== "string") return null;
-  if (!obj.validators || typeof obj.validators !== "object") return null;
-  const sizeBytes = (obj.validators as Partial<RemoteCacheMetaV1["validators"]>).sizeBytes;
+  if (!hasOwn(obj, "version") || obj.version !== META_VERSION) return null;
+  if (!hasOwn(obj, "imageId") || typeof obj.imageId !== "string") return null;
+  if (!hasOwn(obj, "imageVersion") || typeof obj.imageVersion !== "string") return null;
+  if (!hasOwn(obj, "deliveryType") || typeof obj.deliveryType !== "string") return null;
+  if (!hasOwn(obj, "validators") || !obj.validators || typeof obj.validators !== "object" || Array.isArray(obj.validators)) return null;
+  const validators = obj.validators as Record<string, unknown>;
+  if (!hasOwn(validators, "sizeBytes")) return null;
+  const sizeBytes = (validators as Partial<RemoteCacheMetaV1["validators"]>).sizeBytes;
   if (typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) return null;
+  if (!hasOwn(obj, "chunkSizeBytes")) return null;
   const chunkSizeBytes = obj.chunkSizeBytes;
   if (typeof chunkSizeBytes !== "number" || !Number.isSafeInteger(chunkSizeBytes) || chunkSizeBytes <= 0) return null;
+  if (!hasOwn(obj, "createdAtMs")) return null;
   const createdAtMs = obj.createdAtMs;
   if (typeof createdAtMs !== "number" || !Number.isSafeInteger(createdAtMs) || createdAtMs < 0) return null;
+  if (!hasOwn(obj, "lastAccessedAtMs")) return null;
   const lastAccessedAtMs = obj.lastAccessedAtMs;
   if (
     typeof lastAccessedAtMs !== "number" ||
@@ -214,15 +223,19 @@ export function validateRemoteCacheMetaV1(parsed: unknown): RemoteCacheMetaV1 | 
     lastAccessedAtMs < 0
   )
     return null;
-  if (obj.accessCounter !== undefined) {
-    if (!Number.isSafeInteger(obj.accessCounter) || obj.accessCounter < 0) return null;
+  const accessCounter = hasOwn(obj, "accessCounter") ? obj.accessCounter : undefined;
+  if (accessCounter !== undefined) {
+    if (!Number.isSafeInteger(accessCounter) || accessCounter < 0) return null;
   }
-  if (obj.chunkLastAccess !== undefined) {
-    if (typeof obj.chunkLastAccess !== "object" || obj.chunkLastAccess === null) return null;
-    if (Array.isArray(obj.chunkLastAccess)) return null;
-    const lastAccess = obj.chunkLastAccess as Record<string, unknown>;
+  const chunkLastAccess = hasOwn(obj, "chunkLastAccess") ? obj.chunkLastAccess : undefined;
+  let parsedLastAccess: Record<string, number> | undefined = undefined;
+  if (chunkLastAccess !== undefined) {
+    if (typeof chunkLastAccess !== "object" || chunkLastAccess === null) return null;
+    if (Array.isArray(chunkLastAccess)) return null;
+    const lastAccess = chunkLastAccess as Record<string, unknown>;
     let entries = 0;
     const maxChunkIndex = Math.ceil(sizeBytes / chunkSizeBytes);
+    parsedLastAccess = Object.create(null) as Record<string, number>;
     for (const key in lastAccess) {
       if (!Object.prototype.hasOwnProperty.call(lastAccess, key)) continue;
       entries += 1;
@@ -237,20 +250,44 @@ export function validateRemoteCacheMetaV1(parsed: unknown): RemoteCacheMetaV1 | 
       if (!Number.isSafeInteger(idx) || idx < 0 || idx >= maxChunkIndex) return null;
       const value = lastAccess[key];
       if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
+      parsedLastAccess[key] = value;
     }
   }
-  if (!Array.isArray(obj.cachedRanges)) return null;
+  if (!hasOwn(obj, "cachedRanges") || !Array.isArray(obj.cachedRanges)) return null;
   if (obj.cachedRanges.length > 1_000_000) return null;
+  const cachedRanges: ByteRange[] = [];
   for (const r of obj.cachedRanges) {
     if (!r || typeof r !== "object") return null;
-    const rr = r as Partial<ByteRange>;
-    const start = rr.start;
-    const end = rr.end;
+    const rr = r as Record<string, unknown>;
+    if (!hasOwn(rr, "start") || !hasOwn(rr, "end")) return null;
+    const start = (rr as Partial<ByteRange>).start;
+    const end = (rr as Partial<ByteRange>).end;
     if (typeof start !== "number" || typeof end !== "number") return null;
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return null;
     if (end > sizeBytes) return null;
+    cachedRanges.push({ start, end });
   }
-  return obj as RemoteCacheMetaV1;
+
+  // Return a fully-sanitized metadata object with a null prototype so callers never observe
+  // inherited properties (e.g. if `Object.prototype` is polluted).
+  const out: RemoteCacheMetaV1 = Object.create(null) as RemoteCacheMetaV1;
+  out.version = META_VERSION;
+  out.imageId = obj.imageId;
+  out.imageVersion = obj.imageVersion;
+  out.deliveryType = obj.deliveryType;
+  out.validators = Object.create(null) as RemoteCacheMetaV1["validators"];
+  out.validators.sizeBytes = sizeBytes;
+  const etag = (validators as Partial<RemoteCacheMetaV1["validators"]>).etag;
+  const lastModified = (validators as Partial<RemoteCacheMetaV1["validators"]>).lastModified;
+  if (typeof etag === "string") out.validators.etag = etag;
+  if (typeof lastModified === "string") out.validators.lastModified = lastModified;
+  out.chunkSizeBytes = chunkSizeBytes;
+  out.createdAtMs = createdAtMs;
+  out.lastAccessedAtMs = lastAccessedAtMs;
+  if (accessCounter !== undefined) out.accessCounter = accessCounter;
+  if (parsedLastAccess !== undefined) out.chunkLastAccess = parsedLastAccess;
+  out.cachedRanges = cachedRanges;
+  return out;
 }
 
 async function sha256Hex(data: Uint8Array<ArrayBuffer>): Promise<string> {

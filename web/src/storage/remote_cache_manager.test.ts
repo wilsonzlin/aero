@@ -303,6 +303,70 @@ describe("RemoteCacheManager", () => {
     expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
   });
 
+  it("rejects meta.json files with required fields inherited from prototypes", () => {
+    const proto = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators: { sizeBytes: 1024 },
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      cachedRanges: [],
+    };
+    const parsed = Object.create(proto);
+    expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
+  });
+
+  it("rejects meta.json files with validators.sizeBytes inherited from prototypes", () => {
+    const validators = Object.create({ sizeBytes: 1024 });
+    const parsed = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators,
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      cachedRanges: [],
+    };
+    expect(validateRemoteCacheMetaV1(parsed)).toBeNull();
+  });
+
+  it("does not allow Object.prototype pollution to affect parsed meta objects", () => {
+    const parsed = {
+      version: 1,
+      imageId: "img",
+      imageVersion: "v1",
+      deliveryType: remoteRangeDeliveryType(512),
+      validators: { sizeBytes: 1024 },
+      chunkSizeBytes: 512,
+      createdAtMs: 0,
+      lastAccessedAtMs: 0,
+      // Intentionally omit chunkLastAccess: it is optional.
+      cachedRanges: [],
+    };
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "chunkLastAccess");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "chunkLastAccess", { value: { polluted: true }, configurable: true });
+      const meta = validateRemoteCacheMetaV1(parsed);
+      expect(meta).not.toBeNull();
+      // A valid meta file with no chunkLastAccess must not observe the polluted inherited value.
+      expect((meta as any).chunkLastAccess).toBeUndefined();
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "chunkLastAccess", existing);
+      else delete (Object.prototype as any).chunkLastAccess;
+    }
+  });
+
   it("aborts meta.json writes on error", async () => {
     let aborted = false;
 
