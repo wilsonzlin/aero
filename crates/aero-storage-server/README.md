@@ -17,10 +17,10 @@ metrics and basic health endpoints.
 - `GET /v1/images/:id/meta` – image metadata (size, etag, last_modified, etc)
 - `GET|HEAD /v1/images/:image_id` (or `/v1/images/:image_id/data`) – stream image bytes
   (supports `Range` requests)
-- `GET /v1/images/:image_id/chunked/manifest.json` – fetch a pre-chunked image manifest (no `Range`)
-- `GET /v1/images/:image_id/chunked/chunks/:chunkName` – fetch a single chunk object (no `Range`)
-- `GET /v1/images/:image_id/chunked/:version/manifest.json` – fetch a versioned chunk manifest (recommended)
-- `GET /v1/images/:image_id/chunked/:version/chunks/:chunkName` – fetch a versioned chunk object (recommended)
+- `GET|HEAD /v1/images/:image_id/chunked/manifest.json` (or `/manifest`) – fetch a pre-chunked image manifest (no `Range`)
+- `GET|HEAD /v1/images/:image_id/chunked/chunks/:chunkName` – fetch a single chunk object (no `Range`)
+- `GET|HEAD /v1/images/:image_id/chunked/:version/manifest.json` (or `/manifest`) – fetch a versioned chunk manifest (recommended)
+- `GET|HEAD /v1/images/:image_id/chunked/:version/chunks/:chunkName` – fetch a versioned chunk object (recommended)
 
 Notes:
 
