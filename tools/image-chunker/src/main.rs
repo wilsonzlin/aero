@@ -1070,6 +1070,22 @@ async fn verify_chunk_file(
     expected_size: u64,
     expected_sha256: Option<&str>,
 ) -> Result<u64> {
+    if expected_sha256.is_none() {
+        let meta = tokio::fs::metadata(path)
+            .await
+            .with_context(|| format!("stat chunk {index} at {}", path.display()))?;
+        let size = meta.len();
+        verify_chunk_integrity(
+            index,
+            &format!("file://{}", path.display()),
+            size,
+            expected_size,
+            None,
+            None,
+        )?;
+        return Ok(size);
+    }
+
     let mut file = tokio::fs::File::open(path)
         .await
         .with_context(|| format!("open chunk {index} at {}", path.display()))?;
