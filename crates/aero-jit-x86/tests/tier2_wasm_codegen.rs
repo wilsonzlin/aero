@@ -1258,15 +1258,33 @@ mod random_traces {
                     values.push(dst);
                 }
                 85..=89 => {
+                    // Memory stores use constant, in-bounds addresses to keep the harness simple.
+                    //
+                    // Note: the WASM test harness bumps the code-version table on memory writes.
+                    // This random trace generator keeps all `GuardCodeVersion` ops in the prologue,
+                    // so these bumps do not affect guard checks within the same trace execution.
+                    let width = *[Width::W8, Width::W16, Width::W32, Width::W64]
+                        .choose(rng)
+                        .unwrap();
+                    let bytes = width.bytes() as usize;
+                    let addr = rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64;
+                    let src = gen_operand(rng, &values);
+                    body.push(Instr::StoreMem {
+                        addr: Operand::Const(addr),
+                        src,
+                        width,
+                    });
+                }
+                90..=94 => {
                     // Code version guard.
                     //
                     // Keep these guards in the prologue for linear traces: Tier-2 expects
                     // `Instr::GuardCodeVersion` to live in the prologue (or in the loop body prefix
                     // for loop traces).
                     //
-                    // We avoid `StoreMem` in these random traces, because the `tier2_wasm_codegen`
-                    // wasmi harness bumps code versions on memory writes and the Tier-2 interpreter
-                    // does not currently do the same for `StoreMem`.
+                    // Note: the generator also emits `StoreMem` ops, and the WASM test harness
+                    // bumps the code-version table on memory writes. Since guards are in the
+                    // prologue, these bumps do not affect guard checks within the same trace run.
                     let table_len = code_versions.len() as u64;
                     let page = if table_len != 0 {
                         rng.gen_range(0..table_len)
