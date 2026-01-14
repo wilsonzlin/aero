@@ -392,10 +392,11 @@ If you are using signed URLs and do not need cookies, you can use:
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
 Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since
-Access-Control-Allow-Credentials: false
 Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 Access-Control-Max-Age: 86400
 ```
+
+Note: Omit `Access-Control-Allow-Credentials` unless you need credentialed requests; browsers only accept `Access-Control-Allow-Credentials: true`.
 
 #### CORP (for COEP)
 
