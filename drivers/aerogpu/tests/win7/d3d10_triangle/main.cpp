@@ -389,10 +389,28 @@ static int RunD3D10Triangle(int argc, char** argv) {
     return reporter.FailHresult("CreateBuffer(vertex)", hr);
   }
 
-  UINT stride = sizeof(Vertex);
-  UINT offset = 0;
-  ID3D10Buffer* vbs[] = {vb.get()};
-  device->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+  // Bind an extra dummy vertex buffer in slot 1 to exercise multi-buffer IA binding.
+  // Many real D3D10 apps bind multiple VBs even if the current input layout only
+  // references slot 0.
+  uint32_t dummy_vb_data[4] = {};
+  D3D10_BUFFER_DESC dummy_desc;
+  ZeroMemory(&dummy_desc, sizeof(dummy_desc));
+  dummy_desc.ByteWidth = sizeof(dummy_vb_data);
+  dummy_desc.Usage = D3D10_USAGE_DEFAULT;
+  dummy_desc.BindFlags = D3D10_BIND_VERTEX_BUFFER;
+  D3D10_SUBRESOURCE_DATA dummy_init;
+  ZeroMemory(&dummy_init, sizeof(dummy_init));
+  dummy_init.pSysMem = dummy_vb_data;
+  ComPtr<ID3D10Buffer> dummy_vb;
+  hr = device->CreateBuffer(&dummy_desc, &dummy_init, dummy_vb.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(dummy vertex)", hr);
+  }
+
+  UINT strides[2] = {sizeof(Vertex), sizeof(uint32_t)};
+  UINT offsets[2] = {0, 0};
+  ID3D10Buffer* vbs[] = {vb.get(), dummy_vb.get()};
+  device->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 
   device->VSSetShader(vs.get());
   device->PSSetShader(ps.get());
