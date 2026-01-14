@@ -231,6 +231,40 @@ fn configuration_does_not_replay_unconfigured_wheel_events() {
 }
 
 #[test]
+fn boot_protocol_side_buttons_are_ignored() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+    set_protocol(&mut mouse, 0);
+
+    // Boot protocol mice only expose 3 buttons. Side/extra buttons should not enqueue reports that
+    // would be guest-visible no-ops.
+    mouse.button_event(0x08, true);
+    mouse.button_event(0x08, false);
+    mouse.button_event(0x10, true);
+    mouse.button_event(0x10, false);
+
+    assert!(
+        poll_interrupt_in(&mut mouse).is_none(),
+        "expected side button changes to produce no boot-protocol interrupt reports"
+    );
+}
+
+#[test]
+fn configuration_does_not_enqueue_held_side_button_in_boot_protocol() {
+    let mut mouse = UsbHidMouse::new();
+    set_protocol(&mut mouse, 0);
+
+    mouse.button_event(0x08, true);
+    assert!(poll_interrupt_in(&mut mouse).is_none());
+
+    configure_mouse(&mut mouse);
+    assert!(
+        poll_interrupt_in(&mut mouse).is_none(),
+        "boot protocol should not enqueue a held button4 state on first configuration"
+    );
+}
+
+#[test]
 fn mouse_wheel_is_ignored_in_boot_protocol() {
     let mut mouse = UsbHidMouse::new();
     configure_mouse(&mut mouse);

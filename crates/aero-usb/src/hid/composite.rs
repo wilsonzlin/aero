@@ -185,14 +185,18 @@ impl MouseInterface {
         self.flush_motion(configured);
         // Ignore any stale padding bits (e.g. from a corrupt snapshot) when determining whether the
         // guest-visible button state actually changed.
-        let before = self.buttons & 0x1f;
+        let visible_mask = match self.protocol {
+            HidProtocol::Boot => 0x07,
+            HidProtocol::Report => 0x1f,
+        };
+        let before = self.buttons & visible_mask;
         if pressed {
             self.buttons |= bit;
         } else {
             self.buttons &= !bit;
         }
         self.buttons &= 0x1f;
-        if self.buttons != before {
+        if (self.buttons & visible_mask) != before {
             self.push_report(
                 MouseReport {
                     buttons: self.buttons,
@@ -1204,7 +1208,11 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                         self.mouse.hwheel = 0;
 
                         self.keyboard.enqueue_current_report();
-                        if self.mouse.buttons != 0 {
+                        let mouse_visible_mask = match self.mouse.protocol {
+                            HidProtocol::Boot => 0x07,
+                            HidProtocol::Report => 0x1f,
+                        };
+                        if (self.mouse.buttons & mouse_visible_mask) != 0 {
                             self.mouse.push_report(
                                 MouseReport {
                                     buttons: self.mouse.buttons,
@@ -2080,6 +2088,62 @@ mod tests {
         );
 
         dev.mouse_wheel2(5, 7);
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
+    fn boot_protocol_mouse_side_buttons_are_ignored() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        configure(&mut dev);
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_PROTOCOL,
+                    w_value: 0, // boot protocol
+                    w_index: MOUSE_INTERFACE as u16,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        dev.mouse_button_event(0x08, true);
+        dev.mouse_button_event(0x08, false);
+        dev.mouse_button_event(0x10, true);
+        dev.mouse_button_event(0x10, false);
+
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
+    fn configuration_does_not_enqueue_held_mouse_side_button_in_boot_protocol() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x21, // HostToDevice | Class | Interface
+                    b_request: HID_REQUEST_SET_PROTOCOL,
+                    w_value: 0, // boot protocol
+                    w_index: MOUSE_INTERFACE as u16,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        dev.mouse_button_event(0x08, true);
+        configure(&mut dev);
         assert_eq!(
             dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Nak

@@ -370,14 +370,21 @@ impl UsbHidMouse {
         self.flush_motion();
         // Ignore any stale padding bits (e.g. from a corrupt snapshot) when determining whether the
         // guest-visible button state actually changed.
-        let before = self.buttons & 0x1f;
+        let visible_mask = match self.protocol {
+            HidProtocol::Boot => 0x07,
+            HidProtocol::Report => 0x1f,
+        };
+        let before_full = self.buttons & 0x1f;
+        let before_visible = before_full & visible_mask;
         if pressed {
             self.buttons |= bit;
         } else {
             self.buttons &= !bit;
         }
         self.buttons &= 0x1f;
-        if self.buttons != before {
+        let after_full = self.buttons & 0x1f;
+        let after_visible = after_full & visible_mask;
+        if after_visible != before_visible {
             self.push_report(MouseReport {
                 buttons: self.buttons,
                 x: 0,
@@ -385,6 +392,11 @@ impl UsbHidMouse {
                 wheel: 0,
                 hwheel: 0,
             });
+        } else if after_full != before_full && self.suspended && self.remote_wakeup_enabled {
+            // Even though boot protocol cannot represent button4/5, treat them as user activity for
+            // remote wakeup so the device behaves like physical mice that can resume a suspended
+            // host from any button press.
+            self.remote_wakeup_pending = true;
         }
     }
 
@@ -605,7 +617,11 @@ impl UsbDeviceModel for UsbHidMouse {
                         self.dy = 0;
                         self.wheel = 0;
                         self.hwheel = 0;
-                        if self.buttons != 0 {
+                        let visible_mask = match self.protocol {
+                            HidProtocol::Boot => 0x07,
+                            HidProtocol::Report => 0x1f,
+                        };
+                        if (self.buttons & visible_mask) != 0 {
                             self.push_report(MouseReport {
                                 buttons: self.buttons,
                                 x: 0,
