@@ -6774,6 +6774,9 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
   if (op == STATUS_PARTIAL_COPY) {
     return 3;
   }
+  if (shortRead) {
+    return 2;
+  }
   return NT_SUCCESS(op) ? 0 : 2;
 }
 
