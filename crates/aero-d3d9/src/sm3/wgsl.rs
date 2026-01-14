@@ -1946,6 +1946,7 @@ impl EmitState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_block(
     wgsl: &mut String,
     block: &Block,
@@ -1967,6 +1968,7 @@ fn emit_block(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_stmt(
     wgsl: &mut String,
     stmt: &Stmt,
@@ -2105,6 +2107,7 @@ fn emit_stmt(
                                         stage,
                                         f32_defs,
                                         sampler_types,
+                                        state,
                                     )?;
                                     let _ = writeln!(wgsl, "{pad}}}");
                                 }
@@ -2118,6 +2121,7 @@ fn emit_stmt(
                                         stage,
                                         f32_defs,
                                         sampler_types,
+                                        state,
                                     )?;
                                     let _ = writeln!(wgsl, "{pad}}}");
                                 }

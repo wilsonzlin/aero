@@ -275,13 +275,14 @@ fn sm3_call_missing_label_is_an_error() {
 fn sm3_excessive_call_depth_is_an_error() {
     // Build a deep non-recursive call chain: main -> l0 -> l1 -> ... -> l63.
     // This should exceed the translator's hard cap and error deterministically.
-    let mut tokens = Vec::new();
-    tokens.push(version_token(ShaderStage::Pixel, 3, 0));
-    // call l0
-    tokens.push(opcode_token(25, 1));
-    tokens.push(src_token(18, 0, 0xE4, 0));
-    // ret (end main)
-    tokens.push(opcode_token(28, 0));
+    let mut tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // call l0
+        opcode_token(25, 1),
+        src_token(18, 0, 0xE4, 0),
+        // ret (end main)
+        opcode_token(28, 0),
+    ];
 
     for i in 0..64u32 {
         // label li
@@ -305,4 +306,3 @@ fn sm3_excessive_call_depth_is_an_error() {
         "{err}"
     );
 }
-
