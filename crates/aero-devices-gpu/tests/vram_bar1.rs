@@ -18,16 +18,17 @@ fn bar1_mmio_read_write_roundtrip() {
 }
 
 #[test]
-fn bar1_mmio_out_of_range_reads_float_high_and_writes_are_ignored() {
+fn bar1_mmio_out_of_range_reads_return_zero_and_writes_are_ignored() {
     let dev = AeroGpuPciDevice::default();
     let mut bar1 = dev.bar1_mmio_handler();
 
     // Writes past the end should not panic and should have no effect.
     bar1.write(AEROGPU_VRAM_SIZE, 1, 0x00);
 
-    // Reads past the end should float high (0xFF bytes).
-    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 1), 0xFF);
-    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 4), 0xFFFF_FFFF);
+    // Reads past the end return zeros (the BAR size is fixed, but wasm32 builds may not allocate
+    // the full backing store).
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 1), 0);
+    assert_eq!(bar1.read(AEROGPU_VRAM_SIZE, 4), 0);
 }
 
 #[test]
@@ -54,9 +55,9 @@ fn legacy_vga_alias_maps_text_buffer_to_expected_offset() {
 
 #[test]
 fn vbe_lfb_offset_matches_machine_vga_vram_layout_contract() {
-    // `aero_machine` reserves 128KiB for the legacy VGA window backing (`0xA0000..0xBFFFF`) and
-    // starts the VBE linear framebuffer (LFB) immediately after that region.
-    assert_eq!(VBE_LFB_OFFSET, 0x20_000);
+    // `aero_machine` (and `aero_gpu_vga`) reserve 256KiB for VGA planar memory (4 × 64KiB planes)
+    // and start the VBE packed-pixel linear framebuffer (LFB) after that region.
+    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
 }
 
 #[test]
@@ -85,7 +86,7 @@ fn vbe_lfb_alias_rejects_paddrs_past_bar1_end() {
 fn bar1_layout_constants_match_canonical_vga_vbe_layout() {
     // Canonical layout (see `docs/16-aerogpu-vga-vesa-compat.md`):
     // - guest-visible legacy VGA alias aperture is 128KiB (0xA0000..0xBFFFF).
-    // - the VBE LFB begins immediately after the legacy window backing at 0x20000.
+    // - the VBE LFB begins after the full 4-plane VGA planar region at 0x40000.
     assert_eq!(LEGACY_VGA_VRAM_BYTES, 0x20_000);
-    assert_eq!(VBE_LFB_OFFSET, 0x20_000);
+    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
 }
