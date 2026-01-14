@@ -232,12 +232,12 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         &payload,
     );
 
-    // SET_SHADER_CONSTANTS_I(stage=Compute, start_register=0, vec4_count=1, stage_ex=Hull, values=[1,2,3,4]).
+    // SET_SHADER_CONSTANTS_I(stage=Compute, start_register=0, vec4_count=1, values=[1,2,3,4]).
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 2); // stage=Compute
     push_u32_le(&mut payload, 0); // start_register
     push_u32_le(&mut payload, 1); // vec4_count
-    push_u32_le(&mut payload, 3); // reserved0 / stage_ex = Hull
+    push_u32_le(&mut payload, 0); // reserved0
     for i in [1u32, 2, 3, 4] {
         push_u32_le(&mut payload, i);
     }
@@ -248,14 +248,14 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         &payload,
     );
 
-    // SET_SHADER_CONSTANTS_B(stage=Compute, start_register=0, bool_count=2, stage_ex=Geometry, values=[0,1]).
+    // SET_SHADER_CONSTANTS_B(stage=Compute, start_register=0, bool_count=2, values=[0,1]).
     //
     // Each bool register is encoded as a vec4<u32> replicated across all lanes.
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 2); // stage=Compute
     push_u32_le(&mut payload, 0); // start_register
     push_u32_le(&mut payload, 2); // bool_count
-    push_u32_le(&mut payload, 2); // reserved0 / stage_ex = Geometry
+    push_u32_le(&mut payload, 0); // reserved0
     for &v in &[0u32, 1] {
         for _lane in 0..4 {
             push_u32_le(&mut payload, v);
@@ -356,15 +356,11 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("data_prefix=0000803f000000400000404000008040"));
 
     assert!(listing.contains("SetShaderConstantsI"));
-    assert!(listing.contains("stage_ex=3")); // Hull
-    assert!(listing.contains("stage_ex_name=Hull"));
     assert!(listing.contains("data_len=16"));
     assert!(listing.contains("data_prefix=01000000020000000300000004000000"));
 
     assert!(listing.contains("SetShaderConstantsB"));
     assert!(listing.contains("bool_count=2"));
-    assert!(listing.contains("stage_ex=2")); // Geometry
-    assert!(listing.contains("stage_ex_name=Geometry"));
     assert!(listing.contains("data_len=32"));
     assert!(listing.contains("data_prefix=00000000000000000000000000000000.."));
 
@@ -513,8 +509,6 @@ fn json_listing_decodes_new_opcodes() {
     let set_consts_i = find_packet("SetShaderConstantsI");
     assert_eq!(set_consts_i["decoded"]["stage"], 2);
     assert_eq!(set_consts_i["decoded"]["vec4_count"], 1);
-    assert_eq!(set_consts_i["decoded"]["stage_ex"], 3);
-    assert_eq!(set_consts_i["decoded"]["stage_ex_name"], "Hull");
     assert_eq!(set_consts_i["decoded"]["data_len"], 16);
     assert_eq!(
         set_consts_i["decoded"]["data_prefix"],
@@ -524,8 +518,6 @@ fn json_listing_decodes_new_opcodes() {
     let set_consts_b = find_packet("SetShaderConstantsB");
     assert_eq!(set_consts_b["decoded"]["stage"], 2);
     assert_eq!(set_consts_b["decoded"]["bool_count"], 2);
-    assert_eq!(set_consts_b["decoded"]["stage_ex"], 2);
-    assert_eq!(set_consts_b["decoded"]["stage_ex_name"], "Geometry");
     assert_eq!(set_consts_b["decoded"]["data_len"], 32);
     assert_eq!(
         set_consts_b["decoded"]["data_prefix"],
