@@ -2668,6 +2668,155 @@ bool TestApplyStateBlockDuringStateBlockRecordingCapturesShaderBindings() {
   return true;
 }
 
+bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetScissorRect != nullptr, "pfnSetScissorRect is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  constexpr uint32_t kD3dRsScissorTestEnable = 174u; // D3DRS_SCISSORTESTENABLE
+  RECT rect{};
+  rect.left = 10;
+  rect.top = 20;
+  rect.right = 110;
+  rect.bottom = 220;
+
+  // Enable scissor with a known rect so a subsequent redundant SetRenderState can
+  // be recorded without causing the state block itself to capture the dedicated
+  // scissor state (only the render state).
+  HRESULT hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(enable; set rect)")) {
+    return false;
+  }
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(scissor enable via render state)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsScissorTestEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(SCISSORTESTENABLE=TRUE) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(scissor enable via render state)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Disable scissor again before applying the state block.
+  hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect, FALSE);
+  if (!Check(hr == S_OK, "SetScissorRect(disable; keep rect)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(scissor enable render state)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->scissor_enabled == TRUE, "ApplyStateBlock enables scissor")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsScissorTestEnable] == 1u, "render state 174 updated")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->scissor_rect.left == rect.left &&
+                   dev->scissor_rect.top == rect.top &&
+                   dev->scissor_rect.right == rect.right &&
+                   dev->scissor_rect.bottom == rect.bottom,
+               "scissor rect preserved")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock scissor enable)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_scissor = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SCISSOR)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_scissor)) {
+      continue;
+    }
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+    if (sc->x == rect.left && sc->y == rect.top &&
+        sc->width == (rect.right - rect.left) &&
+        sc->height == (rect.bottom - rect.top)) {
+      saw_scissor = true;
+      break;
+    }
+  }
+  if (!Check(saw_scissor, "ApplyStateBlock emits SET_SCISSOR with expected rect")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_rs = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_STATE)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_state)) {
+      continue;
+    }
+    const auto* rs = reinterpret_cast<const aerogpu_cmd_set_render_state*>(hdr);
+    if (rs->state == kD3dRsScissorTestEnable && rs->value == 1u) {
+      saw_rs = true;
+      break;
+    }
+  }
+  if (!Check(saw_rs, "ApplyStateBlock emits SET_RENDER_STATE(SCISSORTESTENABLE=TRUE)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -15440,6 +15589,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockDuringStateBlockRecordingCapturesShaderBindings()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
