@@ -69,6 +69,8 @@ members = [
     "crates/firmware",
     "crates/memory",
     "crates/platform",
+    # Compatibility shim so `cargo test -p platform` continues to work.
+    "crates/platform-compat",
     "crates/aero-guest-phys",
     "crates/aero-pc-constants",
     "crates/aero-pc-platform",
