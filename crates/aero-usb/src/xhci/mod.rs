@@ -3204,7 +3204,7 @@ impl XhciController {
                 return EndpointOutcome::idle();
             };
 
-            self.ensure_endpoint_mapped_from_context(
+            let mapped = self.ensure_endpoint_mapped_from_context(
                 mem,
                 &mut exec,
                 slot_id,
@@ -3212,6 +3212,10 @@ impl XhciController {
                 ep_addr,
                 guest_ctx_present,
             );
+            if !mapped {
+                self.transfer_executors[slot_idx] = Some(exec);
+                return EndpointOutcome::idle();
+            }
 
             let before = exec
                 .endpoint_state(ep_addr)
@@ -3766,7 +3770,7 @@ impl XhciController {
         endpoint_id: u8,
         ep_addr: u8,
         guest_ctx_present: bool,
-    ) {
+    ) -> bool {
         let (dequeue_ptr, cycle) =
             match self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id) {
                 Some(v) => v,
@@ -3776,7 +3780,7 @@ impl XhciController {
                     // returning `None` in this case implies the guest Endpoint Context is either
                     // malformed (missing TRDP) or describes an unsupported endpoint type.
                     if guest_ctx_present {
-                        return;
+                        return false;
                     }
                     // Test/harness helpers like `set_endpoint_ring()` configure controller-local ring
                     // cursors without populating full Endpoint Context state in guest memory. Fall back
@@ -3790,7 +3794,7 @@ impl XhciController {
                         .copied()
                         .flatten()
                     else {
-                        return;
+                        return false;
                     };
                     (ring.dequeue_ptr(), ring.cycle_state())
                 }
@@ -3802,6 +3806,7 @@ impl XhciController {
         } else {
             exec.add_endpoint_with_cycle(ep_addr, dequeue_ptr, cycle);
         }
+        true
     }
 
     fn read_device_context_ptr_raw(&self, mem: &mut dyn MemoryBus, slot_id: u8) -> Option<u64> {
