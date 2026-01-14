@@ -189,6 +189,12 @@ mod tests {
                     return;
                 }
             };
+            if !exec.caps().supports_compute || !exec.caps().supports_indirect_execution {
+                eprintln!(
+                    "skipping tessellation scratch allocation test: backend lacks compute/indirect execution"
+                );
+                return;
+            }
 
             let mut scratch = ExpansionScratchAllocator::new(Default::default());
             let mut rt = TessellationRuntime::default();
