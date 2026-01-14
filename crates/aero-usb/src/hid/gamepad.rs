@@ -257,7 +257,8 @@ impl IoSnapshot for UsbHidGamepad {
         *self = Self::new();
 
         self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
-        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        let configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.configuration = if configuration == 0 { 0 } else { 1 };
         self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
         self.remote_wakeup_pending = r.bool(TAG_REMOTE_WAKEUP_PENDING)?.unwrap_or(false);
         self.suspended = r.bool(TAG_SUSPENDED)?.unwrap_or(false);
