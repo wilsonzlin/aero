@@ -113,6 +113,22 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
 
+    def test_virtio_blk_reset_skip_tokens(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_blk_reset_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|performed=0|reason=not_supported\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_SKIPPED:"))
+
+    def test_virtio_blk_reset_missing_token(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_blk_reset_missing_failure_message()
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: MISSING_VIRTIO_BLK_RESET:"))
+
 
 if __name__ == "__main__":
     unittest.main()

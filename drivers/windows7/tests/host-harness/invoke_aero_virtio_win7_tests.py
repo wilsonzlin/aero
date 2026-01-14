@@ -58,6 +58,7 @@ It:
   - when --with-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
   - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
+  - when --with-blk-reset is enabled, virtio-blk-reset must PASS (not SKIP/FAIL/missing)
 
 For convenience when scraping CI logs, the harness may also emit stable host-side summary markers (best-effort;
 do not affect PASS/FAIL):
@@ -1994,6 +1995,31 @@ def _virtio_snd_buffer_limits_required_failure_message(
     )
 
 
+def _virtio_blk_reset_skip_failure_message(tail: bytes) -> str:
+    # virtio-blk miniport reset marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|performed=0|reason=not_supported
+    marker = _try_extract_last_marker_line(
+        tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|"
+    )
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason")
+        if reason:
+            return (
+                f"FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ({reason}) "
+                "but --with-blk-reset was enabled"
+            )
+    return "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped but --with-blk-reset was enabled"
+
+
+def _virtio_blk_reset_missing_failure_message() -> str:
+    return (
+        "FAIL: MISSING_VIRTIO_BLK_RESET: did not observe virtio-blk-reset PASS marker while --with-blk-reset was enabled "
+        "(guest selftest too old or missing --test-blk-reset)"
+    )
+
+
 @lru_cache(maxsize=None)
 def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     try:
@@ -2433,6 +2459,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--with-blk-reset",
+        "--with-virtio-blk-reset",
+        "--require-virtio-blk-reset",
+        dest="with_blk_reset",
+        action="store_true",
+        help=(
+            "Require the guest virtio-blk-reset marker to PASS (treat FAIL/SKIP/missing as failure). "
+            "This requires a guest image provisioned with --test-blk-reset "
+            "(or env var AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1)."
+        ),
+    )
+    parser.add_argument(
         "--with-input-events",
         "--with-virtio-input-events",
         "--require-virtio-input-events",
@@ -2721,6 +2759,7 @@ def main() -> int:
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
     args.qemu_system = _resolve_executable_path(args.qemu_system)
+    need_blk_reset = bool(getattr(args, "with_blk_reset", False))
     need_input_wheel = bool(getattr(args, "with_input_wheel", False))
     need_input_events_extended = bool(getattr(args, "with_input_events_extended", False))
     need_input_events = bool(args.with_input_events) or need_input_wheel or need_input_events_extended
@@ -3442,6 +3481,9 @@ def main() -> int:
             blk_resize_old_bytes: Optional[int] = None
             blk_resize_new_bytes: Optional[int] = None
             blk_resize_requested = False
+            saw_virtio_blk_reset_pass = False
+            saw_virtio_blk_reset_skip = False
+            saw_virtio_blk_reset_fail = False
             saw_virtio_input_pass = False
             saw_virtio_input_fail = False
             saw_virtio_input_bind_pass = False
@@ -3570,6 +3612,37 @@ def main() -> int:
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP" in tail
                     ):
                         saw_virtio_blk_resize_skip = True
+
+                    if (
+                        not saw_virtio_blk_reset_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS" in tail
+                    ):
+                        saw_virtio_blk_reset_pass = True
+                    if (
+                        not saw_virtio_blk_reset_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP" in tail
+                    ):
+                        saw_virtio_blk_reset_skip = True
+                    if (
+                        not saw_virtio_blk_reset_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL" in tail
+                    ):
+                        saw_virtio_blk_reset_fail = True
+
+                    if need_blk_reset:
+                        if saw_virtio_blk_reset_skip:
+                            print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        if saw_virtio_blk_reset_fail:
+                            print(
+                                "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while --with-blk-reset was enabled",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
                     if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                         saw_virtio_input_pass = True
                         if virtio_input_marker_time is None:
@@ -4398,10 +4471,10 @@ def main() -> int:
                                         "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
                                         "while --with-virtio-snd was enabled"
                                     )
-                                    print(msg, file=sys.stderr)
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
 
                             if args.with_snd_buffer_limits:
                                 msg = _virtio_snd_buffer_limits_required_failure_message(
@@ -4415,6 +4488,24 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+
+                        if need_blk_reset:
+                            if saw_virtio_blk_reset_fail:
+                                print(
+                                    "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while --with-blk-reset was enabled",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_blk_reset_pass:
+                                if saw_virtio_blk_reset_skip:
+                                    print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
+                                else:
+                                    print(_virtio_blk_reset_missing_failure_message(), file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         if need_input_events:
                             if saw_virtio_input_events_fail:
                                 print(
@@ -4964,6 +5055,22 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP" in tail
                         ):
                             saw_virtio_blk_resize_skip = True
+
+                        if (
+                            not saw_virtio_blk_reset_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS" in tail
+                        ):
+                            saw_virtio_blk_reset_pass = True
+                        if (
+                            not saw_virtio_blk_reset_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP" in tail
+                        ):
+                            saw_virtio_blk_reset_skip = True
+                        if (
+                            not saw_virtio_blk_reset_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL" in tail
+                        ):
+                            saw_virtio_blk_reset_fail = True
                         if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
                             saw_virtio_input_pass = True
                         if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
@@ -5475,6 +5582,23 @@ def main() -> int:
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
+                            if need_blk_reset:
+                                if saw_virtio_blk_reset_fail:
+                                    print(
+                                        "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while --with-blk-reset was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_blk_reset_pass:
+                                    if saw_virtio_blk_reset_skip:
+                                        print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
+                                    else:
+                                        print(_virtio_blk_reset_missing_failure_message(), file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             if need_input_events:
                                 if saw_virtio_input_events_fail:
                                     print(

@@ -77,6 +77,9 @@ struct Options {
   // Optional: run an end-to-end virtio-blk runtime resize test.
   // This requires host-side intervention during the run (QMP block resize).
   bool test_blk_resize = false;
+  // If set, run a stability test that forces a virtio-blk miniport reset via the private
+  // `AEROVBLK_IOCTL_FORCE_RESET` IOCTL and then verifies post-reset I/O still works.
+  bool test_blk_reset = false;
   // Skip the virtio-snd test (emits a SKIP marker).
   bool disable_snd = false;
   // Skip the virtio-snd capture test (emits a SKIP marker).
@@ -585,21 +588,34 @@ static bool LooksLikeVirtioStorageId(const StorageIdStrings& id) {
   return false;
 }
 
-static HANDLE OpenPhysicalDriveForIoctl(Logger& log, DWORD disk_number) {
+static HANDLE TryOpenPhysicalDriveForIoctl(DWORD disk_number, DWORD* out_err) {
+  if (out_err) *out_err = ERROR_SUCCESS;
   wchar_t path[64];
   swprintf_s(path, L"\\\\.\\PhysicalDrive%lu", static_cast<unsigned long>(disk_number));
 
   const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
   const DWORD flags = FILE_ATTRIBUTE_NORMAL;
   const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_READ, 0};
+  DWORD last_err = ERROR_SUCCESS;
   for (const DWORD access : desired_accesses) {
     HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
+      if (out_err) *out_err = ERROR_SUCCESS;
       return h;
     }
+    last_err = GetLastError();
   }
+  if (out_err) *out_err = last_err;
+  return INVALID_HANDLE_VALUE;
+}
+
+static HANDLE OpenPhysicalDriveForIoctl(Logger& log, DWORD disk_number) {
+  DWORD err = ERROR_SUCCESS;
+  HANDLE h = TryOpenPhysicalDriveForIoctl(disk_number, &err);
+  if (h != INVALID_HANDLE_VALUE) return h;
+
   log.Logf("virtio-blk: CreateFile(PhysicalDrive%lu) failed err=%lu", static_cast<unsigned long>(disk_number),
-           GetLastError());
+           static_cast<unsigned long>(err));
   return INVALID_HANDLE_VALUE;
 }
 
@@ -2934,41 +2950,6 @@ static VirtioBlkTestResult VirtioBlkTest(Logger& log, const Options& opt,
       }
     }
 
-    // Debug/robustness: force a miniport reset and confirm the adapter still answers queries.
-    if (info.has_value()) {
-      bool did_reset = false;
-      if (!ForceAerovblkMiniportReset(log, pd, &did_reset)) {
-        log.LogLine("virtio-blk: miniport force reset FAIL");
-        CloseHandle(pd);
-        return out;
-      }
-      if (did_reset) {
-        const auto info2 = QueryAerovblkMiniportInfo(log, pd);
-        if (!info2.has_value()) {
-          log.LogLine("virtio-blk: miniport query after reset FAIL");
-          CloseHandle(pd);
-          return out;
-        }
-        if (!ValidateAerovblkMiniportInfo(log, *info2)) {
-          CloseHandle(pd);
-          return out;
-        }
-        constexpr size_t kCountersEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
-        if (info->returned_len >= kCountersEnd && info2->returned_len >= kCountersEnd) {
-          if (info2->info.IoctlResetCount < info->info.IoctlResetCount + 1) {
-            log.Logf("virtio-blk: miniport reset counter did not increment (before=%lu after=%lu)",
-                     static_cast<unsigned long>(info->info.IoctlResetCount),
-                     static_cast<unsigned long>(info2->info.IoctlResetCount));
-            CloseHandle(pd);
-            return out;
-          }
-        } else {
-          log.Logf("virtio-blk: miniport reset counter SKIP (counters not reported; before_len=%zu after_len=%zu)",
-                   info->returned_len, info2->returned_len);
-        }
-      }
-    }
-
     // Optional: cover flush path explicitly, but don't fail overall test if the flush ioctl is blocked.
     DWORD bytes = 0;
     if (DeviceIoControl(pd, IOCTL_DISK_FLUSH_CACHE, nullptr, 0, nullptr, 0, &bytes, nullptr)) {
@@ -3127,6 +3108,209 @@ static VirtioBlkTestResult VirtioBlkTest(Logger& log, const Options& opt,
   cleanup();
   out.read_ok = out.read_ok && out.verify_ok;
   out.ok = out.write_ok && out.flush_ok && out.read_ok;
+  return out;
+}
+
+struct VirtioBlkResetTestResult {
+  bool ok = false;
+  bool performed = false;
+  bool skipped_not_supported = false;
+  std::string fail_reason;
+};
+
+static bool VirtioBlkResetSmokeIo(Logger& log, const std::wstring& base_dir, DWORD* out_err, const char** out_stage) {
+  if (out_err) *out_err = ERROR_SUCCESS;
+  if (out_stage) *out_stage = "";
+
+  const std::wstring test_file = JoinPath(base_dir, L"virtio-blk-reset-smoke.bin");
+  HANDLE h = CreateFileW(test_file.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+  if (h == INVALID_HANDLE_VALUE) {
+    if (out_err) *out_err = GetLastError();
+    if (out_stage) *out_stage = "create";
+    return false;
+  }
+
+  bool ok = false;
+  DWORD err = ERROR_SUCCESS;
+  const char* stage = "";
+  std::vector<uint8_t> buf(4096);
+  for (size_t i = 0; i < buf.size(); i++) {
+    buf[i] = static_cast<uint8_t>(0xA5 ^ static_cast<uint8_t>(i & 0xFF));
+  }
+
+  DWORD written = 0;
+  if (!WriteFile(h, buf.data(), static_cast<DWORD>(buf.size()), &written, nullptr) || written != buf.size()) {
+    err = GetLastError();
+    stage = "write";
+    goto done;
+  }
+  if (!FlushFileBuffers(h)) {
+    err = GetLastError();
+    stage = "flush";
+    goto done;
+  }
+  if (SetFilePointer(h, 0, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR) {
+    err = GetLastError();
+    stage = "seek";
+    goto done;
+  }
+
+  std::vector<uint8_t> read_buf(buf.size());
+  DWORD read = 0;
+  if (!ReadFile(h, read_buf.data(), static_cast<DWORD>(read_buf.size()), &read, nullptr) || read != read_buf.size()) {
+    err = GetLastError();
+    stage = "read";
+    goto done;
+  }
+
+  if (memcmp(buf.data(), read_buf.data(), buf.size()) != 0) {
+    err = ERROR_CRC;
+    stage = "verify";
+    goto done;
+  }
+
+  ok = true;
+
+done:
+  CloseHandle(h);
+  (void)DeleteFileW(test_file.c_str());
+  if (!ok) {
+    if (out_err) *out_err = err;
+    if (out_stage) *out_stage = stage;
+    return false;
+  }
+  log.LogLine("virtio-blk-reset: smoke IO ok");
+  return true;
+}
+
+static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkSelection& target) {
+  VirtioBlkResetTestResult out{};
+
+  constexpr size_t kIoctlResetCountEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
+
+  DWORD open_err = ERROR_SUCCESS;
+  HANDLE pd = TryOpenPhysicalDriveForIoctl(target.disk_number, &open_err);
+  if (pd == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-blk-reset: unable to open PhysicalDrive%lu err=%lu",
+             static_cast<unsigned long>(target.disk_number), static_cast<unsigned long>(open_err));
+    out.fail_reason = "open_physical_drive_failed";
+    return out;
+  }
+
+  const auto before_opt = QueryAerovblkMiniportInfo(log, pd);
+  if (!before_opt.has_value()) {
+    CloseHandle(pd);
+    out.fail_reason = "miniport_query_before_failed";
+    return out;
+  }
+  if (!ValidateAerovblkMiniportInfo(log, *before_opt)) {
+    CloseHandle(pd);
+    out.fail_reason = "miniport_info_before_invalid";
+    return out;
+  }
+
+  uint32_t ioctl_reset_before = 0;
+  bool have_ioctl_reset_before = false;
+  if (before_opt->returned_len >= kIoctlResetCountEnd) {
+    ioctl_reset_before = before_opt->info.IoctlResetCount;
+    have_ioctl_reset_before = true;
+  }
+
+  bool performed = false;
+  const bool reset_ok = ForceAerovblkMiniportReset(log, pd, &performed);
+  CloseHandle(pd);
+
+  if (!reset_ok) {
+    out.fail_reason = "force_reset_failed";
+    return out;
+  }
+  if (!performed) {
+    out.ok = true;
+    out.performed = false;
+    out.skipped_not_supported = true;
+    return out;
+  }
+  out.performed = true;
+
+  const DWORD start = GetTickCount();
+  constexpr DWORD kTimeoutMs = 15000;
+  DWORD last_err = ERROR_SUCCESS;
+  const char* last_stage = "";
+  bool logged_retry = false;
+  bool smoke_ok = false;
+  while (true) {
+    DWORD err = ERROR_SUCCESS;
+    const char* stage = "";
+    if (VirtioBlkResetSmokeIo(log, target.base_dir, &err, &stage)) {
+      smoke_ok = true;
+      break;
+    }
+    last_err = err;
+    last_stage = stage ? stage : "";
+    if (!logged_retry) {
+      log.Logf("virtio-blk-reset: smoke IO retrying stage=%s err=%lu", last_stage,
+               static_cast<unsigned long>(last_err));
+      logged_retry = true;
+    }
+    if (GetTickCount() - start >= kTimeoutMs) break;
+    Sleep(200);
+  }
+  if (!smoke_ok) {
+    log.Logf("virtio-blk-reset: smoke IO failed stage=%s err=%lu", last_stage,
+             static_cast<unsigned long>(last_err));
+    out.fail_reason = "post_reset_io_failed";
+    return out;
+  }
+
+  // Verify the miniport IOCTL query still works after the forced reset.
+  AerovblkQueryInfoResult after{};
+  bool after_ok = false;
+  DWORD last_open_err = ERROR_SUCCESS;
+  for (int attempt = 0; attempt < 5; attempt++) {
+    DWORD err = ERROR_SUCCESS;
+    HANDLE pd2 = TryOpenPhysicalDriveForIoctl(target.disk_number, &err);
+    last_open_err = err;
+    if (pd2 == INVALID_HANDLE_VALUE) {
+      Sleep(200);
+      continue;
+    }
+    const auto q = QueryAerovblkMiniportInfo(log, pd2);
+    CloseHandle(pd2);
+    if (!q.has_value()) {
+      Sleep(200);
+      continue;
+    }
+    if (!ValidateAerovblkMiniportInfo(log, *q)) {
+      Sleep(200);
+      continue;
+    }
+    after = *q;
+    after_ok = true;
+    break;
+  }
+  if (!after_ok) {
+    log.Logf("virtio-blk-reset: miniport query after reset failed err=%lu", static_cast<unsigned long>(last_open_err));
+    out.fail_reason = "miniport_query_after_failed";
+    return out;
+  }
+
+  if (have_ioctl_reset_before && after.returned_len >= kIoctlResetCountEnd) {
+    const uint32_t after_count = after.info.IoctlResetCount;
+    if (after_count < ioctl_reset_before + 1) {
+      log.Logf("virtio-blk-reset: ioctl_reset_count did not increment before=%lu after=%lu",
+               static_cast<unsigned long>(ioctl_reset_before), static_cast<unsigned long>(after_count));
+      out.fail_reason = "ioctl_reset_count_not_incremented";
+      return out;
+    }
+    log.Logf("virtio-blk-reset: ioctl_reset_count before=%lu after=%lu", static_cast<unsigned long>(ioctl_reset_before),
+             static_cast<unsigned long>(after_count));
+  } else {
+    log.LogLine("virtio-blk-reset: ioctl_reset_count not available");
+  }
+
+  out.ok = true;
+  out.fail_reason.clear();
   return out;
 }
 
@@ -9309,6 +9493,8 @@ static void PrintUsage() {
       "  --expect-blk-msi          Fail virtio-blk test if still using INTx (expected MSI/MSI-X)\n"
       "  --test-blk-resize         Run virtio-blk runtime resize test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1)\n"
+      "  --test-blk-reset          Run virtio-blk miniport reset/recovery test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1)\n"
       "  --http-url <url>          HTTP URL for TCP connectivity test (also expects <url>-large)\n"
       "  --udp-port <port>         UDP echo server port for virtio-net UDP smoke test (host is 10.0.2.2)\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
@@ -9407,6 +9593,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.expect_blk_msi = true;
     } else if (arg == L"--test-blk-resize") {
       opt.test_blk_resize = true;
+    } else if (arg == L"--test-blk-reset") {
+      opt.test_blk_reset = true;
     } else if (arg == L"--dns-host") {
       const wchar_t* v = next();
       if (!v) {
@@ -9533,6 +9721,10 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
     opt.expect_blk_msi = true;
+  }
+
+  if (!opt.test_blk_reset && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_BLK_RESET")) {
+    opt.test_blk_reset = true;
   }
 
   if (opt.disable_snd &&
@@ -9721,13 +9913,34 @@ int wmain(int argc, wchar_t** argv) {
     all_ok = all_ok && resize.ok;
   }
 
+  if (opt.test_blk_reset) {
+    if (!blk.ok) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=blk_test_failed");
+      all_ok = false;
+    } else if (const auto target = SelectVirtioBlkSelection(log, opt); !target.has_value()) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=resolve_target_failed");
+      all_ok = false;
+    } else {
+      const auto reset = VirtioBlkResetTest(log, *target);
+      if (reset.skipped_not_supported) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|performed=0|reason=not_supported");
+      } else if (reset.ok) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1");
+      } else {
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=%s",
+                 reset.fail_reason.empty() ? "unknown" : reset.fail_reason.c_str());
+        all_ok = false;
+      }
+    }
+  }
+
   const auto input = VirtioInputTest(log);
   const std::string input_irq_fields =
-      (input.devinst != 0)
-          ? IrqFieldsForTestMarkerFromDevInst(input.devinst)
-          : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
-                                   {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
-                                    L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
+       (input.devinst != 0)
+           ? IrqFieldsForTestMarkerFromDevInst(input.devinst)
+           : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
+                                    {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
+                                     L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
   if (input.pci_binding_ok) {
     log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=%d", input.pci_devices);
   } else {

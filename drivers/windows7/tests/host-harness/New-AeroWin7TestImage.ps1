@@ -171,6 +171,13 @@ param(
   [Alias("TestTabletEvents")]
   [switch]$TestInputTabletEvents,
 
+  # If set, enable the guest selftest's virtio-blk miniport reset/recovery test
+  # (adds `--test-blk-reset` to the scheduled task).
+  #
+  # This is required when running the host harness with `-WithBlkReset` / `--with-blk-reset`.
+  [Parameter(Mandatory = $false)]
+  [switch]$TestBlkReset,
+
   # If set, enable virtio-input "CompatIdName" mode in the guest by writing:
   #   HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName = 1 (REG_DWORD)
   #
@@ -536,6 +543,11 @@ if ($TestInputTabletEvents) {
   $testInputTabletEventsArg = " --test-input-tablet-events"
 }
 
+$testBlkResetArg = ""
+if ($TestBlkReset) {
+  $testBlkResetArg = " --test-blk-reset"
+}
+
 $enableTestSigningCmd = ""
 if ($EnableTestSigning) {
   $enableTestSigningCmd = @"
@@ -598,7 +610,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -655,6 +667,8 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   - The virtio-blk runtime resize test (`virtio-blk-resize`) is disabled by default (requires host-side QMP resize).
     - To enable it (required when running the host harness with `-WithBlkResize` / `--with-blk-resize`),
       generate this media with `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
+  - To enable the virtio-blk miniport reset/recovery stability test (required when running the host harness with
+    `-WithBlkReset` / `--with-blk-reset`), generate this media with `-TestBlkReset` (adds `--test-blk-reset`).
   - The virtio-net selftest also performs a UDP echo smoke test against the host harness (10.0.2.2:<port>).
     - Default UDP port: 18081 (must match the host harness UDP echo server port).
     - If you need to override the port, regenerate this media with `-UdpPort <port>` (adds `--udp-port` to the scheduled task)

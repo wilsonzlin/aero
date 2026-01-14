@@ -102,6 +102,13 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$RequireNoBlkRecovery,
 
+  # If set, require the guest virtio-blk-reset marker to PASS (treat SKIP/missing as failure).
+  #
+  # Note: The guest image must be provisioned with `--test-blk-reset` (or env var equivalent) so the
+  # guest selftest runs the miniport reset/recovery test.
+  [Parameter(Mandatory = $false)]
+  [switch]$WithBlkReset,
+
   # If set, inject deterministic keyboard/mouse events via QMP (prefers `input-send-event`, with backcompat fallbacks) and require the guest
   # virtio-input end-to-end event delivery marker (`virtio-input-events`) to PASS.
   #
@@ -793,6 +800,9 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)] [bool]$RequireVirtioBlkResizePass = $false,
     # Delta in MiB to grow the virtio-blk backing device when RequireVirtioBlkResizePass is enabled.
     [Parameter(Mandatory = $false)] [int]$VirtioBlkResizeDeltaMiB = 64,
+    # If true, require the optional virtio-blk-reset marker to PASS.
+    [Parameter(Mandatory = $false)]
+    [bool]$RequireVirtioBlkResetPass = $false,
     # If true, require the optional virtio-input-events marker to PASS (host will inject events via QMP).
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
@@ -843,6 +853,9 @@ function Wait-AeroSelftestResult {
   $blkResizeOldBytes = $null
   $blkResizeNewBytes = $null
   $blkResizeRequested = $false
+  $sawVirtioBlkResetPass = $false
+  $sawVirtioBlkResetSkip = $false
+  $sawVirtioBlkResetFail = $false
   $sawVirtioInputPass = $false
   $sawVirtioInputFail = $false
   $sawVirtioInputBindPass = $false
@@ -993,6 +1006,15 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioBlkResizeSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-resize\|SKIP") {
         $sawVirtioBlkResizeSkip = $true
       }
+      if (-not $sawVirtioBlkResetPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|PASS") {
+        $sawVirtioBlkResetPass = $true
+      }
+      if (-not $sawVirtioBlkResetSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|SKIP") {
+        $sawVirtioBlkResetSkip = $true
+      }
+      if (-not $sawVirtioBlkResetFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk-reset\|FAIL") {
+        $sawVirtioBlkResetFail = $true
+      }
       if (-not $sawVirtioInputPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|PASS") {
         $sawVirtioInputPass = $true
         if ($null -eq $virtioInputMarkerTime) { $virtioInputMarkerTime = [DateTime]::UtcNow }
@@ -1094,6 +1116,11 @@ function Wait-AeroSelftestResult {
       if ($RequireVirtioInputWheelPass) {
         if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
         if ($sawVirtioInputWheelFail) { return @{ Result = "VIRTIO_INPUT_WHEEL_FAILED"; Tail = $tail } }
+      }
+
+      if ($RequireVirtioBlkResetPass) {
+        if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioBlkResetFail) { return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $tail } }
       }
 
       if (-not $sawVirtioInputTabletEventsReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-tablet-events\|READY") {
@@ -1311,6 +1338,18 @@ function Wait-AeroSelftestResult {
             }
           }
 
+          if ($RequireVirtioBlkResetPass) {
+            if ($sawVirtioBlkResetFail) {
+              return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $tail }
+            }
+            if (-not $sawVirtioBlkResetPass) {
+              if ($sawVirtioBlkResetSkip) {
+                return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $tail }
+              }
+              return @{ Result = "MISSING_VIRTIO_BLK_RESET"; Tail = $tail }
+            }
+          }
+
           $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
           if ($null -ne $msixCheck) { return $msixCheck }
           return @{ Result = "PASS"; Tail = $tail }
@@ -1369,6 +1408,13 @@ function Wait-AeroSelftestResult {
                   if (-not $sawVirtioInputWheelPass) {
                     if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
                     return @{ Result = "MISSING_VIRTIO_INPUT_WHEEL"; Tail = $tail }
+                  }
+                }
+                if ($RequireVirtioBlkResetPass) {
+                  if ($sawVirtioBlkResetFail) { return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $tail } }
+                  if (-not $sawVirtioBlkResetPass) {
+                    if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $tail } }
+                    return @{ Result = "MISSING_VIRTIO_BLK_RESET"; Tail = $tail }
                   }
                 }
                 $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
@@ -1436,6 +1482,14 @@ function Wait-AeroSelftestResult {
           if (-not $sawVirtioInputWheelPass) {
             if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
             return @{ Result = "MISSING_VIRTIO_INPUT_WHEEL"; Tail = $tail }
+          }
+        }
+
+        if ($RequireVirtioBlkResetPass) {
+          if ($sawVirtioBlkResetFail) { return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $tail } }
+          if (-not $sawVirtioBlkResetPass) {
+            if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_BLK_RESET"; Tail = $tail }
           }
         }
 
@@ -5203,7 +5257,7 @@ try {
  
   $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru -RedirectStandardError $qemuStderrPath
   $scriptExitCode = 0
-  
+   
   $result = $null
   try {
     if ([bool]$QemuPreflightPci) {
@@ -5243,6 +5297,7 @@ try {
         -RequirePerTestMarkers (-not $VirtioTransitional) `
         -RequireVirtioNetUdpPass (-not $DisableUdp) `
         -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
+        -RequireVirtioBlkResetPass ([bool]$WithBlkReset) `
         -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
         -RequireVirtioBlkResizePass ([bool]$needBlkResize) `
         -VirtioBlkResizeDeltaMiB ([int]$BlkResizeDeltaMiB) `
@@ -5474,6 +5529,30 @@ try {
     }
     "QMP_BLK_RESIZE_FAILED" {
       Write-Host "FAIL: QMP_BLK_RESIZE_FAILED: failed to resize virtio-blk device via QMP (ensure QMP is reachable and QEMU supports blockdev-resize or block_resize)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_BLK_RESET" {
+      Write-Host "FAIL: MISSING_VIRTIO_BLK_RESET: did not observe virtio-blk-reset PASS marker while -WithBlkReset was enabled (guest selftest too old or missing --test-blk-reset)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_RESET_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped but -WithBlkReset was enabled (ensure the guest supports AEROVBLK_IOCTL_FORCE_RESET)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_RESET_FAILED" {
+      Write-Host "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while -WithBlkReset was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
