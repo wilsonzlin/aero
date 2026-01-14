@@ -84,6 +84,7 @@ using aerogpu::d3d10_11::InitLockArgsForMap;
 using aerogpu::d3d10_11::InitUnlockArgsForMap;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
+using aerogpu::d3d10_11::EmitSetRenderTargetsCmdLocked;
 using aerogpu::d3d10_11::resource_total_bytes;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
@@ -1944,76 +1945,6 @@ static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t re
   UnbindResourceFromSrvsLocked(dev, resource, nullptr);
 }
 
-[[maybe_unused]] static void NormalizeRenderTargetsLocked(AeroGpuDevice* dev) {
-  if (!dev) {
-    return;
-  }
-
-  // Clamp RTV count to the protocol maximum and keep unused entries cleared.
-  dev->current_rtv_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  for (uint32_t i = dev->current_rtv_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    dev->current_rtvs[i] = 0;
-    dev->current_rtv_resources[i] = nullptr;
-  }
-}
-
-static bool EmitSetRenderTargetsCmdLocked(AeroGpuDevice* dev,
-                                         uint32_t rtv_count,
-                                         const aerogpu_handle_t* rtvs,
-                                         aerogpu_handle_t dsv);
-
-[[maybe_unused]] static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
-  if (!dev) {
-    return;
-  }
-  NormalizeRenderTargetsLocked(dev);
-  (void)EmitSetRenderTargetsCmdLocked(dev, dev->current_rtv_count, dev->current_rtvs, dev->current_dsv);
-}
-
-static bool EmitSetRenderTargetsCmdLocked(AeroGpuDevice* dev,
-                                         uint32_t rtv_count,
-                                         const aerogpu_handle_t* rtvs,
-                                         aerogpu_handle_t dsv) {
-  if (!dev) {
-    return false;
-  }
-
-  const uint32_t count = std::min<uint32_t>(rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!cmd) {
-    D3D10DDI_HDEVICE hDevice{};
-    hDevice.pDrvPrivate = dev;
-    SetError(hDevice, E_OUTOFMEMORY);
-    return false;
-  }
-
-  cmd->color_count = count;
-  cmd->depth_stencil = dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    cmd->colors[i] = 0;
-  }
-  if (rtvs) {
-    for (uint32_t i = 0; i < count; ++i) {
-      cmd->colors[i] = rtvs[i];
-    }
-  }
-
-  // Bring-up logging: helps confirm MRT bindings (color_count + colors[]) reach
-  // the host intact.
-  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
-                       static_cast<unsigned>(count),
-                       static_cast<unsigned>(dsv),
-                       static_cast<unsigned>(cmd->colors[0]),
-                       static_cast<unsigned>(cmd->colors[1]),
-                       static_cast<unsigned>(cmd->colors[2]),
-                       static_cast<unsigned>(cmd->colors[3]),
-                       static_cast<unsigned>(cmd->colors[4]),
-                       static_cast<unsigned>(cmd->colors[5]),
-                       static_cast<unsigned>(cmd->colors[6]),
-                       static_cast<unsigned>(cmd->colors[7]));
-  return true;
-}
-
 static bool UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t handle, const AeroGpuResource* res) {
   if (!dev || (handle == 0 && !res)) {
     return true;
@@ -2048,7 +1979,9 @@ static bool UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
     return true;
   }
 
-  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv)) {
+  D3D10DDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = dev;
+  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv, [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return false;
   }
 
@@ -3422,7 +3355,11 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
       rt_state_changed = true;
     }
     if (rt_state_changed && !oom) {
-      if (!EmitSetRenderTargetsCmdLocked(dev, dev->current_rtv_count, dev->current_rtvs, dev->current_dsv)) {
+      if (!EmitSetRenderTargetsCmdLocked(dev,
+                                         dev->current_rtv_count,
+                                         dev->current_rtvs,
+                                         dev->current_dsv,
+                                         [&](HRESULT hr) { SetError(hDevice, hr); })) {
         oom = true;
       }
     }
@@ -7448,7 +7385,11 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     return;
   }
 
-  if (!EmitSetRenderTargetsCmdLocked(dev, /*rtv_count=*/0, /*rtvs=*/nullptr, /*dsv=*/0)) {
+  if (!EmitSetRenderTargetsCmdLocked(dev,
+                                     /*rtv_count=*/0,
+                                     /*rtvs=*/nullptr,
+                                     /*dsv=*/0,
+                                     [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
   dev->current_rtv_count = 0;
@@ -8100,7 +8041,7 @@ void APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   }
   UnbindResourceFromSrvsLocked(dev, dsv_handle, dsv_res);
 
-  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv_handle)) {
+  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv_handle, [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
 

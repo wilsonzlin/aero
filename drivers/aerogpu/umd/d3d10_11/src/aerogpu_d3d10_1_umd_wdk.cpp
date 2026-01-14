@@ -173,6 +173,9 @@ using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
 using aerogpu::d3d10_11::ValidateWddmTexturePitch;
 using aerogpu::d3d10_11::resource_total_bytes;
+using aerogpu::d3d10_11::NormalizeRenderTargetsLocked;
+using aerogpu::d3d10_11::EmitSetRenderTargetsCmdLocked;
+using aerogpu::d3d10_11::EmitSetRenderTargetsLocked;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -798,98 +801,6 @@ static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
   TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_res, /*write=*/true);
 }
 
-static void NormalizeRenderTargetsLocked(AeroGpuDevice* dev) {
-  if (!dev) {
-    return;
-  }
-
-  // Clamp count to the protocol maximum and keep unused slots cleared. D3D10.1
-  // allows NULL RTVs within the `[0, NumViews)` array; those are represented as
-  // `colors[i]==0` while keeping `color_count==NumViews` (gaps preserved).
-  dev->current_rtv_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  for (uint32_t i = dev->current_rtv_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    dev->current_rtvs[i] = 0;
-    dev->current_rtv_resources[i] = nullptr;
-  }
-}
-
-static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
-  if (!dev) {
-    return;
-  }
-  NormalizeRenderTargetsLocked(dev);
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!cmd) {
-    set_error(dev, E_OUTOFMEMORY);
-    return;
-  }
-  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  cmd->color_count = count;
-  cmd->depth_stencil = dev->current_dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    cmd->colors[i] = 0;
-  }
-  for (uint32_t i = 0; i < count; ++i) {
-    cmd->colors[i] = dev->current_rtvs[i];
-  }
-
-  // Bring-up logging: helps confirm MRT bindings (color_count + colors[]) reach
-  // the host intact.
-  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
-                       static_cast<unsigned>(count),
-                       static_cast<unsigned>(dev->current_dsv),
-                       static_cast<unsigned>(cmd->colors[0]),
-                       static_cast<unsigned>(cmd->colors[1]),
-                       static_cast<unsigned>(cmd->colors[2]),
-                       static_cast<unsigned>(cmd->colors[3]),
-                       static_cast<unsigned>(cmd->colors[4]),
-                       static_cast<unsigned>(cmd->colors[5]),
-                       static_cast<unsigned>(cmd->colors[6]),
-                       static_cast<unsigned>(cmd->colors[7]));
-}
-
-static bool EmitSetRenderTargetsCmdLocked(AeroGpuDevice* dev,
-                                         uint32_t rtv_count,
-                                         const aerogpu_handle_t* rtvs,
-                                         aerogpu_handle_t dsv) {
-  if (!dev) {
-    return false;
-  }
-
-  const uint32_t count = std::min<uint32_t>(rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!cmd) {
-    set_error(dev, E_OUTOFMEMORY);
-    return false;
-  }
-
-  cmd->color_count = count;
-  cmd->depth_stencil = dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    cmd->colors[i] = 0;
-  }
-  if (rtvs) {
-    for (uint32_t i = 0; i < count; ++i) {
-      cmd->colors[i] = rtvs[i];
-    }
-  }
-
-  // Bring-up logging: helps confirm MRT bindings (color_count + colors[]) reach
-  // the host intact.
-  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
-                       static_cast<unsigned>(count),
-                       static_cast<unsigned>(dsv),
-                       static_cast<unsigned>(cmd->colors[0]),
-                       static_cast<unsigned>(cmd->colors[1]),
-                       static_cast<unsigned>(cmd->colors[2]),
-                       static_cast<unsigned>(cmd->colors[3]),
-                       static_cast<unsigned>(cmd->colors[4]),
-                       static_cast<unsigned>(cmd->colors[5]),
-                       static_cast<unsigned>(cmd->colors[6]),
-                       static_cast<unsigned>(cmd->colors[7]));
-  return true;
-}
-
 static bool ResourcesAlias(const AeroGpuResource* a, const AeroGpuResource* b) {
   if (!a || !b) {
     return false;
@@ -945,7 +856,7 @@ static bool UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
     return true;
   }
 
-  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv)) {
+  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv, [&](HRESULT hr) { set_error(dev, hr); })) {
     return false;
   }
 
@@ -3622,7 +3533,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     rt_state_changed = true;
   }
   if (rt_state_changed) {
-    EmitSetRenderTargetsLocked(dev);
+    (void)EmitSetRenderTargetsLocked(dev, [&](HRESULT hr) { set_error(dev, hr); });
   }
   bool oom = false;
   // Unbind any IA vertex buffer slots that reference this resource.
@@ -7923,7 +7834,11 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   clear_samplers(AEROGPU_SHADER_STAGE_PIXEL, dev->current_ps_samplers);
   clear_samplers(AEROGPU_SHADER_STAGE_GEOMETRY, dev->current_gs_samplers);
 
-  if (!EmitSetRenderTargetsCmdLocked(dev, /*rtv_count=*/0, /*rtvs=*/nullptr, /*dsv=*/0)) {
+  if (!EmitSetRenderTargetsCmdLocked(dev,
+                                     /*rtv_count=*/0,
+                                     /*rtvs=*/nullptr,
+                                     /*dsv=*/0,
+                                     [&](HRESULT hr) { set_error(dev, hr); })) {
     return;
   }
   dev->current_rtv_count = 0;
@@ -8353,7 +8268,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
-  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv_handle)) {
+  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv_handle, [&](HRESULT hr) { set_error(dev, hr); })) {
     return;
   }
 

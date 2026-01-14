@@ -22,6 +22,7 @@
 #include <new>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
@@ -1928,6 +1929,90 @@ inline bool EmitSetRenderTargetsCmdFromStateLocked(Device* dev) {
     cmd->colors[i] = (i < count) ? dev->current_rtvs[i] : 0;
   }
   return true;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Render target helpers (D3D10/D3D10.1 WDK UMD state tracking).
+// -------------------------------------------------------------------------------------------------
+//
+// The WDK D3D10 and D3D10.1 translation units each define their own `AeroGpuDevice`
+// struct with fields mirroring the D3D10 OM render target state:
+//   - `current_rtv_count`
+//   - `current_rtvs[]`
+//   - `current_rtv_resources[]`
+//   - `current_dsv`
+//
+// Keep these helpers templated to avoid pulling WDK-specific types into this
+// shared header (repo builds use a small ABI subset).
+template <typename DeviceT>
+inline void NormalizeRenderTargetsLocked(DeviceT* dev) {
+  if (!dev) {
+    return;
+  }
+
+  // Clamp RTV count to the protocol maximum and keep unused entries cleared.
+  dev->current_rtv_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  for (uint32_t i = dev->current_rtv_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    dev->current_rtvs[i] = 0;
+    dev->current_rtv_resources[i] = nullptr;
+  }
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetRenderTargetsCmdLocked(DeviceT* dev,
+                                         uint32_t rtv_count,
+                                         const aerogpu_handle_t* rtvs,
+                                         aerogpu_handle_t dsv,
+                                         SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+
+  const uint32_t count = std::min<uint32_t>(rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+
+  cmd->color_count = count;
+  cmd->depth_stencil = dsv;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    cmd->colors[i] = 0;
+  }
+  if (rtvs) {
+    for (uint32_t i = 0; i < count; ++i) {
+      cmd->colors[i] = rtvs[i];
+    }
+  }
+
+  // Bring-up logging: helps confirm MRT bindings (color_count + colors[]) reach
+  // the host intact.
+  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
+                       static_cast<unsigned>(count),
+                       static_cast<unsigned>(dsv),
+                       static_cast<unsigned>(cmd->colors[0]),
+                       static_cast<unsigned>(cmd->colors[1]),
+                       static_cast<unsigned>(cmd->colors[2]),
+                       static_cast<unsigned>(cmd->colors[3]),
+                       static_cast<unsigned>(cmd->colors[4]),
+                       static_cast<unsigned>(cmd->colors[5]),
+                       static_cast<unsigned>(cmd->colors[6]),
+                       static_cast<unsigned>(cmd->colors[7]));
+  return true;
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetRenderTargetsLocked(DeviceT* dev, SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  NormalizeRenderTargetsLocked(dev);
+  return EmitSetRenderTargetsCmdLocked(dev,
+                                       dev->current_rtv_count,
+                                       dev->current_rtvs,
+                                       dev->current_dsv,
+                                       std::forward<SetErrorFn>(set_error));
 }
 
 // -------------------------------------------------------------------------------------------------
