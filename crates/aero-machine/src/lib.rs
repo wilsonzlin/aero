@@ -5791,6 +5791,9 @@ impl Machine {
     }
 
     /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
+    ///
+    /// On `wasm32`, this intentionally does **not** require `Send` because some browser-backed
+    /// disks (OPFS, etc.) may contain JS values and therefore cannot be sent across threads.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn attach_ide_secondary_master_iso(
         &mut self,
@@ -7714,7 +7717,6 @@ impl Machine {
                     Box::new(VgaPciConfigDevice::new(lfb_base, vram_size)),
                 );
             }
-
             if self.cfg.enable_aerogpu {
                 // Canonical AeroGPU PCI identity contract (`00:07.0`, `A3A0:0001`).
                 //
@@ -7725,7 +7727,6 @@ impl Machine {
                     Box::new(AeroGpuPciConfigDevice::new()),
                 );
             }
-
             // PCI INTx router.
             let pci_intx: Rc<RefCell<PciIntxRouter>> = match &self.pci_intx {
                 Some(pci_intx) => {

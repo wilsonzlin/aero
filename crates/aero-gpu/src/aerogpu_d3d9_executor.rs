@@ -486,7 +486,7 @@ fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u32) {
     //   var tex{s}: texture_{2d,cube,3d,1d}<f32>
     //   var samp{s}: sampler
     //
-    // Persisted reflection includes sampler masks used by the executor to:
+    // Persisted reflection includes sampler metadata used by the executor to:
     // - flush textures before draw
     // - select bind group layouts (view_dimension)
     //

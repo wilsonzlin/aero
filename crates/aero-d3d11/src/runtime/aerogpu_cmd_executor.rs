@@ -10175,21 +10175,15 @@ impl AerogpuD3d11Executor {
                         .context("DXBC decode failed")
                         .map_err(|e| e.to_string())?;
 
-                    // Enforce the same SM5 GS stream-0 policy as the non-persistent path, even
-                    // when the shader stage is accepted-but-ignored by the backend.
+                    // Enforce the same SM5 GS stream-0 policy as the non-persistent path.
                     validate_sm5_gs_streams(&program).map_err(|e| e.to_string())?;
-
-                    // Geometry/hull/domain stages are not represented in the AeroGPU command stream
-                    // (WebGPU does not expose them), but Win7 D3D11 applications may still create
-                    // these shaders. Persist an explicit "ignored" result so we can skip re-parsing
-                    // them on subsequent runs.
                     let parsed_stage = match program.stage {
-                        crate::ShaderStage::Vertex => Some(ShaderStage::Vertex),
-                        crate::ShaderStage::Pixel => Some(ShaderStage::Pixel),
-                        crate::ShaderStage::Compute => Some(ShaderStage::Compute),
-                        crate::ShaderStage::Geometry
-                        | crate::ShaderStage::Hull
-                        | crate::ShaderStage::Domain => None,
+                        crate::ShaderStage::Vertex => ShaderStage::Vertex,
+                        crate::ShaderStage::Pixel => ShaderStage::Pixel,
+                        crate::ShaderStage::Compute => ShaderStage::Compute,
+                        crate::ShaderStage::Geometry => ShaderStage::Geometry,
+                        crate::ShaderStage::Hull => ShaderStage::Hull,
+                        crate::ShaderStage::Domain => ShaderStage::Domain,
                         other => {
                             return Err(format!(
                                 "CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"
@@ -10197,27 +10191,37 @@ impl AerogpuD3d11Executor {
                         }
                     };
 
-                    if let Some(parsed_stage) = parsed_stage {
-                        if parsed_stage != stage {
-                            return Err(format!(
-                                "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})"
+                    if parsed_stage != stage {
+                        return Err(format!(
+                            "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})"
                             ));
-                        }
-                    }
-
-                    if parsed_stage.is_none() {
-                        return Ok(PersistedShaderArtifact {
-                            wgsl: String::new(),
-                            stage: PersistedShaderStage::Ignored,
-                            bindings: Vec::new(),
-                            vs_input_signature: Vec::new(),
-                        });
                     }
 
                     let signatures = parse_signatures(&dxbc)
                         .context("parse DXBC signatures")
                         .map_err(|e| e.to_string())?;
-                    let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
+
+                    // Future-proofing for SM5 geometry-shader stream semantics (VS/PS output only
+                    // supports stream 0 in the current rasterization path).
+                    if matches!(stage, ShaderStage::Vertex | ShaderStage::Pixel) {
+                        if let Some(osgn) = signatures.osgn.as_ref() {
+                            for p in &osgn.parameters {
+                                if p.stream != 0 {
+                                    return Err(format!(
+                                        "CREATE_SHADER_DXBC: output signature parameter {}{} (r{}) is declared on stream {} (only stream 0 is supported)",
+                                        p.semantic_name,
+                                        p.semantic_index,
+                                        p.register,
+                                        p.stream
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    // Compute shaders frequently omit signature chunks entirely.
+                    let signature_driven = stage == ShaderStage::Compute
+                        || (signatures.isgn.is_some() && signatures.osgn.is_some());
 
                     let (wgsl, reflection) = if signature_driven {
                         let translated =
@@ -10272,8 +10276,16 @@ impl AerogpuD3d11Executor {
                 .map_err(|err| anyhow!(err.as_string().unwrap_or_else(|| format!("{err:?}"))))?;
 
             let Some(artifact_stage) = artifact.stage.to_stage() else {
-                // Ignored shader stage (GS/HS/DS): accept create but do not track a shader resource.
-                return Ok(());
+                // Cached "ignored" stage where we expected VS/PS/CS (likely stale cache entry).
+                if !invalidated_once {
+                    invalidated_once = true;
+                    let _ = self
+                        .persistent_shader_cache
+                        .invalidate(dxbc_bytes, flags.clone())
+                        .await;
+                    continue;
+                }
+                return self.exec_create_shader_dxbc(cmd_bytes);
             };
 
             if artifact_stage != stage {

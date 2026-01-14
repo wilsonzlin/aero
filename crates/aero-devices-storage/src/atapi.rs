@@ -35,8 +35,8 @@ pub trait IsoBackend: Send {
 
 /// wasm32 variant of [`IsoBackend`].
 ///
-/// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely cross
-/// threads, so we avoid imposing a `Send` bound on ISO backends in wasm builds.
+/// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
+/// cross threads, so we avoid imposing a `Send` bound on ISO backends in wasm builds.
 #[cfg(target_arch = "wasm32")]
 pub trait IsoBackend {
     fn sector_count(&self) -> u32;

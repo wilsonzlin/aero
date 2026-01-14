@@ -39,6 +39,7 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
     // modelling.
     let svr = m.read_lapic_u32(1, LAPIC_SVR_OFF);
     assert_eq!(svr & 0x1FF, 0x1FF);
+    assert_ne!(svr, dirty_svr);
 
     // vCPU architectural state should be reset to a real-mode baseline and halted (wait-for-SIPI).
     let ap = m.vcpu_state(1).unwrap();
