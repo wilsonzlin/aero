@@ -3,7 +3,10 @@ use aero_devices::pci::profile;
 use aero_devices::pci::PciInterruptPin;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
-use aero_virtio::devices::input::{VirtioInput, VirtioInputEvent, EV_KEY, KEY_A, KEY_B};
+use aero_virtio::devices::input::{
+    VirtioInput, VirtioInputEvent, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_B,
+    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+};
 use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
     VIRTIO_STATUS_FEATURES_OK,
@@ -143,6 +146,112 @@ fn virtio_input_bar0_is_assigned_and_mmio_reaches_transport_for_both_functions()
             "{bdf:?} MMIO write did not change device_status"
         );
         assert_eq!(after, VIRTIO_STATUS_ACKNOWLEDGE);
+    }
+}
+
+#[test]
+fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
+    let mut m = new_test_machine();
+    enable_a20(&mut m);
+
+    let cases = [
+        (
+            profile::VIRTIO_INPUT_KEYBOARD.bdf,
+            "Aero Virtio Keyboard",
+            // bustype=PCI(0x0006), vendor=0x1af4, product=0x0001, version=0x0001
+            [0x06, 0x00, 0xF4, 0x1A, 0x01, 0x00, 0x01, 0x00],
+            0x03u8, // EV_SYN + EV_KEY
+            true,   // EV_LED
+        ),
+        (
+            profile::VIRTIO_INPUT_MOUSE.bdf,
+            "Aero Virtio Mouse",
+            // bustype=PCI(0x0006), vendor=0x1af4, product=0x0002, version=0x0001
+            [0x06, 0x00, 0xF4, 0x1A, 0x02, 0x00, 0x01, 0x00],
+            0x07u8, // EV_SYN + EV_KEY + EV_REL
+            false,  // EV_LED
+        ),
+    ];
+
+    for (bdf, expected_name, expected_devids, expected_ev_bits0, expect_led) in cases {
+        // Enable PCI memory decoding (BAR0 MMIO).
+        let pci_cfg = m
+            .pci_config_ports()
+            .expect("pci config ports should exist when pc platform is enabled");
+        let cmd = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg.bus_mut().read_config(bdf, 0x04, 2) as u16
+        };
+        set_pci_command(&m, bdf, cmd | (1 << 1));
+
+        let bar0_base = read_bar0_base(&m, bdf);
+        assert_ne!(bar0_base, 0, "{bdf:?} BAR0 must be assigned by BIOS POST");
+
+        let dev_cfg = bar0_base + u64::from(profile::VIRTIO_DEVICE_CFG_BAR0_OFFSET);
+
+        // ------------------------------
+        // VIRTIO_INPUT_CFG_ID_NAME (str)
+        // ------------------------------
+        m.write_physical_u8(dev_cfg + 0, VIRTIO_INPUT_CFG_ID_NAME);
+        m.write_physical_u8(dev_cfg + 1, 0);
+        let size = m.read_physical_u8(dev_cfg + 2);
+        assert_ne!(size, 0, "expected non-zero name size for {bdf:?}");
+        let payload = m.read_physical_bytes(dev_cfg + 8, usize::from(size));
+        assert_eq!(
+            *payload.last().unwrap(),
+            0,
+            "expected name to be null-terminated for {bdf:?}"
+        );
+        let nul = payload.iter().position(|&b| b == 0).unwrap_or(payload.len());
+        let name = std::str::from_utf8(&payload[..nul]).expect("valid UTF-8 name");
+        assert_eq!(name, expected_name, "{bdf:?} name mismatch");
+
+        // --------------------------------
+        // VIRTIO_INPUT_CFG_ID_DEVIDS (8B)
+        // --------------------------------
+        m.write_physical_u8(dev_cfg + 0, VIRTIO_INPUT_CFG_ID_DEVIDS);
+        m.write_physical_u8(dev_cfg + 1, 0);
+        let size = m.read_physical_u8(dev_cfg + 2);
+        assert_eq!(size, 8, "{bdf:?} expected devids size=8");
+        let devids = m.read_physical_bytes(dev_cfg + 8, 8);
+        assert_eq!(devids, expected_devids, "{bdf:?} devids mismatch");
+
+        // --------------------------------
+        // VIRTIO_INPUT_CFG_EV_BITS (bitmap)
+        // --------------------------------
+        m.write_physical_u8(dev_cfg + 0, VIRTIO_INPUT_CFG_EV_BITS);
+        m.write_physical_u8(dev_cfg + 1, 0); // subsel = 0 -> event type bitmap
+        let size = m.read_physical_u8(dev_cfg + 2);
+        assert_eq!(size, 128, "{bdf:?} expected ev bitmap size=128");
+        let ev_bits = m.read_physical_bytes(dev_cfg + 8, 3);
+        assert_eq!(
+            ev_bits[0] & 0x07,
+            expected_ev_bits0,
+            "{bdf:?} event type bits mismatch"
+        );
+        // EV_LED is bit 17 -> byte 2, bit 1.
+        let has_led = (ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8))) != 0;
+        assert_eq!(has_led, expect_led, "{bdf:?} EV_LED presence mismatch");
+
+        // Sanity: EV_SYN and EV_KEY must always be advertised.
+        assert_ne!(
+            ev_bits[(EV_SYN / 8) as usize] & (1u8 << (EV_SYN % 8)),
+            0,
+            "{bdf:?} must advertise EV_SYN"
+        );
+        assert_ne!(
+            ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)),
+            0,
+            "{bdf:?} must advertise EV_KEY"
+        );
+
+        // Mouse must advertise EV_REL; keyboard must not.
+        let has_rel = (ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8))) != 0;
+        assert_eq!(
+            has_rel,
+            bdf == profile::VIRTIO_INPUT_MOUSE.bdf,
+            "{bdf:?} EV_REL presence mismatch"
+        );
     }
 }
 
