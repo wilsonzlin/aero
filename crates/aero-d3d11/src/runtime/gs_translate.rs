@@ -3199,14 +3199,7 @@ fn emit_add_with_carry(
     ));
 
     let sum_bits = format!("bitcast<vec4<f32>>({sum_var})");
-    emit_write_masked(
-        w,
-        inst_index,
-        opcode,
-        dst_sum.reg,
-        dst_sum.mask,
-        sum_bits,
-    )?;
+    emit_write_masked(w, inst_index, opcode, dst_sum.reg, dst_sum.mask, sum_bits)?;
 
     let carry_bits = format!("bitcast<vec4<f32>>({carry_var})");
     emit_write_masked(

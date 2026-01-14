@@ -1881,9 +1881,12 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         // Ensure the alias stays in sync with the canonical INF (functional bytes). This is
                         // intentionally byte-level so drift in comments/whitespace/ordering is detected.
                         if canonical_body.is_none() {
-                            canonical_body = Some(inf_functional_bytes(inf_path).with_context(
-                                || format!("{name}: read canonical virtio-input INF functional bytes"),
-                            )?);
+                            canonical_body =
+                                Some(inf_functional_bytes(inf_path).with_context(|| {
+                                    format!(
+                                        "{name}: read canonical virtio-input INF functional bytes"
+                                    )
+                                })?);
                         }
                         let alias_bytes = inf_functional_bytes(&alias).with_context(|| {
                             format!("{name}: read legacy virtio-input alias INF functional bytes")

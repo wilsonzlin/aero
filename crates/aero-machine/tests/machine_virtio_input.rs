@@ -5,8 +5,7 @@ use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputEvent, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_B, LED_CAPSL,
-    SYN_REPORT,
-    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    SYN_REPORT, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,

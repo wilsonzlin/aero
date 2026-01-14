@@ -885,7 +885,8 @@ fn uhci_runtime_restore_clears_webhid_feature_report_host_state_and_allows_retry
             }],
         }],
     }];
-    let collections_json = serde_wasm_bindgen::to_value(&collections).expect("collections to_value");
+    let collections_json =
+        serde_wasm_bindgen::to_value(&collections).expect("collections to_value");
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
     let port = rt

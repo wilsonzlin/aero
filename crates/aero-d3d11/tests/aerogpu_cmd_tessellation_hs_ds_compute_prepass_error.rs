@@ -13,9 +13,7 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 
-use aero_d3d11::sm4::opcode::{
-    OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, OPCODE_LEN_SHIFT, OPCODE_RET,
-};
+use aero_d3d11::sm4::opcode::{OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, OPCODE_LEN_SHIFT, OPCODE_RET};
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)

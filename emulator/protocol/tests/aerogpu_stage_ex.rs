@@ -547,7 +547,10 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
             .try_into()
             .unwrap(),
     );
-    assert_eq!(decode_stage_ex(stage, reserved0), Some(AerogpuShaderStageEx::Vertex));
+    assert_eq!(
+        decode_stage_ex(stage, reserved0),
+        Some(AerogpuShaderStageEx::Vertex)
+    );
     cursor += size_bytes as usize;
 
     // SET_SHADER_CONSTANTS_B (stage_ex)
@@ -568,7 +571,10 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
             .try_into()
             .unwrap(),
     );
-    assert_eq!(decode_stage_ex(stage, reserved0), Some(AerogpuShaderStageEx::Geometry));
+    assert_eq!(
+        decode_stage_ex(stage, reserved0),
+        Some(AerogpuShaderStageEx::Geometry)
+    );
     cursor += size_bytes as usize;
 
     assert_eq!(cursor, buf.len());

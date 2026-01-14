@@ -2721,10 +2721,7 @@ mod tests {
         let fb_gpa = 0x1234_5678u64;
         dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64, 800);
         dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64, 600);
-        dev.mmio_write_dword(
-            pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64,
-            800 * 4,
-        );
+        dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64, 800 * 4);
         dev.mmio_write_dword(
             pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64,
             pci::AerogpuFormat::B8G8R8X8Unorm as u32,
@@ -2747,7 +2744,10 @@ mod tests {
         // Disabling scanout is treated as a visibility toggle: WDDM retains scanout ownership so
         // legacy VGA/VBE cannot reclaim scanout until reset.
         dev.mmio_write_dword(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 0);
-        assert!(!dev.scanout0_state().enable, "scanout enable bit should be cleared");
+        assert!(
+            !dev.scanout0_state().enable,
+            "scanout enable bit should be cleared"
+        );
         assert!(
             dev.scanout0_state().wddm_scanout_active,
             "SCANOUT0_ENABLE=0 should not release WDDM scanout ownership"
