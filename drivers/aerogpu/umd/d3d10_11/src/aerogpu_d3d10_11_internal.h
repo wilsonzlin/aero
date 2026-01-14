@@ -86,6 +86,9 @@ constexpr uint32_t kD3D10BindShaderResource = kD3D11BindShaderResource;
 constexpr uint32_t kD3D10BindRenderTarget = kD3D11BindRenderTarget;
 constexpr uint32_t kD3D10BindDepthStencil = kD3D11BindDepthStencil;
 
+// D3D10-class IA supports 16 vertex buffer slots (D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT).
+constexpr uint32_t kD3D10IaVertexInputResourceSlotCount = 16;
+
 // D3D11_CPU_ACCESS_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11CpuAccessWrite = 0x10000;
 constexpr uint32_t kD3D11CpuAccessRead = 0x20000;

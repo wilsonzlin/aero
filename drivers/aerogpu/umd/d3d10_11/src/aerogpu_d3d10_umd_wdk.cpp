@@ -184,7 +184,7 @@ using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::kMaxConstantBufferSlots;
 using aerogpu::d3d10_11::kMaxShaderResourceSlots;
 using aerogpu::d3d10_11::kMaxSamplerSlots;
-constexpr uint32_t kMaxVertexBufferSlots = D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT;
+constexpr uint32_t kMaxVertexBufferSlots = aerogpu::d3d10_11::kD3D10IaVertexInputResourceSlotCount;
 
 using aerogpu::d3d10_11::AlignUpU64;
 using aerogpu::d3d10_11::AlignUpU32;
