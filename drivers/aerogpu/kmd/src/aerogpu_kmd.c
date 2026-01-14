@@ -10279,9 +10279,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->mmio_fb_gpa = 0;
 
         if (!poweredOn) {
-            return STATUS_SUCCESS;
-        }
-        if (!poweredOn) {
             /* Avoid touching MMIO while powered down; cached fields are still valid. */
             return STATUS_SUCCESS;
         }
@@ -10337,13 +10334,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->reserved1 = 0;
 
         if (!adapter->Bar0) {
-            return STATUS_SUCCESS;
-        }
-        if (!poweredOn) {
-            /* Avoid touching MMIO while powered down. */
-            if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0) {
-                out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED;
-            }
             return STATUS_SUCCESS;
         }
 
