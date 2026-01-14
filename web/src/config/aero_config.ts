@@ -78,7 +78,7 @@ export interface AeroConfig {
   vmRuntime?: AeroVmRuntime;
   uiScale?: number;
   /**
-   * Overrides the keyboard input backend selection in the IO worker.
+   * Overrides the keyboard input backend selection in the input injector worker.
    *
    * - "auto": use the default selection logic (virtio → usb → ps2)
    * - "ps2": always inject via i8042 PS/2
@@ -86,11 +86,11 @@ export interface AeroConfig {
    * - "virtio": always inject via virtio-input (when available)
    *
    * When the forced backend is not currently available (e.g. virtio before DRIVER_OK),
-   * the IO worker will fall back to "auto" and emit a one-time warning.
+   * the runtime will fall back to "auto" and emit a one-time warning.
    */
   forceKeyboardBackend?: InputBackendOverride;
   /**
-   * Overrides the mouse input backend selection in the IO worker.
+   * Overrides the mouse input backend selection in the input injector worker.
    *
    * See `forceKeyboardBackend` for semantics.
    */
