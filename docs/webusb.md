@@ -2,6 +2,9 @@
 
 This document describes what **WebUSB can and cannot do** in Chromium-based browsers, and how those constraints shape Aero’s **“non-HID USB passthrough”** integration (guest-visible WebUSB passthrough is possible, but remains limited/experimental).
 
+Runtime note: WebUSB passthrough is currently implemented only for the legacy browser runtime (`vmRuntime="legacy"`). The canonical
+machine runtime (`vmRuntime="machine"`) does not yet support WebUSB passthrough.
+
 > Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB stack
 > selection for the browser runtime (`aero-usb` + `aero-wasm` + `web/`).
 
@@ -29,6 +32,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
   - For an EHCI-oriented passthrough smoke test (validates WebUSB action↔completion plumbing + EHCI-style `USBSTS`/IRQ semantics; not a full qTD/QH schedule engine), use the in-app **“EHCI passthrough harness (WebUSB)”** panel.
   - `/webusb_diagnostics.html`
   - The diagnostics page can also list `navigator.usb.getDevices()` (already-granted devices) and copy a JSON summary for bug reports.
+  - Note: these panels are currently only available in `vmRuntime="legacy"` mode.
 - **Secure context required:** WebUSB requires `https://` or `http://localhost` (`isSecureContext === true`).
 - **User gesture required:** `navigator.usb.requestDevice()` must be triggered by a user gesture (e.g. a button click).
   - Call `requestDevice()` directly from the gesture handler; if you `await` before calling it, the user gesture can be lost.

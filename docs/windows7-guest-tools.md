@@ -478,9 +478,12 @@ Virtio audio does not affect boot, so treat it as an optional final step:
 Note: this step depends on your VM/runtime actually exposing virtio-snd as the guest audio device. If your current runtime does not
 expose virtio-snd (or does not make it the active ring-attached device), keep **HDA** enabled and skip this step.
 
-In the browser runtime, virtio-snd can be registered but the IO worker attaches the host AudioWorklet rings to **HDA when present**
-(SPSC policy). Virtio-snd becomes the active ring-attached audio device only in HDA-less builds (or with an explicit host-side
-selection mechanism).
+Browser runtime note (`vmRuntime="legacy"`): virtio-snd can be registered, but the I/O worker currently attaches the host AudioWorklet
+rings to **HDA when present** (SPSC policy). Virtio-snd becomes the active ring-attached audio device only in HDA-less builds (or with
+an explicit host-side selection mechanism).
+
+`vmRuntime="machine"` note: the canonical machine runtime does not currently expose guest audio devices to the host AudioWorklet stack,
+so this virtio-snd/HDA selection behavior does not apply.
 
 ## Step 6: Run `verify.cmd` and interpret `report.txt`
 

@@ -3,6 +3,10 @@
 This document describes the **USB passthrough** path where a *real* USB device
 is exposed to the guest OS using **WebUSB** in the browser.
 
+Runtime note: This document describes the legacy browser runtime (`vmRuntime="legacy"`) where guest USB controllers and the
+`UsbPassthroughBridge` live in the I/O worker. The canonical machine runtime (`vmRuntime="machine"`) does not currently support WebUSB
+passthrough.
+
 > Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB stack
 > selection for the browser runtime. This document describes the chosen `aero-usb` + `web/` design
 > in detail.
@@ -35,7 +39,7 @@ Implementation references (current repo):
 - TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`)
 - TS worker-side completion ring dispatcher (completion-ring fan-out when multiple runtimes subscribe): `web/src/usb/usb_proxy_ring_dispatcher.ts`
 - TS worker-side passthrough runtime (action/completion pump): `web/src/usb/webusb_passthrough_runtime.ts`
-- Guest-visible worker wiring (guest controller init/selection + WebUSB hotplug + passthrough runtime): `web/src/workers/io.worker.ts`
+- Guest-visible worker wiring (guest controller init/selection + WebUSB hotplug + passthrough runtime; `vmRuntime="legacy"`): `web/src/workers/io.worker.ts`
 - TS worker-side demo runtime (drains `UsbPassthroughDemo` actions, pushes completions, defines `usb.demo.run`, emits `usb.demoResult`): `web/src/usb/usb_passthrough_demo_runtime.ts`
 - TS worker-side UHCI harness runner (dev smoke): `web/src/usb/webusb_harness_runtime.ts`
 - TS worker-side EHCI harness runner (dev smoke): `web/src/usb/webusb_ehci_harness_runtime.ts`

@@ -17,7 +17,11 @@ The emulator models a classic 16550-compatible UART to support BIOS/bootloader l
 
 ### Host capture
 
-When the guest writes to the THR register (offset `+0`, DLAB=0), the UART invokes its transmit callback with the written bytes. The I/O worker can forward those bytes to the main thread via the binary IPC event:
+When the guest writes to the THR register (offset `+0`, DLAB=0), the UART invokes its transmit callback with the written bytes. The
+owning worker forwards those bytes to the main thread via the binary IPC event:
+
+- `vmRuntime="legacy"`: I/O worker owns the UART device model.
+- `vmRuntime="machine"`: machine CPU worker (`api.Machine`) owns the UART device model.
 
 - `aero_ipc::protocol::Event::SerialOutput { port, data }` (tag `0x1500`)
 

@@ -49,14 +49,15 @@ The implementation emits a `EV_SYN / SYN_REPORT` event after each logical batch,
 
 ## Code map (where things live)
 
-Virtio-input spans both the Rust device model and the current browser/worker runtime wiring:
+Virtio-input spans both the Rust device model and the browser runtime wiring. In the browser runtime, the integration path depends on
+`vmRuntime`:
 
 - **Virtio-input device model (Rust):** `crates/aero-virtio/src/devices/input.rs`
-- **Browser runtime wiring (today):**
+- **Browser runtime wiring (`vmRuntime="legacy"`):**
   - TypeScript PCI wrapper + event injection: `web/src/io/devices/virtio_input.ts`
   - PCI registration helper (canonical BDF for the keyboard function): `web/src/workers/io_virtio_input_register.ts`
   - IO worker integration + routing decisions: `web/src/workers/io.worker.ts`
-- **Canonical full-system machine wiring (available):**
+- **Canonical full-system machine wiring (used by `vmRuntime="machine"`):**
   - The canonical `aero_machine::Machine` supports virtio-input behind an explicit config flag:
     - `MachineConfig.enable_virtio_input = true` (requires `MachineConfig.enable_pc_platform = true`)
     - Fixed PCI BDFs:
@@ -72,7 +73,7 @@ Virtio-input spans both the Rust device model and the current browser/worker run
     - `Machine.new_with_options(..., { enable_virtio_input: true })`
     - Injection APIs: `inject_virtio_key/rel/button/wheel` (Linux `evdev`-style codes)
     - Driver status probes: `virtio_input_keyboard_driver_ok()` / `virtio_input_mouse_driver_ok()`
-  - The production worker runtime still uses the TypeScript PCI wrapper today; future work may migrate it to drive the canonical `aero_machine::Machine` device graph directly.
+  - Browser runtime integration lives in the machine CPU worker: `web/src/workers/machine_cpu.worker.ts`.
 
 ---
 

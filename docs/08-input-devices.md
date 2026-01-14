@@ -13,14 +13,22 @@ This repo supports input in two different (but related) integration styles:
   - Primarily used by native Rust integration tests and by the JS/WASM “single machine” API.
   - Input is injected by calling `Machine.inject_*` methods directly.
 - **Browser worker runtime (production)**
-  - A main-thread coordinator plus a **CPU worker** (executes guest CPU in WASM) and an **I/O worker** (owns device models + routing).
+  - A main-thread coordinator plus workers. The exact shape depends on `vmRuntime`:
+    - `vmRuntime=legacy`: **CPU worker** (executes guest CPU in WASM) + **I/O worker** (owns device models + routing).
+    - `vmRuntime=machine`: **machine CPU worker** running the canonical `api.Machine`.
+      - The I/O worker runs in host-only stub mode and does not own guest input devices.
   - Browser input is captured + batched in `web/src/input/*` and delivered as `in:input-batch` messages to the worker that injects input:
     - `vmRuntime=legacy`: I/O worker (`web/src/workers/io.worker.ts`)
     - `vmRuntime=machine`: machine CPU worker (`web/src/workers/machine_cpu.worker.ts`)
-  - In `vmRuntime=legacy` the I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind the guest-visible USB controller** (when enabled; UHCI by default, with EHCI/xHCI fallbacks in some WASM builds).
+  - In `vmRuntime=legacy` the I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind the guest-visible USB controller** (when enabled).
   - In `vmRuntime=machine` the CPU worker injects input directly into the canonical `api.Machine` instance (currently PS/2 injection only; the legacy I/O-worker backend routing policy does not apply).
 
-When editing the browser runtime input pipeline, treat `web/src/input/*` + `web/src/workers/io.worker.ts` as canonical; the `aero-wasm::Machine` injection API is an ergonomic/testing surface.
+When editing the browser runtime input pipeline, treat `web/src/input/*` as canonical capture/batching. Injection/routing is handled by:
+
+- `vmRuntime=legacy`: `web/src/workers/io.worker.ts`
+- `vmRuntime=machine`: `web/src/workers/machine_cpu.worker.ts`
+
+The `aero-wasm::Machine` injection API is still a useful ergonomic/testing surface.
 
 ### WASM / browser integration: canonical `Machine` input injection
 

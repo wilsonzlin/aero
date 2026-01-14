@@ -68,6 +68,12 @@ Queue-kind values are therefore part of the application ABI for a particular sha
 For the browser runtime’s `ioIpcSab` segment (created by
 `web/src/runtime/shared_layout.ts:createIoIpcSab()`), the following kinds are currently assigned:
 
+Runtime note: `ioIpcSab` exists in both browser runtime modes, but not all queues are used in both:
+
+- `vmRuntime="legacy"`: the I/O worker runs guest device models and consumes `CMD`/`EVT` (and `HID_IN` when WebHID passthrough is enabled).
+- `vmRuntime="machine"`: the I/O worker is a host-only stub (no guest device models / no ioIpc server), so `CMD`/`EVT`/`HID_IN` are currently unused.
+  `NET_TX`/`NET_RX` are still used by the machine CPU worker (`api.Machine`) to exchange raw Ethernet frames with the JS tunnel forwarder (network worker).
+
 | Kind | Value (TS constant) | Producer → Consumer | Record payload |
 |---|---:|---|---|
 | `CMD` | `0` (`IO_IPC_CMD_QUEUE_KIND`) | CPU/WASM → IO worker | encoded `Command` (see §7.1) |
@@ -115,7 +121,8 @@ CPU/WASM worker  <--NET_RX--  JS net forwarder  <--WebSocket/WebRTC--  proxy
 #### HID_IN semantics
 
 The `HID_IN` ring is used to forward WebHID input reports from the coordinator (main thread) to the
-I/O worker.
+I/O worker in the legacy browser runtime (`vmRuntime="legacy"`). (WebHID passthrough is not currently
+implemented for `vmRuntime="machine"`.)
 
 - Producer: coordinator/main thread.
 - Consumer: IO worker.
