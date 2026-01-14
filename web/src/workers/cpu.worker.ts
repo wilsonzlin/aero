@@ -3202,8 +3202,10 @@ async function runLoopInner(): Promise<void> {
                 }
               }
               if (changed) {
-                publishSharedFramebufferVgaText(vga);
-                vmLastVgaTextBytes = new Uint8Array(vga);
+                const didPublish = publishSharedFramebufferVgaText(vga);
+                if (didPublish) {
+                  vmLastVgaTextBytes = new Uint8Array(vga);
+                }
               }
             } catch (err) {
               console.error("[cpu] vm run_slice failed:", err);
@@ -3372,8 +3374,16 @@ function initSharedFramebufferViews(shared: SharedArrayBuffer, offsetBytes: numb
     layout.dirtyWordsPerBuffer === 0 ? null : new Uint32Array(shared, offsetBytes + layout.dirtyOffsets[1], layout.dirtyWordsPerBuffer);
 }
 
-function publishSharedFramebufferFrame(): void {
-  if (!sharedHeader || !sharedLayout || !sharedSlot0 || !sharedSlot1) return;
+function publishSharedFramebufferFrame(): boolean {
+  if (!sharedHeader || !sharedLayout || !sharedSlot0 || !sharedSlot1) return false;
+
+  // `frame_dirty` is a producer->consumer "new frame" / liveness flag.
+  //
+  // Consumers clear it after they finish copying/presenting; treat it as a best-effort ACK and
+  // throttle publishing so we don't overwrite a buffer that might still be in use by the presenter.
+  if (Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY) !== 0) {
+    return false;
+  }
 
   const active = Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
   const back = active ^ 1;
@@ -3439,10 +3449,17 @@ function publishSharedFramebufferFrame(): void {
     Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
     Atomics.notify(frameState, FRAME_STATUS_INDEX);
   }
+
+  return true;
 }
 
-function publishSharedFramebufferVgaText(vgaTextBytes: Uint8Array): void {
-  if (!sharedHeader || !sharedLayout || !sharedSlot0 || !sharedSlot1) return;
+function publishSharedFramebufferVgaText(vgaTextBytes: Uint8Array): boolean {
+  if (!sharedHeader || !sharedLayout || !sharedSlot0 || !sharedSlot1) return false;
+
+  // See `publishSharedFramebufferFrame`: throttle while the last frame is still outstanding.
+  if (Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY) !== 0) {
+    return false;
+  }
 
   const active = Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
   const back = active ^ 1;
@@ -3498,6 +3515,8 @@ function publishSharedFramebufferVgaText(vgaTextBytes: Uint8Array): void {
     Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
     Atomics.notify(frameState, FRAME_STATUS_INDEX);
   }
+
+  return true;
 }
 
 // Keep config in scope for devtools inspection.
