@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aero_devices::pci::{
-    msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, PciDevice as _,
+    msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability, PciDevice as _,
 };
 use aero_devices_nvme::NvmePciDevice;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
@@ -257,5 +257,81 @@ fn nvme_msi_unprogrammed_address_latches_pending_and_delivers_after_programming(
             & 1,
         0,
         "pending bit should clear after delivery"
+    );
+}
+
+#[test]
+fn nvme_msix_unprogrammed_address_latches_pending_and_delivers_after_programming() {
+    let mut dev = NvmePciDevice::default();
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    // Enable MMIO decoding and bus mastering so controller programming takes effect and `process()`
+    // is allowed to DMA.
+    dev.config_mut().set_command(0x0006); // MEM + BME
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    // Enable MSI-X but leave the table entry address unprogrammed/invalid.
+    enable_msix(&mut dev);
+    let vector: u8 = 0x46;
+    program_msix_table_entry0(&mut dev, 0, u32::from(vector));
+
+    trigger_completion(&mut dev, &mut mem);
+
+    assert!(
+        !dev.irq_level(),
+        "legacy INTx must be suppressed while MSI-X is active"
+    );
+    assert_eq!(
+        interrupts.borrow().get_pending(),
+        None,
+        "unprogrammed MSI-X address must not inject an interrupt"
+    );
+
+    let pba_off = u64::from(
+        dev.config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability")
+            .pba_offset(),
+    );
+    assert_eq!(
+        dev.read(pba_off, 8) & 1,
+        1,
+        "device should latch MSI-X PBA pending when message address is invalid"
+    );
+
+    // Clear the controller's interrupt condition by consuming the completion queue entry so
+    // delivery relies solely on the latched PBA pending bit.
+    dev.write(0x1004, 4, 1); // CQ0 head doorbell
+    assert!(
+        !dev.irq_pending(),
+        "clearing CQ head should deassert the controller interrupt condition"
+    );
+    assert_eq!(
+        dev.read(pba_off, 8) & 1,
+        1,
+        "PBA pending bit must remain set after clearing the controller interrupt condition"
+    );
+
+    // Program a valid MSI-X address. The NVMe wrapper delivers pending MSI-X vectors on table
+    // writes, so delivery should occur without generating a new completion.
+    program_msix_table_entry0(&mut dev, 0xFEE0_0000, u32::from(vector));
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(
+        ints.get_pending(),
+        Some(vector),
+        "pending MSI-X should deliver once the address is programmed even if the interrupt condition is low"
+    );
+    ints.acknowledge(vector);
+    ints.eoi(vector);
+    assert_eq!(ints.get_pending(), None);
+    assert_eq!(
+        dev.read(pba_off, 8) & 1,
+        0,
+        "PBA pending bit should clear after delivery"
     );
 }
