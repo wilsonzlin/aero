@@ -13,6 +13,7 @@ import {
   publishScanoutState,
   snapshotScanoutState,
 } from "../ipc/scanout_state";
+import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 
 class MockWorker {
   // Global postMessage trace to assert coordinator message ordering across workers.
@@ -1182,6 +1183,104 @@ describe("runtime/coordinator", () => {
     expect(stats.bytes).toBe(4567);
     expect(stats.droppedRecords).toBe(3);
     expect(stats.droppedBytes).toBe(9);
+  });
+
+  it("buffers aerogpu.submit until GPU READY and forwards submit_complete fences back to the CPU worker", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("gpu", segments);
+
+    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
+    const cpuWorker = cpuInfo.worker;
+    const gpuWorker = gpuInfo.worker;
+    cpuWorker.posted.length = 0;
+    gpuWorker.posted.length = 0;
+
+    // Submit before the GPU worker is READY; coordinator should buffer it.
+    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      kind: "aerogpu.submit",
+      contextId: 1,
+      signalFence: 5n,
+      cmdStream: new Uint8Array([1, 2, 3, 4]).buffer,
+    });
+    expect(lastMessageOfType(gpuWorker, "submit_aerogpu")).toBeUndefined();
+
+    // Mark GPU worker READY; coordinator should flush the buffered submit.
+    gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
+    const submitMsg = lastMessageOfType(gpuWorker, "submit_aerogpu") as
+      | { protocol?: unknown; protocolVersion?: unknown; requestId?: unknown; contextId?: unknown; signalFence?: unknown }
+      | undefined;
+    expect(submitMsg?.protocol).toBe(GPU_PROTOCOL_NAME);
+    expect(submitMsg?.protocolVersion).toBe(GPU_PROTOCOL_VERSION);
+    expect(submitMsg?.contextId).toBe(1);
+    expect(submitMsg?.signalFence).toBe(5n);
+    expect(typeof submitMsg?.requestId).toBe("number");
+
+    // GPU worker reports submit_complete; coordinator should forward the fence completion.
+    const requestId = submitMsg!.requestId as number;
+    (coordinator as any).onWorkerMessage("gpu", gpuInfo.instanceId, {
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "submit_complete",
+      requestId,
+      completedFence: 5n,
+    });
+
+    expect(cpuWorker.posted).toContainEqual({
+      message: { kind: "aerogpu.complete_fence", fence: 5n },
+      transfer: undefined,
+    });
+
+    // Untracked submit_complete messages must be ignored.
+    cpuWorker.posted.length = 0;
+    (coordinator as any).onWorkerMessage("gpu", gpuInfo.instanceId, {
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "submit_complete",
+      requestId: requestId + 123,
+      completedFence: 99n,
+    });
+    expect(cpuWorker.posted.length).toBe(0);
+  });
+
+  it("forces completion of in-flight AeroGPU fences when the GPU worker is terminated", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("gpu", segments);
+
+    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
+    const cpuWorker = cpuInfo.worker;
+    const gpuWorker = gpuInfo.worker;
+
+    // Bring GPU worker to READY so submissions are sent immediately and tracked as in-flight.
+    gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
+    cpuWorker.posted.length = 0;
+    gpuWorker.posted.length = 0;
+
+    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      kind: "aerogpu.submit",
+      contextId: 2,
+      signalFence: 7n,
+      cmdStream: new Uint8Array([9, 9, 9]).buffer,
+    });
+
+    expect(lastMessageOfType(gpuWorker, "submit_aerogpu")).toBeTruthy();
+
+    // If the GPU worker is killed before it can send submit_complete, force-complete the fence so
+    // the guest won't deadlock.
+    (coordinator as any).terminateWorker("gpu");
+    expect(cpuWorker.posted).toContainEqual({
+      message: { kind: "aerogpu.complete_fence", fence: 7n },
+      transfer: undefined,
+    });
   });
 
   it("rejects pending net trace requests when the net worker is terminated", async () => {

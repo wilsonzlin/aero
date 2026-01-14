@@ -1856,10 +1856,12 @@ function drainAerogpuSubmissions(): void {
   // completions from the GPU worker.
   if (typeof (m as unknown as { aerogpu_complete_fence?: unknown }).aerogpu_complete_fence !== "function") return;
   const st = status;
-  // Avoid draining (and thus removing) submissions while the GPU worker is not ready to accept
-  // them. The WASM device model maintains its own bounded queue; draining too early would drop
-  // command streams during GPU worker startup/restart windows.
-  if (st && Atomics.load(st, StatusIndex.GpuReady) !== 1) return;
+  // Before we have enabled the submission bridge, avoid draining (and thus enabling deferred-fence
+  // semantics) while the GPU worker is not ready. Once the bridge is enabled, keep draining even
+  // during GPU worker restart windows so the device model's bounded submission queue does not
+  // overflow; the coordinator will buffer submissions until the GPU worker is READY again.
+  const gpuReady = st ? Atomics.load(st, StatusIndex.GpuReady) === 1 : false;
+  if (!aerogpuBridgeEnabled && !gpuReady) return;
 
   let drained: unknown;
   try {
