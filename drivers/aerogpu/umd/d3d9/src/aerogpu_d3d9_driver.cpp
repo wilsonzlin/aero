@@ -5363,7 +5363,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
 
   // Only handle a small fixed-function subset here; allow the main ProcessVertices
   // path to fall back to memcpy for other cases.
-  const bool fixedfunc = (!dev->user_vs && !dev->user_ps);
+  // ProcessVertices runs the *vertex* pipeline only. Pixel shaders do not affect
+  // the output, so treat the call as fixed-function as long as no user vertex
+  // shader is bound (even if a pixel shader is set for later draws).
+  const bool fixedfunc = (!dev->user_vs);
   const bool src_xyz_diffuse = (dev->fvf == kSupportedFvfXyzDiffuse);
   const bool src_xyz_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
   if (!(fixedfunc && (src_xyz_diffuse || src_xyz_diffuse_tex1))) {
