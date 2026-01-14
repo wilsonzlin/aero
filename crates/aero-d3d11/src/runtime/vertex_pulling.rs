@@ -425,6 +425,95 @@ impl VertexPullingLayout {
         s.push_str(
             "fn load_attr_unorm10_10_10_2(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let r = f32(w & 0x3FFu) / 1023.0;\n  let g = f32((w >> 10u) & 0x3FFu) / 1023.0;\n  let b = f32((w >> 20u) & 0x3FFu) / 1023.0;\n  let a = f32((w >> 30u) & 0x3u) / 3.0;\n  return vec4<f32>(r, g, b, a);\n}\n\n",
         );
+        // F16 loads (converted to f32).
+        s.push_str(
+            "fn load_attr_f16x2(slot: u32, addr_bytes: u32) -> vec2<f32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return unpack2x16float(w);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_f16x4(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let a = unpack2x16float(w0);\n  let b = unpack2x16float(w1);\n  return vec4<f32>(a.x, a.y, b.x, b.y);\n}\n\n",
+        );
+
+        // Integer loads (expanded to 32-bit lanes).
+        s.push_str(
+            "fn load_attr_u32(slot: u32, addr_bytes: u32) -> u32 {\n  return aero_vp_load_u32(slot, addr_bytes);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_u32x2(slot: u32, addr_bytes: u32) -> vec2<u32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  return vec2<u32>(w0, w1);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_u32x3(slot: u32, addr_bytes: u32) -> vec3<u32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let w2 = aero_vp_load_u32(slot, addr_bytes + 8u);\n  return vec3<u32>(w0, w1, w2);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_u32x4(slot: u32, addr_bytes: u32) -> vec4<u32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let w2 = aero_vp_load_u32(slot, addr_bytes + 8u);\n  let w3 = aero_vp_load_u32(slot, addr_bytes + 12u);\n  return vec4<u32>(w0, w1, w2, w3);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i32(slot: u32, addr_bytes: u32) -> i32 {\n  return bitcast<i32>(aero_vp_load_u32(slot, addr_bytes));\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i32x2(slot: u32, addr_bytes: u32) -> vec2<i32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  return vec2<i32>(bitcast<i32>(w0), bitcast<i32>(w1));\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i32x3(slot: u32, addr_bytes: u32) -> vec3<i32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let w2 = aero_vp_load_u32(slot, addr_bytes + 8u);\n  return vec3<i32>(bitcast<i32>(w0), bitcast<i32>(w1), bitcast<i32>(w2));\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i32x4(slot: u32, addr_bytes: u32) -> vec4<i32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let w2 = aero_vp_load_u32(slot, addr_bytes + 8u);\n  let w3 = aero_vp_load_u32(slot, addr_bytes + 12u);\n  return vec4<i32>(bitcast<i32>(w0), bitcast<i32>(w1), bitcast<i32>(w2), bitcast<i32>(w3));\n}\n\n",
+        );
+
+        // 16-bit integer loads (packed in little-endian within 32-bit words).
+        s.push_str(
+            "fn load_attr_u16(slot: u32, addr_bytes: u32) -> u32 {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return w & 0xFFFFu;\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_u16x2(slot: u32, addr_bytes: u32) -> vec2<u32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return vec2<u32>(w & 0xFFFFu, (w >> 16u) & 0xFFFFu);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_u16x4(slot: u32, addr_bytes: u32) -> vec4<u32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  return vec4<u32>(w0 & 0xFFFFu, (w0 >> 16u) & 0xFFFFu, w1 & 0xFFFFu, (w1 >> 16u) & 0xFFFFu);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i16(slot: u32, addr_bytes: u32) -> i32 {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return (bitcast<i32>(w << 16u)) >> 16u;\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i16x2(slot: u32, addr_bytes: u32) -> vec2<i32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let lo = (bitcast<i32>(w << 16u)) >> 16u;\n  let hi = bitcast<i32>(w) >> 16u;\n  return vec2<i32>(lo, hi);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i16x4(slot: u32, addr_bytes: u32) -> vec4<i32> {\n  let w0 = aero_vp_load_u32(slot, addr_bytes);\n  let w1 = aero_vp_load_u32(slot, addr_bytes + 4u);\n  let lo0 = (bitcast<i32>(w0 << 16u)) >> 16u;\n  let hi0 = bitcast<i32>(w0) >> 16u;\n  let lo1 = (bitcast<i32>(w1 << 16u)) >> 16u;\n  let hi1 = bitcast<i32>(w1) >> 16u;\n  return vec4<i32>(lo0, hi0, lo1, hi1);\n}\n\n",
+        );
+
+        // 8-bit integer loads.
+        s.push_str(
+            "fn load_attr_u8x2(slot: u32, addr_bytes: u32) -> vec2<u32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return vec2<u32>(w & 0xFFu, (w >> 8u) & 0xFFu);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_u8x4(slot: u32, addr_bytes: u32) -> vec4<u32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  return vec4<u32>(w & 0xFFu, (w >> 8u) & 0xFFu, (w >> 16u) & 0xFFu, (w >> 24u) & 0xFFu);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i8x2(slot: u32, addr_bytes: u32) -> vec2<i32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let x = (bitcast<i32>(w << 24u)) >> 24u;\n  let y = (bitcast<i32>(w << 16u)) >> 24u;\n  return vec2<i32>(x, y);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_i8x4(slot: u32, addr_bytes: u32) -> vec4<i32> {\n  let w = aero_vp_load_u32(slot, addr_bytes);\n  let x = (bitcast<i32>(w << 24u)) >> 24u;\n  let y = (bitcast<i32>(w << 16u)) >> 24u;\n  let z = (bitcast<i32>(w << 8u)) >> 24u;\n  let w0 = bitcast<i32>(w) >> 24u;\n  return vec4<i32>(x, y, z, w0);\n}\n\n",
+        );
+
+        // 16-bit normalized integer loads.
+        s.push_str(
+            "fn load_attr_unorm16x2(slot: u32, addr_bytes: u32) -> vec2<f32> {\n  return unpack2x16unorm(aero_vp_load_u32(slot, addr_bytes));\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_unorm16x4(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let a = unpack2x16unorm(aero_vp_load_u32(slot, addr_bytes));\n  let b = unpack2x16unorm(aero_vp_load_u32(slot, addr_bytes + 4u));\n  return vec4<f32>(a.x, a.y, b.x, b.y);\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_snorm16x2(slot: u32, addr_bytes: u32) -> vec2<f32> {\n  return unpack2x16snorm(aero_vp_load_u32(slot, addr_bytes));\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_snorm16x4(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  let a = unpack2x16snorm(aero_vp_load_u32(slot, addr_bytes));\n  let b = unpack2x16snorm(aero_vp_load_u32(slot, addr_bytes + 4u));\n  return vec4<f32>(a.x, a.y, b.x, b.y);\n}\n\n",
+        );
+
+        // 8-bit normalized integer loads.
+        s.push_str(
+            "fn load_attr_snorm8x2(slot: u32, addr_bytes: u32) -> vec2<f32> {\n  return unpack4x8snorm(aero_vp_load_u32(slot, addr_bytes)).xy;\n}\n\n",
+        );
+        s.push_str(
+            "fn load_attr_snorm8x4(slot: u32, addr_bytes: u32) -> vec4<f32> {\n  return unpack4x8snorm(aero_vp_load_u32(slot, addr_bytes));\n}\n\n",
+        );
 
         s
     }
