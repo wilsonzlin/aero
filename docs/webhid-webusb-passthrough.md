@@ -225,7 +225,7 @@ transfers the underlying `ArrayBuffer` for report bytes (so the common case is z
 
 Protocol schema + validators:
 
-- `web/src/hid/hid_proxy_protocol.ts` (`hid.inputReport`, `hid.sendReport`)
+- `web/src/hid/hid_proxy_protocol.ts` (`hid.inputReport`, `hid.sendReport`, `hid.getFeatureReport`, `hid.featureReportResult`)
 
 #### Fast path: SharedArrayBuffer ring buffers
 
@@ -384,16 +384,25 @@ This queue boundary is also where we can implement:
   device**
 - VM snapshot/restore (queue contents are part of device state)
 
-#### Feature report reads (`GET_REPORT` Feature) (optional)
+#### Feature report reads (`GET_REPORT` Feature)
 
-If/when the passthrough path supports reading feature reports from the host, the guest-visible USB
-HID device can proxy a HID-class `GET_REPORT` request with report type **Feature** to the physical
-device using WebHID `receiveFeatureReport(reportId)`.
+The passthrough path supports reading feature reports from the host. The guest-visible USB HID
+device proxies a HID-class `GET_REPORT` request with report type **Feature** to the physical device
+using WebHID `receiveFeatureReport(reportId)`.
 
 Because WebHID is async, the USB control transfer cannot complete immediately. The device model
 represents “waiting for the host” by returning **NAK** until the host Promise settles; once the host
-responds, the next retry completes with the returned report bytes (and errors map to a STALL/error
-completion).
+responds, the next retry completes with the returned report bytes. Host failures are surfaced as a
+timeout-style error (UHCI TD timeout/CRC) so the guest can retry.
+
+Host boundary protocol:
+
+- Worker → main: `hid.getFeatureReport` `(requestId, deviceId, reportId)`
+- Main → worker: `hid.featureReportResult` `(requestId, ok, data?)`
+
+Feature report reads are also serialized per device: the main thread processes `receiveFeatureReport`
+requests in the same per-device FIFO as output/feature report writes so `GET_REPORT` cannot overtake
+earlier queued `SET_REPORT`/output writes for that device.
 
 ## Security and UX constraints
 
