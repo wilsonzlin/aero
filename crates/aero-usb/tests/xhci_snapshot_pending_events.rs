@@ -267,6 +267,13 @@ fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
         !xhci.irq_level(),
         "RUN edge should not raise irq_level while DMA is disabled"
     );
+    // Even if the host integration ticks the controller, DMA should remain gated.
+    xhci.tick_1ms_with_dma(&mut mem_no_dma);
+    assert_eq!(mem_no_dma.reads, 0);
+    assert!(
+        !xhci.irq_level(),
+        "ticking with DMA disabled should not execute the deferred DMA-on-RUN probe"
+    );
 
     let bytes = xhci.save_state();
 
