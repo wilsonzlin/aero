@@ -43,10 +43,11 @@ class PowerShellHarnessInputLedsFlagTests(unittest.TestCase):
             ),
         )
 
-    def test_with_input_leds_preflight_requires_keyboard(self) -> None:
-        # Input LED/statusq testing requires QEMU to advertise virtio-keyboard-pci.
+    def test_with_input_leds_preflight_requires_keyboard_and_mouse(self) -> None:
+        # virtio-input (and therefore LED/statusq validation) requires QEMU to advertise both
+        # virtio-keyboard-pci and virtio-mouse-pci.
         self.assertIn(
-            "QEMU does not advertise virtio-keyboard-pci but -WithInputLeds was enabled",
+            "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLeds was enabled",
             self.text,
         )
 

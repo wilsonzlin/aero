@@ -6521,8 +6521,8 @@ try {
     if ($needInputEvents -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
       throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra). Upgrade QEMU or omit input event injection."
     }
-    if ($needInputLeds -and (-not $haveVirtioKbd)) {
-      throw "QEMU does not advertise virtio-keyboard-pci but -WithInputLeds was enabled. Upgrade QEMU or omit input LED/statusq testing."
+    if ($needInputLeds -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
+      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLeds was enabled. Upgrade QEMU or omit input LED/statusq testing."
     }
     if ($needInputMediaKeys -and (-not $haveVirtioKbd)) {
       throw "QEMU does not advertise virtio-keyboard-pci but -WithInputMediaKeys was enabled. Upgrade QEMU or omit media key injection."

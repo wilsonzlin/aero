@@ -3706,10 +3706,14 @@ def main() -> int:
                 "QEMU virtio-keyboard-pci and virtio-mouse-pci support. Upgrade QEMU or omit input event injection."
             )
 
-    if need_input_leds and not args.dry_run and not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci"):
-        parser.error(
-            "--with-input-leds requires QEMU virtio-keyboard-pci support. Upgrade QEMU or omit LED/statusq validation."
-        )
+    if need_input_leds and not args.dry_run:
+        if not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") or not _qemu_has_device(
+            args.qemu_system, "virtio-mouse-pci"
+        ):
+            parser.error(
+                "--with-input-leds requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
+                "Upgrade QEMU or omit LED/statusq validation."
+            )
 
     if (
         need_input_media_keys
