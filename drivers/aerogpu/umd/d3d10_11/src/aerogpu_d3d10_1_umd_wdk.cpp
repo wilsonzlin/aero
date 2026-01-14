@@ -6421,7 +6421,8 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
     b.size_bytes = 0;
     b.reserved0 = 0;
 
-    auto* res = phBuffers[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(phBuffers[i]) : nullptr;
+    auto* res = (phBuffers && phBuffers[i].pDrvPrivate) ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(phBuffers[i])
+                                                        : nullptr;
     auto* buf_res = (res && res->kind == ResourceKind::Buffer) ? res : nullptr;
     if (buf_res) {
       b.buffer = buf_res->handle;
