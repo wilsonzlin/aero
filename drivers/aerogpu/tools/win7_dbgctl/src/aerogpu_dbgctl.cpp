@@ -5995,7 +5995,7 @@ static DWORD WINAPI WaitThreadProc(LPVOID param) {
   for (;;) {
     DWORD w = WaitForSingleObject(ctx->request_event, INFINITE);
     if (w != WAIT_OBJECT_0) {
-      InterlockedExchange(&ctx->last_status, (LONG)0xC0000001L /* STATUS_UNSUCCESSFUL */);
+      InterlockedExchange(&ctx->last_status, (LONG)STATUS_UNSUCCESSFUL);
       SetEvent(ctx->done_event);
       continue;
     }
