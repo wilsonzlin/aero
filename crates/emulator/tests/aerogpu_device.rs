@@ -751,7 +751,7 @@ fn doorbell_rejects_unknown_major_abi_version() {
 #[test]
 fn ring_abi_matches_c_header() {
     assert_eq!(AEROGPU_RING_MAGIC, 0x474E_5241);
-    assert_eq!(AEROGPU_ABI_VERSION_U32, 0x0001_0003);
+    assert_eq!(AEROGPU_ABI_VERSION_U32, 0x0001_0004);
     assert_eq!(AEROGPU_RING_HEADER_SIZE_BYTES, 64);
     assert_eq!(RING_HEAD_OFFSET, 24);
     assert_eq!(RING_TAIL_OFFSET, 28);
