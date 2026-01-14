@@ -12,6 +12,102 @@ enum ExpectedSupport {
     Unsupported,
 }
 
+fn expected_tight_row_pitch_bytes(format: AerogpuFormat, width: u32) -> u32 {
+    match format {
+        AerogpuFormat::Invalid => 1,
+
+        AerogpuFormat::B8G8R8A8Unorm
+        | AerogpuFormat::B8G8R8X8Unorm
+        | AerogpuFormat::R8G8B8A8Unorm
+        | AerogpuFormat::R8G8B8X8Unorm
+        | AerogpuFormat::B8G8R8A8UnormSrgb
+        | AerogpuFormat::B8G8R8X8UnormSrgb
+        | AerogpuFormat::R8G8B8A8UnormSrgb
+        | AerogpuFormat::R8G8B8X8UnormSrgb
+        | AerogpuFormat::D24UnormS8Uint
+        | AerogpuFormat::D32Float => width * 4,
+
+        AerogpuFormat::B5G6R5Unorm | AerogpuFormat::B5G5R5A1Unorm => width * 2,
+
+        AerogpuFormat::BC1RgbaUnorm | AerogpuFormat::BC1RgbaUnormSrgb => {
+            let blocks_x = width.div_ceil(4);
+            blocks_x * 8
+        }
+        AerogpuFormat::BC2RgbaUnorm
+        | AerogpuFormat::BC2RgbaUnormSrgb
+        | AerogpuFormat::BC3RgbaUnorm
+        | AerogpuFormat::BC3RgbaUnormSrgb
+        | AerogpuFormat::BC7RgbaUnorm
+        | AerogpuFormat::BC7RgbaUnormSrgb => {
+            let blocks_x = width.div_ceil(4);
+            blocks_x * 16
+        }
+    }
+}
+
+fn expected_rows_in_layout(format: AerogpuFormat, height: u32) -> u32 {
+    match format {
+        AerogpuFormat::Invalid => 1,
+
+        AerogpuFormat::B8G8R8A8Unorm
+        | AerogpuFormat::B8G8R8X8Unorm
+        | AerogpuFormat::R8G8B8A8Unorm
+        | AerogpuFormat::R8G8B8X8Unorm
+        | AerogpuFormat::B5G6R5Unorm
+        | AerogpuFormat::B5G5R5A1Unorm
+        | AerogpuFormat::B8G8R8A8UnormSrgb
+        | AerogpuFormat::B8G8R8X8UnormSrgb
+        | AerogpuFormat::R8G8B8A8UnormSrgb
+        | AerogpuFormat::R8G8B8X8UnormSrgb
+        | AerogpuFormat::D24UnormS8Uint
+        | AerogpuFormat::D32Float => height,
+
+        AerogpuFormat::BC1RgbaUnorm
+        | AerogpuFormat::BC1RgbaUnormSrgb
+        | AerogpuFormat::BC2RgbaUnorm
+        | AerogpuFormat::BC2RgbaUnormSrgb
+        | AerogpuFormat::BC3RgbaUnorm
+        | AerogpuFormat::BC3RgbaUnormSrgb
+        | AerogpuFormat::BC7RgbaUnorm
+        | AerogpuFormat::BC7RgbaUnormSrgb => height.div_ceil(4),
+    }
+}
+
+fn expected_d3d9_wgpu_format(format: AerogpuFormat) -> Option<wgpu::TextureFormat> {
+    Some(match format {
+        AerogpuFormat::Invalid => return None,
+
+        AerogpuFormat::B8G8R8A8Unorm
+        | AerogpuFormat::B8G8R8X8Unorm
+        | AerogpuFormat::B8G8R8A8UnormSrgb
+        | AerogpuFormat::B8G8R8X8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
+
+        AerogpuFormat::R8G8B8A8Unorm
+        | AerogpuFormat::R8G8B8X8Unorm
+        | AerogpuFormat::R8G8B8A8UnormSrgb
+        | AerogpuFormat::R8G8B8X8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
+
+        // Packed 16-bit formats are converted to RGBA8 in the D3D9 executor.
+        AerogpuFormat::B5G6R5Unorm | AerogpuFormat::B5G5R5A1Unorm => wgpu::TextureFormat::Rgba8Unorm,
+
+        AerogpuFormat::D24UnormS8Uint => wgpu::TextureFormat::Depth24PlusStencil8,
+        AerogpuFormat::D32Float => wgpu::TextureFormat::Depth32Float,
+
+        AerogpuFormat::BC1RgbaUnorm | AerogpuFormat::BC1RgbaUnormSrgb => {
+            wgpu::TextureFormat::Bc1RgbaUnorm
+        }
+        AerogpuFormat::BC2RgbaUnorm | AerogpuFormat::BC2RgbaUnormSrgb => {
+            wgpu::TextureFormat::Bc2RgbaUnorm
+        }
+        AerogpuFormat::BC3RgbaUnorm | AerogpuFormat::BC3RgbaUnormSrgb => {
+            wgpu::TextureFormat::Bc3RgbaUnorm
+        }
+        AerogpuFormat::BC7RgbaUnorm | AerogpuFormat::BC7RgbaUnormSrgb => {
+            wgpu::TextureFormat::Bc7RgbaUnorm
+        }
+    })
+}
+
 macro_rules! aerogpu_format_expectations {
     ($($variant:ident => $support:ident,)+) => {
         // Keep the protocol-format list and the match table in sync by generating both from the
@@ -103,6 +199,70 @@ fn command_processor_create_texture2d_accepts_all_protocol_formats() {
 }
 
 #[test]
+fn command_processor_guest_backed_texture_layout_matches_protocol_formats() {
+    use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+
+    // Use a minimal guest-backed texture that exercises `TextureFormatLayout` sizing:
+    // - width/height are chosen so BC formats have a single block row/column.
+    // - `row_pitch_bytes` is set to the *minimum* tight pitch so mistakes in per-format layout
+    //   computation are likely to trigger an out-of-bounds rejection.
+    const WIDTH: u32 = 4;
+    const HEIGHT: u32 = 4;
+
+    const HANDLE: u32 = 1;
+    const ALLOC_ID: u32 = 1;
+
+    for &format in ALL_PROTOCOL_FORMATS {
+        let expected_row_pitch = expected_tight_row_pitch_bytes(format, WIDTH);
+        let expected_rows = expected_rows_in_layout(format, HEIGHT);
+        let expected_size_bytes =
+            u64::from(expected_row_pitch) * u64::from(expected_rows) * /*layers=*/ 1;
+
+        let allocs = [crate::AeroGpuSubmissionAllocation {
+            alloc_id: ALLOC_ID,
+            gpa: 0x1000,
+            size_bytes: expected_size_bytes,
+        }];
+
+        let mut w = AerogpuCmdWriter::new();
+        w.create_texture2d(
+            HANDLE,
+            /*usage_flags=*/ 0,
+            format as u32,
+            WIDTH,
+            HEIGHT,
+            /*mip_levels=*/ 1,
+            /*array_layers=*/ 1,
+            /*row_pitch_bytes=*/ expected_row_pitch,
+            /*backing_alloc_id=*/ ALLOC_ID,
+            /*backing_offset_bytes=*/ 0,
+        );
+        let bytes = w.finish();
+
+        let mut proc = crate::AeroGpuCommandProcessor::new();
+        let result =
+            proc.process_submission_with_allocations(&bytes, Some(&allocs), /*signal_fence=*/ 1);
+
+        match expected_protocol_support(format) {
+            ExpectedSupport::Supported => {
+                result.unwrap_or_else(|err| {
+                    panic!(
+                        "guest-backed CREATE_TEXTURE2D should accept protocol format {format:?} ({}), got error: {err:?}",
+                        format as u32
+                    )
+                });
+            }
+            ExpectedSupport::Unsupported => {
+                assert!(
+                    matches!(result, Err(crate::CommandProcessorError::InvalidCreateTexture2d)),
+                    "expected unsupported format {format:?} to be rejected, got {result:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn d3d9_executor_format_mapping_covers_all_protocol_formats() {
     use crate::aerogpu_d3d9_executor::map_aerogpu_format;
 
@@ -111,12 +271,22 @@ fn d3d9_executor_format_mapping_covers_all_protocol_formats() {
 
         match expected_protocol_support(format) {
             ExpectedSupport::Supported => {
-                mapped.unwrap_or_else(|err| {
+                let got = mapped.unwrap_or_else(|err| {
                     panic!(
                         "D3D9 executor should map protocol format {format:?} ({}), got error: {err:?}",
                         format as u32
                     )
                 });
+
+                let expected = expected_d3d9_wgpu_format(format).unwrap_or_else(|| {
+                    panic!(
+                        "test bug: format {format:?} is marked supported but has no expected D3D9 mapping"
+                    )
+                });
+                assert_eq!(
+                    got, expected,
+                    "unexpected D3D9 wgpu format mapping for {format:?}"
+                );
             }
             ExpectedSupport::Unsupported => {
                 assert!(
