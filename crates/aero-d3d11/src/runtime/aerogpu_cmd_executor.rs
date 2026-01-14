@@ -15385,6 +15385,104 @@ mod tests {
     }
 
     #[test]
+    fn vertex_index_buffers_are_bindable_as_storage_when_compute_is_supported() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            let supports_compute = exec.caps.supports_compute;
+            let allocs = AllocTable::new(None).unwrap();
+            const VB: u32 = 1;
+            const IB: u32 = 2;
+
+            // Create a VB/IB via the command-stream path. When compute/GS emulation is supported,
+            // these buffers must also be STORAGE-bindable for vertex/index pulling.
+            for (handle, usage_flags) in [
+                (VB, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER),
+                (IB, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER),
+            ] {
+                let mut cmd_bytes = Vec::new();
+                cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+                cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&handle.to_le_bytes());
+                cmd_bytes.extend_from_slice(&usage_flags.to_le_bytes());
+                cmd_bytes.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(cmd_bytes.len(), 40);
+                exec.exec_create_buffer(&cmd_bytes, &allocs)
+                    .expect("CREATE_BUFFER should succeed");
+            }
+
+            let vb = exec.resources.buffers.get(&VB).expect("VB exists");
+            let ib = exec.resources.buffers.get(&IB).expect("IB exists");
+
+            assert!(vb.usage.contains(wgpu::BufferUsages::VERTEX));
+            assert!(ib.usage.contains(wgpu::BufferUsages::INDEX));
+
+            if supports_compute {
+                assert!(
+                    vb.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "vertex buffers must include STORAGE usage when compute is supported"
+                );
+                assert!(
+                    ib.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "index buffers must include STORAGE usage when compute is supported"
+                );
+
+                let bgl = exec
+                    .device
+                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("aerogpu_cmd VB/IB storage bind test bgl"),
+                        entries: &[wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(4),
+                            },
+                            count: None,
+                        }],
+                    });
+
+                for (label, buf) in [("VB", vb), ("IB", ib)] {
+                    exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+                    exec.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("aerogpu_cmd VB/IB storage bind test bg"),
+                        layout: &bgl,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buf.buffer.as_entire_binding(),
+                        }],
+                    });
+                    #[cfg(not(target_arch = "wasm32"))]
+                    exec.device.poll(wgpu::Maintain::Wait);
+                    let err = exec.device.pop_error_scope().await;
+                    assert!(
+                        err.is_none(),
+                        "{label} buffer must be bindable as STORAGE when compute is supported, got: {err:?}"
+                    );
+                }
+            } else {
+                assert!(
+                    !vb.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "vertex buffers must not request STORAGE usage when compute is unsupported"
+                );
+                assert!(
+                    !ib.usage.contains(wgpu::BufferUsages::STORAGE),
+                    "index buffers must not request STORAGE usage when compute is unsupported"
+                );
+            }
+        });
+    }
+
+    #[test]
     fn gs_hs_ds_emulation_requires_compute() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
