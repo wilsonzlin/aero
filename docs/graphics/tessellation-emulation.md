@@ -400,6 +400,7 @@ by tessellation expansion:
 
 - `crates/aero-d3d11/tests/tessellation_layout_pass.rs` (runs the WGSL layout pass and validates its outputs)
 - `crates/aero-d3d11/tests/tessellation_vs_as_compute.rs` (VS-as-compute plumbing / vertex pulling)
+- `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs` (documents current executor behavior: HS/DS binding returns a clear error)
 
 ### Pixel-compare tests (GPU integration; future)
 
@@ -415,7 +416,7 @@ Suggested fixtures and tests (naming pattern aligns with existing docs/tests):
 
 - Existing fixture: `crates/aero-d3d11/tests/fixtures/hs_minimal.dxbc`
 - Future fixtures: `crates/aero-d3d11/tests/fixtures/{hs,ds}_*.dxbc`
-- Future tests: `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*.rs`
+- Future pixel-compare tests: add additional `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*` tests that render via the tessellation expansion path and compare readback pixels
 
 For early bring-up, it’s also useful to add a “buffer readback” test that validates:
 
