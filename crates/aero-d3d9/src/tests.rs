@@ -2785,6 +2785,57 @@ fn translate_entrypoint_falls_back_on_unsupported_opcode() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_invalid_src_modifier_after_fallback() {
+    // Ensure malformed token encodings are still reported as `Malformed` even when the shader
+    // triggers SM3→legacy fallback (e.g. due to an unknown opcode).
+    let mut words = vec![0xFFFF_0300];
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // mov r0, c0 with an invalid source modifier (15)
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src_mod(2, 0, 0xE4, 15)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_invalid_ifc_compare_op_after_fallback() {
+    // Similar to the source-modifier test above: invalid `ifc` comparison op encodings are
+    // malformed and should not be reported as a generic translation failure.
+    let mut words = vec![0xFFFF_0300];
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // ifc with invalid cmp code 7 (valid range is 0..=5)
+    words.extend(enc_inst_with_extra(
+        0x0029,
+        7u32 << 16,
+        &[enc_src(2, 0, 0xE4), enc_src(2, 1, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_nested_relative_addressing() {
     // Craft a minimal ps_3_0 shader with nested relative addressing in a source operand.
     // Nested relative addressing is malformed SM2/SM3 bytecode and should be rejected as

@@ -234,7 +234,12 @@ pub fn translate_d3d9_shader_to_wgsl(
                 shader::ShaderError::TokenStreamTooSmall
                 | shader::ShaderError::TokenCountTooLarge { .. }
                 | shader::ShaderError::BytecodeTooLarge { .. }
-                | shader::ShaderError::UnexpectedEof => {
+                | shader::ShaderError::UnexpectedEof
+                // Invalid enum encodings / control-flow structure are malformed input.
+                | shader::ShaderError::UnsupportedSrcModifier(_)
+                | shader::ShaderError::UnsupportedCompareOp(_)
+                | shader::ShaderError::UnsupportedVersion(_)
+                | shader::ShaderError::InvalidControlFlow(_) => {
                     ShaderTranslateError::Malformed(e.to_string())
                 }
                 other => ShaderTranslateError::Translation(other.to_string()),
