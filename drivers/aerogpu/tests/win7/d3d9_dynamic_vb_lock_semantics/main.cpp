@@ -456,9 +456,9 @@ static int RunD3D9DynamicVbLockSemantics(int argc, char** argv) {
     }
 
     // Vertex buffer contains two identical clip-space triangles (red/green) plus
-    // an offscreen sentinel triangle that forces the fixed-function CPU transform
-    // path to upload the full vertex range regardless of which test triangle is
-    // selected by indices.
+    // an offscreen sentinel triangle. Each draw includes the sentinel (clipped)
+    // triangle and one of the test triangles so we exercise a stable 2-triangle
+    // indexed draw while varying only the second triangle's indices.
     ComPtr<IDirect3DVertexBuffer9> vb_xyz;
     const UINT kVtxCount = 9;
     hr = dev->CreateVertexBuffer(sizeof(VertexXyzDiffuse) * kVtxCount,
@@ -654,9 +654,9 @@ static int RunD3D9DynamicVbLockSemantics(int argc, char** argv) {
   //
   // This complements Phase 2 (NOOVERWRITE append) by validating the overlap case.
   //
-  // Use a minimal VS/PS pair so the GPU consumes the dynamic vertex buffer;
-  // AeroGPU's fixed-function FVF paths rewrite vertices into a scratch UP buffer
-  // and would not exercise VB renaming.
+  // Use a minimal VS/PS pair so the draw uses the programmable pipeline and the
+  // GPU consumes the dynamic vertex buffer directly (no fixed-function fallback
+  // shims).
   {
     // Minimal vs_2_0:
     //   mov oPos, v0
