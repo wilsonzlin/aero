@@ -156,18 +156,24 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="Supports /check (or /validate) dry-run validation mode (no system changes)",
             expected_hint='Parses "/check"/"/validate" and jumps to :check_mode (e.g. if "%ARG_CHECK%"=="1" goto :check_mode)',
             predicate=lambda text: (
-                _any_regex(
-                    [
-                        r'(?i)"%%~?A"\s*==\s*"/check"\s+set\s+"?ARG_CHECK=1"?',
-                        r'(?i)"%%~?A"\s*==\s*"/validate"\s+set\s+"?ARG_CHECK=1"?',
-                    ]
-                )(text)
-                and _all_regex(
-                    [
-                        r'(?i)\bif\b\s+"%ARG_CHECK%"\s*==\s*"1"\s+goto\s+:check_mode\b',
-                        r"(?im)^:check_mode\b",
-                    ]
-                )(text)
+                _regex(r"(?im)^:check_mode\b")(text)
+                and (
+                    (
+                        _any_regex(
+                            [
+                                r'(?i)/check"\s+set\s+"?ARG_CHECK=1"?',
+                                r'(?i)/validate"\s+set\s+"?ARG_CHECK=1"?',
+                            ]
+                        )(text)
+                        and _regex(r'(?i)\bif\b\s+"%ARG_CHECK%"\s*==\s*"1"\s+goto\s+:?check_mode\b')(text)
+                    )
+                    or _any_regex(
+                        [
+                            r'(?i)/check"\s+goto\s+:?check_mode\b',
+                            r'(?i)/validate"\s+goto\s+:?check_mode\b',
+                        ]
+                    )(text)
+                )
             ),
         ),
         Invariant(
@@ -204,7 +210,7 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
                 '(e.g. `if /i not \"%SIGNING_POLICY%\"==\"test\" if not \"%ARG_INSTALL_CERTS%\"==\"1\" (...) exit /b 0`).'
             ),
             predicate=lambda text: (
-                "/installcerts" in text
+                re.search(r"/installcerts", text, re.IGNORECASE) is not None
                 and _regex(
                     r'(?is)if\s+/i\s+not\s+"%SIGNING_POLICY%"\s*==\s*"test"\s+if\s+not\s+"%ARG_INSTALL_CERTS%"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0'
                 )(text)
