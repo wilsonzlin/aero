@@ -229,6 +229,33 @@ fn tier2_sar_count_1_sets_of_to_0() {
 }
 
 #[test]
+fn tier2_shr_count_1_sets_cf_from_old_lsb() {
+    // mov al, 1
+    // shr al, 1
+    // jc +3
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    //
+    // For SHR count==1, x86 defines CF=old LSB. With old LSB=1, ensure `jc` is taken.
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xD0, 0xE8, // shr al, 1
+        0x72, 0x03, // jc +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 2);
+}
+
+#[test]
 fn tier2_shr_count_1_sets_of_from_old_msb() {
     // mov al, 0x81
     // shr al, 1
