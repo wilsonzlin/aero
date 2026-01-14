@@ -124,7 +124,7 @@ Routing policy (high level):
 
 The browser runtime can expose input as guest-visible USB HID devices in two ways:
 
-- **Synthetic HID devices** (keyboard/mouse/gamepad) attached behind the UHCI external hub (see `web/src/usb/uhci_external_hub.ts` and the attachment logic in `web/src/workers/io.worker.ts`).
+- **Synthetic HID devices** (keyboard/mouse/gamepad/consumer-control) attached behind the UHCI external hub (see `web/src/usb/uhci_external_hub.ts` and the attachment logic in `web/src/workers/io.worker.ts`).
 - **Physical device passthrough** via WebHID/WebUSB, bridged into UHCI (see `docs/webhid-webusb-passthrough.md`).
 
 Guest-visible topology (UHCI external hub):
@@ -132,8 +132,8 @@ Guest-visible topology (UHCI external hub):
 - UHCI root port 0: external hub (synthetic HID devices + WebHID passthrough)
 - UHCI root port 1: reserved for WebUSB passthrough
 - External hub ports:
-  - ports 1..3 reserved for synthetic keyboard/mouse/gamepad
-  - dynamic passthrough ports start at 4
+  - ports 1..4 reserved for synthetic keyboard/mouse/gamepad/consumer-control
+  - dynamic passthrough ports start at 5 (`UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT`)
 
 Note: the canonical `aero_machine::Machine` does not auto-attach an external hub or synthetic HID devices; it only exposes UHCI when enabled (hosts can attach devices explicitly via `Machine.usb_attach_*`).
 
