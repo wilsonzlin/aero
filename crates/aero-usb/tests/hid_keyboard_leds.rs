@@ -1,8 +1,8 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotWriter};
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::hid::{
-    UsbCompositeHidInputHandle, UsbHidKeyboardHandle, KEYBOARD_LED_CAPS_LOCK, KEYBOARD_LED_NUM_LOCK,
-    KEYBOARD_LED_SCROLL_LOCK,
+    UsbCompositeHidInputHandle, UsbHidKeyboardHandle, KEYBOARD_LED_MASK, KEYBOARD_LED_CAPS_LOCK,
+    KEYBOARD_LED_COMPOSE, KEYBOARD_LED_KANA, KEYBOARD_LED_NUM_LOCK, KEYBOARD_LED_SCROLL_LOCK,
 };
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
@@ -70,11 +70,12 @@ fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_
         },
     );
 
-    // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock | ScrollLock.
+    // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock | ScrollLock | Compose | Kana.
     // Send high bits as well; devices should ignore the padding bits and only track the 5 LED
     // usages defined by the report descriptor.
-    let leds = 0xe7;
-    let expected_leds = KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK | KEYBOARD_LED_SCROLL_LOCK;
+    let leds = 0xff;
+    let expected_leds =
+        KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK | KEYBOARD_LED_SCROLL_LOCK | KEYBOARD_LED_COMPOSE | KEYBOARD_LED_KANA;
     control_out_data(
         &mut dev,
         SetupPacket {
@@ -132,11 +133,11 @@ fn hid_composite_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_
         },
     );
 
-    // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock.
+    // SET_REPORT(Output) to set boot keyboard LEDs: NumLock | CapsLock | ScrollLock | Compose | Kana.
     // Send high bits as well; devices should ignore the padding bits and only track the 5 LED
     // usages defined by the report descriptor.
-    let leds = 0xe3;
-    let expected_leds = KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK;
+    let leds = 0xff;
+    let expected_leds = KEYBOARD_LED_MASK;
     control_out_data(
         &mut dev,
         SetupPacket {
@@ -173,15 +174,12 @@ fn hid_keyboard_snapshot_load_masks_led_padding_bits() {
         <UsbHidKeyboardHandle as IoSnapshot>::DEVICE_ID,
         <UsbHidKeyboardHandle as IoSnapshot>::DEVICE_VERSION,
     );
-    w.field_u8(TAG_LEDS, 0xe7);
+    w.field_u8(TAG_LEDS, 0xff);
     let snap = w.finish();
 
     let mut kb = UsbHidKeyboardHandle::new();
     kb.load_state(&snap).unwrap();
-    assert_eq!(
-        kb.leds(),
-        KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK | KEYBOARD_LED_SCROLL_LOCK
-    );
+    assert_eq!(kb.leds(), KEYBOARD_LED_MASK);
 }
 
 #[test]
@@ -192,13 +190,10 @@ fn hid_composite_snapshot_load_masks_led_padding_bits() {
         <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_ID,
         <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_VERSION,
     );
-    w.field_u8(TAG_KBD_LEDS, 0xe3);
+    w.field_u8(TAG_KBD_LEDS, 0xff);
     let snap = w.finish();
 
     let mut hid = UsbCompositeHidInputHandle::new();
     hid.load_state(&snap).unwrap();
-    assert_eq!(
-        hid.keyboard_leds(),
-        KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK
-    );
+    assert_eq!(hid.keyboard_leds(), KEYBOARD_LED_MASK);
 }
