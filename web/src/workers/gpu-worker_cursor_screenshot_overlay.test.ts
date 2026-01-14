@@ -385,6 +385,101 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     }
   }, 25_000);
 
+  it("reads VRAM-backed cursor surfaces even when last-row pitch padding is out of bounds", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 64,
+    });
+    const views = createSharedMemoryViews(segments);
+    if (!segments.vram || views.vramSizeBytes === 0) {
+      throw new Error("test requires a non-empty shared VRAM segment");
+    }
+
+    const scanoutPaddr = 0x1000;
+    // Scanout: 1x2 BGRX pixels, both black.
+    views.guestU8.set([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 2,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    const cursorWidth = 1;
+    const cursorHeight = 2;
+    const cursorPitchBytes = 16;
+    const cursorRowBytes = cursorWidth * 4;
+    const cursorRequiredBytes = cursorPitchBytes * (cursorHeight - 1) + cursorRowBytes;
+    if (cursorRequiredBytes > views.vramU8.byteLength) {
+      throw new Error("vram buffer too small for cursor");
+    }
+    const cursorVramOffset = views.vramU8.byteLength - cursorRequiredBytes;
+
+    // Cursor: 1x2 BGRX pixels with padded pitch. Place it at the end of the VRAM SAB so the unused
+    // pitch padding after the last row would be out of bounds.
+    views.vramU8.fill(0);
+    // Row 0: red (BGRX bytes [00 00 FF 00]).
+    views.vramU8.set([0x00, 0x00, 0xff, 0x00], cursorVramOffset);
+    // Row 1: green at offset + pitchBytes.
+    views.vramU8.set([0x00, 0xff, 0x00, 0x00], cursorVramOffset + cursorPitchBytes);
+
+    const cursorBasePaddr = (VRAM_BASE_PADDR + cursorVramOffset) >>> 0;
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: cursorWidth,
+      height: cursorHeight,
+      pitchBytes: cursorPitchBytes,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorBasePaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        vram: segments.vram,
+        vramBasePaddr: VRAM_BASE_PADDR,
+        vramSizeBytes: segments.vram.byteLength,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(2);
+      // Cursor is fully opaque (X8 alpha forced), so it overwrites both scanout pixels.
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 0)).toBe(0xff0000ff);
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 1)).toBe(0xff00ff00);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
   it("syncs hardware cursor state for screenshots even when no tick is forced", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
