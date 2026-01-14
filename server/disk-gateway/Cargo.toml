@@ -12,6 +12,7 @@ bytes = "1"
 futures-core = "0.3"
 futures-util = "0.3"
 http = "1"
+httpdate = "1"
 jsonwebtoken = "9"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }

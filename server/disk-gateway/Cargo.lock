@@ -188,6 +188,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "http",
+ "httpdate",
  "jsonwebtoken",
  "rand",
  "serde",

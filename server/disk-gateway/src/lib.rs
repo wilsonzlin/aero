@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_stream::try_stream;
 use axum::body::Body;
@@ -14,7 +14,7 @@ use axum::http::header::{
     ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE,
     AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, IF_NONE_MATCH,
-    IF_RANGE, ORIGIN, RANGE, VARY,
+    IF_MODIFIED_SINCE, IF_RANGE, LAST_MODIFIED, ORIGIN, RANGE, VARY,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -806,19 +806,24 @@ async fn disk_head(
             _ => ApiError::Internal,
         })?;
     let size = metadata.len();
+    let last_modified = metadata.modified().ok();
+    let last_modified_header = last_modified_header_value(last_modified);
 
     let etag = compute_etag(&metadata);
     let etag_str = etag.to_str().ok();
 
-    if let (Some(etag_str), Some(if_none_match)) = (
-        etag_str,
-        headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()),
-    ) {
-        if if_none_match_matches(if_none_match, etag_str) {
-            return Ok(not_modified_response(etag.clone()));
+    if is_not_modified(&headers, etag_str, last_modified) {
+        return Ok(not_modified_response(etag.clone(), last_modified_header));
+    }
+
+    let mut range_header = headers.get(RANGE).and_then(|v| v.to_str().ok());
+    let if_range = headers.get(IF_RANGE).and_then(|v| v.to_str().ok());
+    if let (Some(_range), Some(if_range)) = (range_header, if_range) {
+        if !if_range_allows_range(if_range, etag_str, last_modified) {
+            // RFC 9110: ignore Range when If-Range doesn't match to avoid mixed-version bytes.
+            range_header = None;
         }
     }
-    let range_header = headers.get(RANGE).and_then(|v| v.to_str().ok());
 
     let (status, content_type, content_range, content_length) =
         match resolve_request_ranges(&state.cfg, range_header, size) {
@@ -856,6 +861,10 @@ async fn disk_head(
         )
         .header(ETAG, etag);
 
+    if let Some(last_modified_header) = last_modified_header {
+        builder = builder.header(LAST_MODIFIED, last_modified_header);
+    }
+
     if let Some(content_range) = content_range {
         builder = builder.header(CONTENT_RANGE, content_range);
     }
@@ -883,25 +892,21 @@ async fn disk_get(
             _ => ApiError::Internal,
     })?;
     let size = metadata.len();
+    let last_modified = metadata.modified().ok();
+    let last_modified_header = last_modified_header_value(last_modified);
     let etag = compute_etag(&metadata);
 
     let etag_str = etag.to_str().ok();
 
-    // Conditional requests: If-None-Match dominates If-Modified-Since (we only implement ETag
-    // revalidation here).
-    if let (Some(etag_str), Some(if_none_match)) = (
-        etag_str,
-        headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()),
-    ) {
-        if if_none_match_matches(if_none_match, etag_str) {
-            return Ok(not_modified_response(etag.clone()));
-        }
+    // Conditional requests: If-None-Match dominates If-Modified-Since (RFC 9110).
+    if is_not_modified(&headers, etag_str, last_modified) {
+        return Ok(not_modified_response(etag.clone(), last_modified_header));
     }
 
     let mut range_header = headers.get(RANGE).and_then(|v| v.to_str().ok());
     let if_range = headers.get(IF_RANGE).and_then(|v| v.to_str().ok());
-    if let (Some(_range), Some(if_range), Some(etag_str)) = (range_header, if_range, etag_str) {
-        if !if_range_allows_range(if_range, etag_str) {
+    if let (Some(_range), Some(if_range)) = (range_header, if_range) {
+        if !if_range_allows_range(if_range, etag_str, last_modified) {
             // RFC 9110: ignore Range when If-Range doesn't match to avoid mixed-version bytes.
             range_header = None;
         }
@@ -913,9 +918,11 @@ async fn disk_get(
     };
 
     match ranges {
-        None => serve_full_file(&path, size, etag).await,
-        Some(ranges) if ranges.len() == 1 => serve_single_range(&path, size, etag, ranges[0]).await,
-        Some(ranges) => serve_multi_range(&path, size, etag, ranges).await,
+        None => serve_full_file(&path, size, etag, last_modified_header).await,
+        Some(ranges) if ranges.len() == 1 => {
+            serve_single_range(&path, size, etag, last_modified_header, ranges[0]).await
+        }
+        Some(ranges) => serve_multi_range(&path, size, etag, last_modified_header, ranges).await,
     }
 }
 
@@ -980,18 +987,25 @@ async fn serve_full_file(
     path: &PathBuf,
     size: u64,
     etag: HeaderValue,
+    last_modified: Option<HeaderValue>,
 ) -> Result<Response, ApiError> {
     let file = File::open(path).await.map_err(|err| match err.kind() {
         std::io::ErrorKind::NotFound => ApiError::NotFound,
         _ => ApiError::Internal,
     })?;
 
-    Ok(Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(ACCEPT_RANGES, "bytes")
         .header(CONTENT_TYPE, "application/octet-stream")
         .header(CONTENT_LENGTH, size)
-        .header(ETAG, etag)
+        .header(ETAG, etag);
+
+    if let Some(last_modified) = last_modified {
+        builder = builder.header(LAST_MODIFIED, last_modified);
+    }
+
+    Ok(builder
         .body(Body::from_stream(ReaderStream::new(file)))
         .map_err(|_| ApiError::Internal)?
         .into_response())
@@ -1001,6 +1015,7 @@ async fn serve_single_range(
     path: &PathBuf,
     size: u64,
     etag: HeaderValue,
+    last_modified: Option<HeaderValue>,
     range: ResolvedByteRange,
 ) -> Result<Response, ApiError> {
     let mut file = File::open(path).await.map_err(|err| match err.kind() {
@@ -1014,7 +1029,7 @@ async fn serve_single_range(
 
     let len = range.len();
 
-    Ok(Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::PARTIAL_CONTENT)
         .header(ACCEPT_RANGES, "bytes")
         .header(CONTENT_TYPE, "application/octet-stream")
@@ -1023,7 +1038,13 @@ async fn serve_single_range(
             format!("bytes {}-{}/{}", range.start, range.end, size),
         )
         .header(CONTENT_LENGTH, len)
-        .header(ETAG, etag)
+        .header(ETAG, etag);
+
+    if let Some(last_modified) = last_modified {
+        builder = builder.header(LAST_MODIFIED, last_modified);
+    }
+
+    Ok(builder
         .body(Body::from_stream(ReaderStream::new(file.take(len))))
         .map_err(|_| ApiError::Internal)?
         .into_response())
@@ -1033,6 +1054,7 @@ async fn serve_multi_range(
     path: &PathBuf,
     size: u64,
     etag: HeaderValue,
+    last_modified: Option<HeaderValue>,
     ranges: Vec<ResolvedByteRange>,
 ) -> Result<Response, ApiError> {
     let boundary = make_boundary();
@@ -1063,11 +1085,17 @@ async fn serve_multi_range(
     let stream: Pin<Box<dyn futures_core::Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
         Box::pin(stream);
 
-    Ok(Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::PARTIAL_CONTENT)
         .header(ACCEPT_RANGES, "bytes")
         .header(CONTENT_TYPE, content_type)
-        .header(ETAG, etag)
+        .header(ETAG, etag);
+
+    if let Some(last_modified) = last_modified {
+        builder = builder.header(LAST_MODIFIED, last_modified);
+    }
+
+    Ok(builder
         .body(Body::from_stream(stream))
         .map_err(|_| ApiError::Internal)?
         .into_response())
@@ -1114,12 +1142,76 @@ fn extract_token<'a>(headers: &'a HeaderMap, token_qs: Option<&'a str>) -> Optio
     token_qs.filter(|s| !s.trim().is_empty())
 }
 
-fn not_modified_response(etag: HeaderValue) -> Response {
-    Response::builder()
+fn last_modified_header_value(last_modified: Option<SystemTime>) -> Option<HeaderValue> {
+    let last_modified = last_modified?;
+    // `httpdate::fmt_http_date` panics if the time is before the Unix epoch.
+    //
+    // While pre-epoch mtimes are rare in practice, they can happen (filesystem metadata, or
+    // operator-specified values). Avoid crashing the server; omit the header instead.
+    if last_modified.duration_since(UNIX_EPOCH).is_err() {
+        return None;
+    }
+    let s = httpdate::fmt_http_date(last_modified);
+    Some(HeaderValue::from_str(&s).expect("http-date must be a valid header value"))
+}
+
+/// Evaluates conditional request headers for `GET`/`HEAD`.
+///
+/// Precedence is per RFC 9110:
+/// - If `If-None-Match` is present it dominates `If-Modified-Since`.
+fn is_not_modified(
+    req_headers: &HeaderMap,
+    current_etag: Option<&str>,
+    current_last_modified: Option<SystemTime>,
+) -> bool {
+    if let Some(inm) = req_headers.get(IF_NONE_MATCH) {
+        let Some(current_etag) = current_etag else {
+            return false;
+        };
+        let Ok(inm) = inm.to_str() else {
+            return false;
+        };
+        return if_none_match_matches(inm, current_etag);
+    }
+
+    let Some(ims) = req_headers.get(IF_MODIFIED_SINCE) else {
+        return false;
+    };
+    let Some(resource_last_modified) = current_last_modified else {
+        return false;
+    };
+    let Ok(ims) = ims.to_str() else {
+        return false;
+    };
+    let Ok(ims_time) = httpdate::parse_http_date(ims) else {
+        return false;
+    };
+
+    // HTTP dates have 1-second resolution. Filesystems often provide sub-second mtimes, but our
+    // `Last-Modified` header (and thus `If-Modified-Since`) cannot represent that. Compare at
+    // second granularity to avoid false negatives where the resource's mtime has sub-second data
+    // that gets truncated when formatting/parsing the HTTP date.
+    let Ok(resource_secs) = resource_last_modified.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    let Ok(ims_secs) = ims_time.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    resource_secs.as_secs() <= ims_secs.as_secs()
+}
+
+fn not_modified_response(etag: HeaderValue, last_modified: Option<HeaderValue>) -> Response {
+    let mut builder = Response::builder()
         .status(StatusCode::NOT_MODIFIED)
         .header(ACCEPT_RANGES, "bytes")
         .header(ETAG, etag)
-        .header(CONTENT_LENGTH, "0")
+        .header(CONTENT_LENGTH, "0");
+
+    if let Some(last_modified) = last_modified {
+        builder = builder.header(LAST_MODIFIED, last_modified);
+    }
+
+    builder
         .body(Body::empty())
         .unwrap_or_else(|_| StatusCode::NOT_MODIFIED.into_response())
 }
@@ -1165,27 +1257,49 @@ fn strip_weak_prefix(tag: &str) -> &str {
         .unwrap_or(trimmed)
 }
 
-fn if_range_allows_range(if_range: &str, current_etag: &str) -> bool {
+fn if_range_allows_range(
+    if_range: &str,
+    current_etag: Option<&str>,
+    current_last_modified: Option<SystemTime>,
+) -> bool {
     let if_range = if_range.trim();
-    let current_etag = current_etag.trim();
 
-    // Only implement the entity-tag form here. RFC 9110 requires strong comparison.
-    if !(if_range.starts_with('"')
-        || if_range.starts_with("W/")
-        || if_range.starts_with("w/"))
-    {
-        return false;
+    // Entity-tag form. RFC 9110 requires strong comparison and disallows weak validators.
+    if if_range.starts_with('"') || if_range.starts_with("W/") || if_range.starts_with("w/") {
+        let Some(current_etag) = current_etag else {
+            return false;
+        };
+        // If either side is weak, treat it as not matching for If-Range purposes.
+        let current_etag = current_etag.trim_start();
+        if if_range.starts_with("W/")
+            || if_range.starts_with("w/")
+            || current_etag.starts_with("W/")
+            || current_etag.starts_with("w/")
+        {
+            return false;
+        }
+        return if_range == current_etag;
     }
 
-    if if_range.starts_with("W/")
-        || if_range.starts_with("w/")
-        || current_etag.starts_with("W/")
-        || current_etag.starts_with("w/")
-    {
+    // HTTP-date form.
+    let Ok(since) = httpdate::parse_http_date(if_range) else {
         return false;
-    }
+    };
+    let Some(last_modified) = current_last_modified else {
+        return false;
+    };
 
-    if_range == current_etag
+    // HTTP dates have 1-second resolution. Filesystems often provide sub-second mtimes, but our
+    // `Last-Modified` header (and thus `If-Range` in HTTP-date form) cannot represent that.
+    // Compare at second granularity to avoid false mismatches where the resource mtime has
+    // sub-second data that gets truncated when formatting/parsing the HTTP date.
+    let Ok(resource_secs) = last_modified.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    let Ok(since_secs) = since.duration_since(UNIX_EPOCH) else {
+        return false;
+    };
+    resource_secs.as_secs() <= since_secs.as_secs()
 }
 
 fn compute_etag(metadata: &std::fs::Metadata) -> HeaderValue {
@@ -1478,6 +1592,148 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_if_modified_since_returns_304() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let meta = tokio::fs::metadata(&public_image_path(&cfg, "win7"))
+            .await
+            .unwrap();
+        let modified = meta.modified().unwrap();
+        let http_date = httpdate::fmt_http_date(modified);
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(ORIGIN, "https://app.example")
+            .header(IF_MODIFIED_SINCE, http_date.clone())
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            resp.headers()
+                .get(LAST_MODIFIED)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            http_date
+        );
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn if_none_match_dominates_if_modified_since() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let meta = tokio::fs::metadata(&public_image_path(&cfg, "win7"))
+            .await
+            .unwrap();
+        let modified = meta.modified().unwrap();
+        let http_date = httpdate::fmt_http_date(modified);
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(ORIGIN, "https://app.example")
+            .header(IF_NONE_MATCH, "\"mismatch\"")
+            .header(IF_MODIFIED_SINCE, http_date)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"abcdef");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_if_range_http_date_match_returns_206() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let meta = tokio::fs::metadata(&public_image_path(&cfg, "win7"))
+            .await
+            .unwrap();
+        let modified = meta.modified().unwrap();
+        let http_date = httpdate::fmt_http_date(modified);
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=1-3")
+            .header(IF_RANGE, http_date)
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"bcd");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_if_range_http_date_mismatch_ignores_range_and_returns_200() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let meta = tokio::fs::metadata(&public_image_path(&cfg, "win7"))
+            .await
+            .unwrap();
+        let modified = meta.modified().unwrap();
+        let old = modified
+            .checked_sub(Duration::from_secs(60))
+            .expect("mtime should be far after the unix epoch");
+        let http_date = httpdate::fmt_http_date(old);
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, "bytes=1-3")
+            .header(IF_RANGE, http_date)
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"abcdef");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn head_without_range_returns_headers_only() {
         let tmp = tempfile::tempdir().unwrap();
         let public_dir = tmp.path().join("public");
@@ -1546,6 +1802,46 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn head_if_modified_since_returns_304() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let meta = tokio::fs::metadata(&public_image_path(&cfg, "win7"))
+            .await
+            .unwrap();
+        let modified = meta.modified().unwrap();
+        let http_date = httpdate::fmt_http_date(modified);
+
+        let app = app(cfg);
+        let req = Request::builder()
+            .method(Method::HEAD)
+            .uri("/disk/win7")
+            .header(ORIGIN, "https://app.example")
+            .header(IF_MODIFIED_SINCE, http_date.clone())
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            resp.headers()
+                .get(LAST_MODIFIED)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            http_date
+        );
 
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
@@ -1974,6 +2270,39 @@ mod tests {
         assert!(if_none_match_matches("\"a,b\"", "\"a,b\""));
         assert!(if_none_match_matches("W/\"x\", \"a,b\"", "\"a,b\""));
         assert!(!if_none_match_matches("\"a,b\"", "\"c\""));
+    }
+
+    #[test]
+    fn if_modified_since_ignores_subsecond_precision() {
+        let mut headers = HeaderMap::new();
+        let last_modified = UNIX_EPOCH + Duration::from_secs(123) + Duration::from_nanos(456);
+        let http_date = httpdate::fmt_http_date(last_modified);
+        headers.insert(
+            IF_MODIFIED_SINCE,
+            HeaderValue::from_str(&http_date).unwrap(),
+        );
+
+        assert!(
+            is_not_modified(&headers, None, Some(last_modified)),
+            "expected If-Modified-Since to match even when the resource mtime has sub-second precision"
+        );
+    }
+
+    #[test]
+    fn last_modified_header_value_does_not_panic_for_pre_epoch_times() {
+        let t = UNIX_EPOCH - Duration::from_secs(1);
+        assert!(last_modified_header_value(Some(t)).is_none());
+    }
+
+    #[test]
+    fn if_range_http_date_ignores_subsecond_precision() {
+        let last_modified = UNIX_EPOCH + Duration::from_secs(123) + Duration::from_nanos(456);
+        let http_date = httpdate::fmt_http_date(last_modified);
+
+        assert!(
+            if_range_allows_range(&http_date, None, Some(last_modified)),
+            "expected If-Range date to match even when the resource mtime has sub-second precision"
+        );
     }
 
     #[test]
