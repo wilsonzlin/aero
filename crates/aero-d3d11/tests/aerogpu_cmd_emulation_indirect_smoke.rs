@@ -253,7 +253,7 @@ fn aerogpu_cmd_emulation_indirect_smoke() {
 
         // SET_PRIMITIVE_TOPOLOGY (TriangleListAdj) triggers emulation for the next draw.
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetPrimitiveTopology as u32);
-        stream.extend_from_slice(&12u32.to_le_bytes()); // D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST_ADJ
+        stream.extend_from_slice(&(AerogpuPrimitiveTopology::TriangleListAdj as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);
 
