@@ -1255,6 +1255,28 @@ impl PciDevice for E1000PciConfigDevice {
     }
 }
 
+struct AeroGpuPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AeroGpuPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for AeroGpuPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 struct VirtioNetPciConfigDevice {
     cfg: aero_devices::pci::PciConfigSpace,
 }
@@ -5870,12 +5892,21 @@ impl Machine {
                 }
 
                 // Minimal legacy VGA port decode (`0x3B0..0x3DF`).
-                self.io.register_range(
+                //
+                // The PC platform installs a catch-all PCI I/O BAR window over almost the entire
+                // I/O port space via `IoPortBus::register_range`, so legacy VGA ports must be wired
+                // as exact per-port mappings to avoid overlapping range registrations.
+                self.io.register_shared_range(
                     aero_gpu_vga::VGA_LEGACY_IO_START,
                     aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
-                    Box::new(AeroGpuVgaPortWindow {
-                        dev: aerogpu.clone(),
-                    }),
+                    {
+                        let aerogpu = aerogpu.clone();
+                        move |_port| {
+                            Box::new(AeroGpuVgaPortWindow {
+                                dev: aerogpu.clone(),
+                            })
+                        }
+                    },
                 );
 
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`) as an MMIO overlay that
@@ -5948,6 +5979,13 @@ impl Machine {
                     hpet
                 }
             };
+
+            if self.cfg.enable_aerogpu {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
+            }
 
             let ahci = if self.cfg.enable_ahci {
                 pci_cfg.borrow_mut().bus_mut().add_device(
