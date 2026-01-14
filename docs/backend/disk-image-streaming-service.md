@@ -178,9 +178,12 @@ Recommended policy:
   - Public images: `Cache-Control: public, max-age=<n>, no-transform` (max-age configurable)
   - Authenticated/private images: `Cache-Control: private, no-store, no-transform`
   - `HEAD` should support `If-None-Match` / `If-Modified-Since` and return `304` when matched.
-  - If implementing `If-Range`, follow RFC 9110: if the validator doesn't match the current image
-    version, ignore the `Range` header and return a full `200` response (to avoid mixed-version
-    bytes).
+  - If implementing `If-Range`, follow RFC 9110:
+    - `If-Range` may be an entity-tag (preferred) **or** an HTTP-date.
+    - If the validator doesn't match the current image version, ignore the `Range` header and return a full `200`
+      response (to avoid mixed-version bytes).
+    - When evaluating the HTTP-date form, compare at 1-second granularity (HTTP date resolution) to avoid false
+      mismatches with sub-second mtimes.
 
 ### Required CORS headers (including `Range`)
 

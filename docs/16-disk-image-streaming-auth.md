@@ -274,11 +274,17 @@ Servers SHOULD return a strong `ETag` that changes whenever the disk image bytes
 Clients MAY use:
 
 * `If-Range: "<etag>"` with a `Range` request.
+* (Optional) `If-Range: <http-date>` when a `Last-Modified` value is available.
 
 Behavior:
 
 * If `If-Range` matches the current ETag, return `206` for the requested range.
-* If it does not match, return `200 OK` with the full content (or `412 Precondition Failed` if your API prefers; if using `412`, document it and keep client code consistent).
+* If it does not match (or the validator is invalid/weak), return `200 OK` with the full content (or `412 Precondition Failed` if your API prefers; if using `412`, document it and keep client code consistent).
+
+Notes:
+
+* The entity-tag form is strongly recommended for disk streaming (it allows safe resume even when filesystem/object-store mtimes are missing or coarse).
+* The HTTP-date form compares at 1-second granularity (HTTP date resolution). Servers should compare `Last-Modified` and `If-Range` at second granularity to avoid false mismatches when the underlying store provides sub-second mtimes.
 
 ### Compression must be disabled
 
