@@ -1141,7 +1141,10 @@ describe("io/bus/pci", () => {
         },
       });
 
-    // Snapshot-time bus: xHCI at its canonical BDF (00:0d.0).
+    const canonical = makeXhci().bdf;
+    const movedDevice = canonical.device === 31 ? 0 : canonical.device + 1;
+
+    // Snapshot-time bus: xHCI at its canonical BDF.
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
     const pciBus = new PciBus(portBus, mmioBus);
@@ -1151,8 +1154,8 @@ describe("io/bus/pci", () => {
     const cfg = makeCfgIo(portBus);
 
     // Guest programs BAR0 + enables MEM decoding.
-    cfg.writeU32(0x0d, 0, 0x10, 0x9000_0000);
-    cfg.writeU16(0x0d, 0, 0x04, 0x0002);
+    cfg.writeU32(canonical.device, canonical.function, 0x10, 0x9000_0000);
+    cfg.writeU16(canonical.device, canonical.function, 0x04, 0x0002);
 
     const snapshot = pciBus.saveState();
 
@@ -1166,8 +1169,8 @@ describe("io/bus/pci", () => {
 
     const cfg2 = makeCfgIo(portBus2);
     // Avoid JS bitwise ops: BAR bases may exceed 2^31 and would be sign-extended.
-    expect(BigInt(cfg2.readU32(0x0d, 0, 0x10)) & 0xffff_fff0n).toBe(0x9000_0000n);
-    expect(cfg2.readU16(0x0d, 0, 0x04)).toBe(0x0002);
+    expect(BigInt(cfg2.readU32(canonical.device, canonical.function, 0x10)) & 0xffff_fff0n).toBe(0x9000_0000n);
+    expect(cfg2.readU16(canonical.device, canonical.function, 0x04)).toBe(0x0002);
 
     // Identity mismatch at same BDF => must ignore snapshot entry.
     const portBus3 = new PortIoBus();
@@ -1175,22 +1178,22 @@ describe("io/bus/pci", () => {
     const pciBus3 = new PciBus(portBus3, mmioBus3);
     pciBus3.registerToPortBus();
     pciBus3.registerDevice(
-      { name: "not-xhci", vendorId: 0x1234, deviceId: 0x5678, classCode: 0, bdf: { bus: 0, device: 0x0d, function: 0 } },
-      { device: 0x0d, function: 0 },
+      { name: "not-xhci", vendorId: 0x1234, deviceId: 0x5678, classCode: 0, bdf: { ...canonical } },
+      { device: canonical.device, function: canonical.function },
     );
     pciBus3.loadState(snapshot);
     const cfg3 = makeCfgIo(portBus3);
-    expect(cfg3.readU16(0x0d, 0, 0x04)).toBe(0x0000);
+    expect(cfg3.readU16(canonical.device, canonical.function, 0x04)).toBe(0x0000);
 
     // BDF mismatch (xhci moved) => snapshot entry must be ignored.
     const portBus4 = new PortIoBus();
     const mmioBus4 = new MmioBus();
     const pciBus4 = new PciBus(portBus4, mmioBus4);
     pciBus4.registerToPortBus();
-    pciBus4.registerDevice(makeXhci(), { device: 0x0e, function: 0 });
+    pciBus4.registerDevice(makeXhci(), { device: movedDevice, function: canonical.function });
     pciBus4.loadState(snapshot);
     const cfg4 = makeCfgIo(portBus4);
-    expect(BigInt(cfg4.readU32(0x0e, 0, 0x10)) & 0xffff_fff0n).not.toBe(0x9000_0000n);
+    expect(BigInt(cfg4.readU32(movedDevice, canonical.function, 0x10)) & 0xffff_fff0n).not.toBe(0x9000_0000n);
   });
 
   it("restores without transient BAR overlap when devices are registered in a different order", () => {
