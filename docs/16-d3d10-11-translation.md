@@ -936,6 +936,15 @@ If you change the required scratch layouts/bindings, update the allocator usage 
       overflow flags).
     - Usage: `STORAGE` (atomics) and optionally `COPY_SRC` for debugging readback.
 
+6. **Tessellation patch state (`tess_patch_state`)**
+    - Purpose: per-patch metadata produced by HS patch-constant pass and consumed by tessellator/DS
+      passes:
+      - computed tessellation level(s),
+      - allocated output ranges within `tess_out_vertices` / `tess_out_indices`.
+    - Usage: `STORAGE` (read_write).
+    - Layout: `array<TessPatchState>` (see below), 32 bytes per entry.
+    - Entry count: `patch_count * instance_count`.
+
 **GS output sizing: strip → list**
 
 Geometry shaders typically declare output topology as `line_strip` or `triangle_strip`. WebGPU can
