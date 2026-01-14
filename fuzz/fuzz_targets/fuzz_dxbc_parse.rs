@@ -241,6 +241,101 @@ fn build_patched_signature_chunk(fourcc: FourCC, seed: &[u8]) -> Vec<u8> {
     out
 }
 
+fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
+    // Minimal, self-consistent RDEF chunk payload (not including the DXBC chunk header).
+    //
+    // Keep it small but structurally valid so fuzzing reaches deeper reflection parsing paths.
+    let mut u = Unstructured::new(seed);
+    let name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+    let header_len = 28usize;
+    let entry_len = 32usize;
+    let name_off = header_len + entry_len;
+    let total_len = name_off + name_len + 1;
+    let mut out = vec![0u8; total_len];
+
+    // Header fields (u32):
+    // cb_count, cb_offset
+    out[0..4].copy_from_slice(&0u32.to_le_bytes());
+    out[4..8].copy_from_slice(&0u32.to_le_bytes());
+    // resource_count=1, resource_offset=header_len
+    out[8..12].copy_from_slice(&1u32.to_le_bytes());
+    out[12..16].copy_from_slice(&(header_len as u32).to_le_bytes());
+    // target, flags, creator_offset
+    out[16..20].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
+    out[20..24].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
+    out[24..28].copy_from_slice(&0u32.to_le_bytes());
+
+    // Single resource binding entry.
+    let entry = header_len;
+    out[entry..entry + 4].copy_from_slice(&(name_off as u32).to_le_bytes()); // name_offset
+    out[entry + 4..entry + 8].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // input_type
+    out[entry + 8..entry + 12].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // return_type
+    out[entry + 12..entry + 16].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // dimension
+    out[entry + 16..entry + 20].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // sample_count
+    out[entry + 20..entry + 24].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // bind_point
+    // bind_count: keep non-zero and small
+    out[entry + 24..entry + 28].copy_from_slice(&u32::from(u.arbitrary::<u8>().unwrap_or(1)).to_le_bytes());
+    out[entry + 28..entry + 32].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // flags
+
+    // Name string (must be valid UTF-8).
+    for i in 0..name_len {
+        let b = u.arbitrary::<u8>().unwrap_or(0);
+        out[name_off + i] = b'A' + (b % 26);
+    }
+    out[name_off + name_len] = 0;
+
+    out
+}
+
+fn build_patched_ctab_chunk(seed: &[u8]) -> Vec<u8> {
+    // Minimal, self-consistent CTAB chunk payload (not including the DXBC chunk header).
+    //
+    // Keep it small but structurally valid so fuzzing reaches deeper constant table parsing paths.
+    let mut u = Unstructured::new(seed);
+    let target_str: &[u8] = if u.arbitrary::<u8>().unwrap_or(0) & 1 == 0 {
+        b"ps_2_0"
+    } else {
+        b"vs_3_0"
+    };
+    let name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+    let header_len = 28usize;
+    let entry_len = 20usize;
+    let target_off = header_len + entry_len;
+    let name_off = target_off + target_str.len() + 1;
+    let total_len = name_off + name_len + 1;
+    let mut out = vec![0u8; total_len];
+
+    // Header.
+    out[0..4].copy_from_slice(&0u32.to_le_bytes()); // size (ignored)
+    out[4..8].copy_from_slice(&0u32.to_le_bytes()); // creator_offset
+    out[8..12].copy_from_slice(&0u32.to_le_bytes()); // version
+    out[12..16].copy_from_slice(&1u32.to_le_bytes()); // constant_count
+    out[16..20].copy_from_slice(&(header_len as u32).to_le_bytes()); // constant_offset
+    out[20..24].copy_from_slice(&0u32.to_le_bytes()); // flags
+    out[24..28].copy_from_slice(&(target_off as u32).to_le_bytes()); // target_offset
+
+    // Single constant entry.
+    let entry = header_len;
+    out[entry..entry + 4].copy_from_slice(&(name_off as u32).to_le_bytes()); // name_offset
+    let register_index: u16 = u.arbitrary::<u16>().unwrap_or(0);
+    let register_count: u16 = (u.arbitrary::<u8>().unwrap_or(1) as u16).max(1);
+    out[entry + 6..entry + 8].copy_from_slice(&register_index.to_le_bytes());
+    out[entry + 8..entry + 10].copy_from_slice(&register_count.to_le_bytes());
+
+    // Target string + NUL.
+    out[target_off..target_off + target_str.len()].copy_from_slice(target_str);
+    out[target_off + target_str.len()] = 0;
+
+    // Name string + NUL (ASCII).
+    for i in 0..name_len {
+        let b = u.arbitrary::<u8>().unwrap_or(0);
+        out[name_off + i] = b'A' + (b % 26);
+    }
+    out[name_off + name_len] = 0;
+
+    out
+}
+
 fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     let mut u = Unstructured::new(input);
     let selector = u.arbitrary::<u8>().unwrap_or(0);
@@ -280,7 +375,10 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     let psgn_payload = build_patched_signature_chunk(psgn_fourcc, psgn_seed);
     let pcsg_payload = build_patched_signature_chunk(pcsg_fourcc, pcsg_seed);
     let shader_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SHADER_BYTES);
-    let rdef_bytes = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
+    let rdef_seed = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
+    let ctab_seed = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
+    let rdef_payload = build_patched_rdef_chunk(rdef_seed);
+    let ctab_payload = build_patched_ctab_chunk(ctab_seed);
     let stat_bytes = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
 
     let chunks: &[(FourCC, &[u8])] = &[
@@ -289,7 +387,8 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
         (psgn_fourcc, &psgn_payload),
         (pcsg_fourcc, &pcsg_payload),
         (shader_fourcc, shader_bytes),
-        (FourCC(*b"RDEF"), rdef_bytes),
+        (FourCC(*b"RDEF"), &rdef_payload),
+        (FourCC(*b"CTAB"), &ctab_payload),
         (FourCC(*b"STAT"), stat_bytes),
     ];
 
