@@ -3831,7 +3831,9 @@ mod tests {
             "expected DrawIndexedIndirectArgs (out_indirect) to appear before counters in GsPrepassState:\n{wgsl}"
         );
         assert!(
-            wgsl.contains("@group(0) @binding(2) var<storage, read_write> out_state: GsPrepassState;"),
+            wgsl.contains(
+                "@group(0) @binding(2) var<storage, read_write> out_state: GsPrepassState;"
+            ),
             "expected out_state binding at @group(0) @binding(2):\n{wgsl}"
         );
     }

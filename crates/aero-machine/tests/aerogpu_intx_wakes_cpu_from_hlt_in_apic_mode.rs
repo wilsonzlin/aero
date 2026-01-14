@@ -234,4 +234,3 @@ fn aerogpu_intx_wakes_cpu_from_hlt_in_apic_mode() {
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
-

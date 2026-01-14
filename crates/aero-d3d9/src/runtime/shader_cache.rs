@@ -202,7 +202,6 @@ pub struct ShaderCache {
     persistent: Option<JsPersistentGpuCache>,
 }
 
-
 impl ShaderCache {
     pub fn new() -> Self {
         Self {

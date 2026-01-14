@@ -222,8 +222,14 @@ fn decodes_and_translates_f32tof16_and_f16tof32() {
     assert_eq!(program.stage, ShaderStage::Pixel);
 
     let module = decode_program(&program).expect("SM4 decode");
-    assert!(matches!(module.instructions.get(0), Some(Sm4Inst::F32ToF16 { .. })));
-    assert!(matches!(module.instructions.get(1), Some(Sm4Inst::F16ToF32 { .. })));
+    assert!(matches!(
+        module.instructions.get(0),
+        Some(Sm4Inst::F32ToF16 { .. })
+    ));
+    assert!(matches!(
+        module.instructions.get(1),
+        Some(Sm4Inst::F16ToF32 { .. })
+    ));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");

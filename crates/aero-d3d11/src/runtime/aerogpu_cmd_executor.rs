@@ -13571,10 +13571,8 @@ impl AerogpuD3d11Executor {
         let group_count_y = read_u32_le(cmd_bytes, 12)?;
         let group_count_z = read_u32_le(cmd_bytes, 16)?;
         let stage_ex = read_u32_le(cmd_bytes, 20)?;
-        let pass_stage =
-            ShaderStage::from_aerogpu_u32_with_stage_ex(2, stage_ex).ok_or_else(|| {
-                anyhow!("DISPATCH: unknown stage_ex={stage_ex} (expected 0/2/3/4/5)")
-            })?;
+        let pass_stage = ShaderStage::from_aerogpu_u32_with_stage_ex(2, stage_ex)
+            .ok_or_else(|| anyhow!("DISPATCH: unknown stage_ex={stage_ex} (expected 0/2/3/4/5)"))?;
 
         // D3D11 treats any zero group count as a no-op dispatch.
         if group_count_x == 0 || group_count_y == 0 || group_count_z == 0 {
@@ -19640,8 +19638,13 @@ fn hs_main() {{
             // `stage_ex=3` selects the hull shader stage for compute-based execution.
             dispatch_cmd.extend_from_slice(&3u32.to_le_bytes());
             assert_eq!(dispatch_cmd.len(), 24);
-            exec.exec_dispatch(&mut encoder, dispatch_cmd.as_slice(), &allocs, &mut guest_mem)
-                .expect("DISPATCH should succeed");
+            exec.exec_dispatch(
+                &mut encoder,
+                dispatch_cmd.as_slice(),
+                &allocs,
+                &mut guest_mem,
+            )
+            .expect("DISPATCH should succeed");
             let out_buf = &exec.resources.buffers.get(&OUT).unwrap().buffer;
             encoder.copy_buffer_to_buffer(out_buf, 0, &staging, 0, 4);
             exec.queue.submit([encoder.finish()]);
