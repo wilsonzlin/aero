@@ -169,6 +169,10 @@ pub const KEY_STOPCD: u16 = 166;
 // not provide infinite buffering; dropping oldest events is preferable to unbounded growth.
 const MAX_PENDING_EVENTS: usize = 4096;
 
+// Host-side safety: cap how much statusq payload we will parse per chain. The spec only requires
+// consuming and completing statusq buffers; parsing is a best-effort diagnostic feature.
+const MAX_STATUSQ_BYTES: usize = 4096;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VirtioInputDeviceKind {
     Keyboard,
@@ -827,6 +831,7 @@ impl VirtioInput {
         }
 
         let mut staged_mask = self.leds_mask;
+        let mut budget = MAX_STATUSQ_BYTES;
 
         let mut pending = [0u8; 8];
         let mut pending_len = 0usize;
@@ -840,7 +845,10 @@ impl VirtioInput {
             let mut scratch = [0u8; 256];
 
             while remaining != 0 {
-                let take = remaining.min(scratch.len());
+                if budget == 0 {
+                    break 'descs;
+                }
+                let take = remaining.min(scratch.len()).min(budget);
                 if mem.read(addr, &mut scratch[..take]).is_err() {
                     break 'descs;
                 }
@@ -877,6 +885,7 @@ impl VirtioInput {
                     None => break 'descs,
                 };
                 remaining -= take;
+                budget -= take;
             }
         }
 

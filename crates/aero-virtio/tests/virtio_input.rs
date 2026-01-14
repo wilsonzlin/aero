@@ -822,6 +822,99 @@ fn virtio_input_statusq_invalid_descriptor_memory_is_ignored() {
 }
 
 #[test]
+fn virtio_input_statusq_led_parsing_is_bounded() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
+    let caps = parse_caps(&mut dev);
+    assert_ne!(caps.notify, 0);
+    assert_ne!(caps.notify_mult, 0);
+
+    let mut mem = GuestRam::new(0x10000);
+
+    // Feature negotiation (mirrors the other statusq tests).
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure status queue 1 with a single oversized buffer. The device model should limit how
+    // much it parses from statusq for safety. MAX_STATUSQ_BYTES is currently 4096, so place a LED
+    // event exactly at that boundary and ensure it is ignored.
+    let desc = 0x5000;
+    let avail = 0x6000;
+    let used = 0x7000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    let buf = 0x8000;
+    let mut payload = vec![0u8; 5000];
+    payload[0..8].copy_from_slice(&input_event_bytes(EV_LED, LED_CAPSL, 1));
+    payload[8..16].copy_from_slice(&input_event_bytes(EV_SYN, SYN_REPORT, 0));
+
+    // Beyond the parsing budget.
+    payload[4096..4104].copy_from_slice(&input_event_bytes(EV_LED, LED_NUML, 1));
+    payload[4104..4112].copy_from_slice(&input_event_bytes(EV_SYN, SYN_REPORT, 0));
+
+    mem.write(buf, &payload).unwrap();
+    write_desc(&mut mem, desc, 0, buf, payload.len() as u32, 0, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    let len = read_u32_le(&mem, used + 4 + 4).unwrap();
+    assert_eq!(len, 0);
+
+    // Only CapsLock should be applied (bit1). NumLock event is beyond the parsing budget.
+    let leds = dev.device_mut::<VirtioInput>().unwrap().leds_mask();
+    assert_eq!(leds, 0b00010);
+}
+
+#[test]
 fn virtio_input_statusq_mouse_ignores_led_events_but_consumes_buffers() {
     let input = VirtioInput::new(VirtioInputDeviceKind::Mouse);
     let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
