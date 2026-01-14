@@ -85,9 +85,17 @@ async fn run_layout_pass_with_hs_factors_buffer(
         mapped_at_creation: false,
     });
 
+    // `wgsl_tessellation_layout_pass` optionally includes debug counters when the
+    // `tessellation_debug_counters` feature is enabled. In the default configuration it writes
+    // only a single `u32` flag.
+    let out_debug_size: u64 = if cfg!(feature = "tessellation_debug_counters") {
+        16
+    } else {
+        4
+    };
     let out_debug_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("tess_layout out_debug"),
-        size: 4,
+        size: out_debug_size,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
@@ -169,7 +177,7 @@ async fn run_layout_pass_with_hs_factors_buffer(
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(4),
+                    min_binding_size: wgpu::BufferSize::new(out_debug_size),
                 },
                 count: None,
             },
@@ -232,7 +240,7 @@ async fn run_layout_pass_with_hs_factors_buffer(
     });
     let debug_staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("tess_layout debug readback"),
-        size: 4,
+        size: out_debug_size,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -251,7 +259,7 @@ async fn run_layout_pass_with_hs_factors_buffer(
     }
     encoder.copy_buffer_to_buffer(&out_meta_buf, 0, &meta_staging, 0, meta_total_size);
     encoder.copy_buffer_to_buffer(&out_args_buf, 0, &args_staging, 0, args_size);
-    encoder.copy_buffer_to_buffer(&out_debug_buf, 0, &debug_staging, 0, 4);
+    encoder.copy_buffer_to_buffer(&out_debug_buf, 0, &debug_staging, 0, out_debug_size);
 
     queue.submit([encoder.finish()]);
 

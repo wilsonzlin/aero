@@ -292,6 +292,8 @@ impl TessellationRuntime {
                 ))?;
 
         let device_max_buffer_size = device.limits().max_buffer_size;
+        // The layout pass always writes a debug flag (`u32`). When debug counters are enabled, the
+        // struct expands to 16 bytes.
         let debug_counters_bytes: u64 = if cfg!(any(test, feature = "tessellation_debug_counters"))
         {
             16
