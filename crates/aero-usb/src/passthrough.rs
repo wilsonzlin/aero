@@ -785,6 +785,9 @@ impl UsbPassthroughDevice {
 
         // Request finished (success or failure).
         let inflight = self.control_inflight.take().expect("inflight exists");
+        // Defensive: if the host somehow produced a completion without dequeuing the corresponding
+        // action, ensure the stale action cannot be executed later.
+        self.drop_queued_action(inflight.id);
 
         if req_dir_in {
             Self::map_in_result(inflight.setup, result)
@@ -818,6 +821,9 @@ impl UsbPassthroughDevice {
             let inflight_len = inflight.len;
             if let Some(result) = self.take_result(inflight_id) {
                 self.ep_inflight.remove(&endpoint);
+                // Defensive: if a completion arrives before the host dequeues the action, drop the
+                // queued action to prevent executing a stale transfer later.
+                self.drop_queued_action(inflight_id);
                 return match result {
                     UsbHostResult::OkIn { mut data } => {
                         if data.len() > inflight_len {
@@ -864,6 +870,9 @@ impl UsbPassthroughDevice {
             let expected_len = inflight.len;
             if let Some(result) = self.take_result(inflight_id) {
                 self.ep_inflight.remove(&endpoint);
+                // Defensive: if a completion arrives before the host dequeues the action, drop the
+                // queued action to prevent executing a stale transfer later.
+                self.drop_queued_action(inflight_id);
                 return match result {
                     UsbHostResult::OkOut { bytes_written } => {
                         if bytes_written != expected_len {
@@ -1115,6 +1124,65 @@ mod tests {
         });
 
         assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Timeout);
+    }
+
+    #[test]
+    fn completion_consumption_drops_stale_queued_action_for_bulk_in() {
+        let mut dev = UsbPassthroughDevice::new();
+
+        assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+        let id = dev.ep_inflight.get(&0x81).expect("ep inflight").id;
+
+        // Push a completion without dequeuing the action. This should still be handled safely.
+        dev.push_completion(UsbHostCompletion::BulkIn {
+            id,
+            result: UsbHostCompletionIn::Success { data: vec![1, 2] },
+        });
+
+        assert_eq!(
+            dev.handle_in_transfer(0x81, 8),
+            UsbInResult::Data(vec![1, 2])
+        );
+        assert!(
+            dev.pop_action().is_none(),
+            "completion consumption should drop any stale queued action"
+        );
+    }
+
+    #[test]
+    fn completion_consumption_drops_stale_queued_action_for_control() {
+        let mut dev = UsbPassthroughDevice::new();
+        let setup = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0100,
+            w_index: 0,
+            w_length: 2,
+        };
+
+        assert_eq!(
+            dev.handle_control_request(setup, None),
+            ControlResponse::Nak
+        );
+        let id = dev
+            .pending_summary()
+            .inflight_control
+            .expect("expected inflight control");
+
+        // Push a completion without dequeuing the action.
+        dev.push_completion(UsbHostCompletion::ControlIn {
+            id,
+            result: UsbHostCompletionIn::Success { data: vec![9, 8] },
+        });
+
+        assert_eq!(
+            dev.handle_control_request(setup, None),
+            ControlResponse::Data(vec![9, 8])
+        );
+        assert!(
+            dev.pop_action().is_none(),
+            "completion consumption should drop any stale queued action"
+        );
     }
 
     #[test]
