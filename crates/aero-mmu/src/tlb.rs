@@ -136,6 +136,7 @@ impl TlbSet {
         }
     }
 
+    #[inline]
     fn lookup(&self, vaddr: u64, pcid: u16) -> Option<&TlbEntry> {
         // Try larger pages first so we don't miss a large-page entry due to
         // indexing differences.
@@ -269,6 +270,7 @@ impl TlbSet {
         }
     }
 
+    #[inline]
     fn set_dirty(&mut self, vaddr: u64, pcid: u16) -> bool {
         for page_size in [
             PageSize::Size1G,
