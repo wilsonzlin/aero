@@ -111,7 +111,7 @@ Test pointers:
     - `0xB0000..0xBFFFF` remains `VRAM[0x10000..0x1FFFF]`
 - [x] BIOS VBE LFB base set into BAR1: `PhysBasePtr = BAR1_BASE + VBE_LFB_OFFSET` (`VBE_LFB_OFFSET = 0x40000`, protocol: `AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`)
 - [x] host-side presentation fallback when VGA is disabled:
-  - WDDM scanout0 if claimed (`SCANOUT0_ENABLE`), otherwise
+  - WDDM scanout0 if claimed (valid `SCANOUT0_*` config + `SCANOUT0_ENABLE=1`; if later disabled, the display is blank but WDDM ownership remains sticky), otherwise
   - VBE LFB (from BIOS state), otherwise
   - VGA mode 13h (320×200×256) (from BIOS state), otherwise
   - text mode (scan `0xB8000`)
@@ -131,7 +131,7 @@ Test pointers:
 
 ### Missing / still required (boot → WDDM)
 
-- [~] Boot framebuffer → WDDM scanout handoff: host-facing `Machine::display_present` prefers WDDM scanout once `SCANOUT0_ENABLE` is written, but this path still needs end-to-end validation in the browser runtime and shared-scanout publication (see Section 7).
+- [~] Boot framebuffer → WDDM scanout handoff: host-facing `Machine::display_present` prefers WDDM scanout once scanout0 is claimed by a valid configuration (and enabled), but this path still needs end-to-end validation in the browser runtime and shared-scanout publication (see Section 7).
   - Code: [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (`display_present`, `display_present_aerogpu_scanout`)
   - Contract/design: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md)
 
