@@ -215,6 +215,53 @@ describe("runtime/coordinator", () => {
     vi.useRealTimers();
   });
 
+  it("preserves the machine CPU worker entrypoint across restart()", () => {
+    const coordinator = new WorkerCoordinator();
+    (coordinator as any).eventLoop = vi.fn(async () => {});
+    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+
+    coordinator.start(
+      {
+        vmRuntime: "machine",
+        guestMemoryMiB: 1,
+        vramMiB: 1,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage: null,
+        logLevel: "info",
+      },
+      {
+        platformFeatures: {
+          crossOriginIsolated: true,
+          sharedArrayBuffer: true,
+          wasmSimd: true,
+          wasmThreads: true,
+          webgpu: true,
+          webusb: false,
+          webhid: false,
+          webgl2: true,
+          opfs: true,
+          opfsSyncAccessHandle: false,
+          audioWorklet: true,
+          offscreenCanvas: true,
+          jit_dynamic_wasm: true,
+        },
+      },
+    );
+
+    const cpuWorkerBefore = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(String(cpuWorkerBefore.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.restart();
+
+    const cpuWorkerAfter = (coordinator as any).workers.cpu.worker as MockWorker;
+    expect(cpuWorkerAfter).not.toBe(cpuWorkerBefore);
+    expect(String(cpuWorkerAfter.specifier)).toMatch(/machine_cpu\.worker\.ts/);
+
+    coordinator.stop();
+  });
+
   it("preserves the machine CPU worker entrypoint across VM reset (shared memory preserved)", () => {
     const coordinator = new WorkerCoordinator();
 

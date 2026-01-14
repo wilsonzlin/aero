@@ -166,7 +166,7 @@ the repo includes a small demo harness:
   - the repo-root harness (`src/main.ts`, used by Playwright at `http://127.0.0.1:4173/`), or
   - the production host (`web/src/main.ts`).
 - **Implementation**:
-  - The CPU worker (`web/src/workers/cpu.worker.ts`) instantiates the WASM export `HdaPlaybackDemo` and keeps the AudioWorklet ring buffer ~200ms full.
+  - In `vmRuntime=legacy`, the CPU worker (`web/src/workers/cpu.worker.ts`) instantiates the WASM export `HdaPlaybackDemo` and keeps the AudioWorklet ring buffer ~200ms full.
   - The demo programs a looping guest PCM buffer + BDL and uses the *real* HDA device model (`aero_audio::hda::HdaController`) to generate output.
 - **E2E test**: `tests/e2e/audio-worklet-hda-demo.spec.ts` asserts that:
    - `AudioContext` reaches `running`,
