@@ -27,9 +27,9 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   out-of-process submission bridge),
   and `Machine::display_present()`
   will prefer the WDDM-programmed scanout framebuffer once scanout0 has been **claimed** (valid config +
-  `SCANOUT0_ENABLE=1`). After claim, WDDM scanout remains authoritative until the guest disables
-  scanout (`SCANOUT0_ENABLE=0`) or the VM resets. Writing `SCANOUT0_ENABLE=0` releases WDDM ownership
-  and allows falling back to the legacy VGA/VBE sources.
+  `SCANOUT0_ENABLE=1`). After claim, WDDM scanout remains authoritative until the VM resets. Writing
+  `SCANOUT0_ENABLE=0` acts as a visibility toggle (blanking) but does not release WDDM ownership
+  (legacy output remains suppressed until reset).
 
   Concretely:
 
@@ -81,7 +81,10 @@ At all times, the browser canvas renders from exactly one active scanout source:
 ```text
 Legacy VGA text / VBE LFB  ──(WDDM claims scanout)──▶  WDDM scanout (enabled)
             ▲                                         │
-            └──(SCANOUT0_ENABLE=0 or VM reset)────────┘
+            │                                         ├──(SCANOUT0_ENABLE=0)──▶  WDDM scanout (disabled / blank)
+            │                                         │                            │
+            │                                         └──(SCANOUT0_ENABLE=1)◀─────┘
+            └──────────────────────(VM reset)─────────┘
 ```
 
 Implementation-wise, AeroGPU owns **both**:
@@ -401,8 +404,8 @@ After the first successful WDDM scanout enable (`SCANOUT0_ENABLE=1`):
 
 - Legacy VGA/VBE ports and memory windows may continue to accept reads/writes for compatibility.
 - The emulator presentation must ignore legacy sources once WDDM has claimed scanout.
-- If WDDM disables scanout (`SCANOUT0_ENABLE=0`), it releases scanout ownership so the host may fall
-  back to legacy output.
+- If WDDM disables scanout (`SCANOUT0_ENABLE=0`), it blanks the display but does not release
+  ownership: legacy output remains suppressed until VM reset.
 - VM reset always releases WDDM ownership and reverts to legacy scanout.
 
 This prevents legacy writes (e.g. an errant `INT 10h`) from stealing the primary display after the desktop is up.

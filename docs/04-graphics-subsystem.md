@@ -36,7 +36,7 @@ Canonical machine GPU device modes (today):
     feature-gated in-process wgpu backend; implementation: `crates/aero-machine/src/aerogpu.rs`).
 - On the Rust side, the host can call `Machine::display_present()` to update a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`).
   - In AeroGPU mode (no standalone VGA device model), `display_present()` prefers the WDDM scanout0 framebuffer once it has been claimed by a valid scanout config; otherwise it falls back to BIOS VBE LFB or BIOS text mode (see `Machine::display_present` in `crates/aero-machine/src/lib.rs`).
-      - Once WDDM scanout is claimed, it remains authoritative while `SCANOUT0_ENABLE=1`. Writing `SCANOUT0_ENABLE=0` releases WDDM ownership and allows falling back to legacy output (reset also reverts to legacy).
+      - Once WDDM scanout is claimed, it remains authoritative while `SCANOUT0_ENABLE=1`. Writing `SCANOUT0_ENABLE=0` blanks presentation but does not release WDDM ownership (legacy output remains suppressed until reset).
       - When scanout is claimed but cannot be presented (e.g. PCI `COMMAND.BME=0`), `display_present()` clears the cached framebuffer instead of falling back to legacy output.
   - `aero-machine` does not execute the AeroGPU command stream in-process by default; browser
     runtimes can enable the submission bridge (`Machine::aerogpu_drain_submissions` /
@@ -270,8 +270,8 @@ Code pointers:
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
   - `Machine::set_scanout_state()` installs the shared descriptor.
   - `Machine::reset()` publishes `LEGACY_TEXT` on reset.
-  - `Machine::handle_bios_interrupt()` publishes legacy scanout transitions (`LEGACY_TEXT` ↔ `LEGACY_VBE_LFB`) on BIOS INT 10h mode changes, while refusing to let legacy INT 10h steal scanout while WDDM is active (until the guest disables scanout via `SCANOUT0_ENABLE=0` or the VM resets).
-  - `Machine::process_aerogpu()` publishes updates derived from AeroGPU scanout0 registers, including reverting the shared scanout descriptor back to the legacy BIOS source when the guest clears `SCANOUT0_ENABLE`.
+  - `Machine::handle_bios_interrupt()` publishes legacy scanout transitions (`LEGACY_TEXT` ↔ `LEGACY_VBE_LFB`) on BIOS INT 10h mode changes, while refusing to let legacy INT 10h steal scanout while WDDM is active (until the VM resets).
+  - `Machine::process_aerogpu()` publishes updates derived from AeroGPU scanout0 registers, including publishing a disabled WDDM scanout descriptor when the guest clears `SCANOUT0_ENABLE` (visibility toggle) so legacy scanout does not steal ownership back.
 
 Note: `ScanoutState` is also the intended mechanism for a device model to describe a guest-memory scanout buffer (base paddr + pitch etc). The full AeroGPU/WDDM scanout plumbing is owned elsewhere; see “AeroGPU status” below.
 
