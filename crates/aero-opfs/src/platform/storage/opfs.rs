@@ -140,7 +140,10 @@ mod wasm {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use js_sys::{Array, Function, Reflect};
+        use js_sys::{Array, Function, Object, Promise, Reflect};
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use wasm_bindgen::closure::Closure;
         use wasm_bindgen::JsCast;
         use wasm_bindgen::JsValue;
         use wasm_bindgen_test::wasm_bindgen_test;
@@ -207,6 +210,78 @@ mod wasm {
                 disk_error_from_js(err),
                 DiskError::Io(msg) if msg == "boom"
             ));
+        }
+
+        fn unique_path(prefix: &str) -> String {
+            let now = js_sys::Date::now() as u64;
+            format!("tests/{prefix}-{now}.tmp")
+        }
+
+        #[wasm_bindgen_test(async)]
+        async fn create_writable_stream_falls_back_when_options_bag_rejected() {
+            if !is_opfs_supported() {
+                return;
+            }
+
+            let real = match open_file(&unique_path("create-writable-fallback"), true).await {
+                Ok(f) => f,
+                Err(DiskError::NotSupported(_)) | Err(DiskError::BackendUnavailable) => return,
+                Err(e) => panic!("open_file failed: {e:?}"),
+            };
+
+            let create_writable = Reflect::get(real.as_ref(), &JsValue::from_str("createWritable"))
+                .expect("FileSystemFileHandle.createWritable should exist");
+            let create_writable: Function = create_writable
+                .dyn_into()
+                .expect("FileSystemFileHandle.createWritable should be a function");
+
+            let called_with_opts = Rc::new(Cell::new(false));
+            let called_no_args = Rc::new(Cell::new(false));
+
+            // Wrap a real file handle to simulate an environment where
+            // `createWritable({ keepExistingData })` throws, but `createWritable()` works.
+            let wrapper = Object::new();
+            let real_clone = real.clone();
+            let create_writable_clone = create_writable.clone();
+            let called_with_opts_c = called_with_opts.clone();
+            let called_no_args_c = called_no_args.clone();
+
+            let closure = Closure::wrap(Box::new(move |opts: JsValue| -> Result<Promise, JsValue> {
+                if opts.is_undefined() {
+                    called_no_args_c.set(true);
+                    let promise = create_writable_clone.call0(real_clone.as_ref())?;
+                    promise.dyn_into::<Promise>()
+                } else {
+                    called_with_opts_c.set(true);
+                    Err(js_sys::TypeError::new("options bag unsupported").into())
+                }
+            }) as Box<dyn FnMut(JsValue) -> Result<Promise, JsValue>>);
+
+            Reflect::set(
+                &wrapper,
+                &JsValue::from_str("createWritable"),
+                closure.as_ref(),
+            )
+            .expect("set wrapper.createWritable");
+            let wrapper: FileSystemFileHandle = wrapper.unchecked_into();
+
+            let stream = create_writable_stream(&wrapper, true)
+                .await
+                .expect("create_writable_stream should fall back to createWritable()");
+
+            assert!(
+                called_with_opts.get(),
+                "expected createWritable(options) attempt"
+            );
+            assert!(called_no_args.get(), "expected createWritable() fallback");
+
+            // Close the stream so the file isn't left locked for subsequent tests.
+            writable_close(&stream)
+                .await
+                .expect("writable_close should succeed");
+
+            // Keep the closure alive until after the stream has been created/closed.
+            drop(closure);
         }
     }
 
