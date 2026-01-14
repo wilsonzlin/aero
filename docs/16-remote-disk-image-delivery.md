@@ -455,7 +455,8 @@ You can implement this with CloudFront “Policies” (console) or in IaC.
 
 - Ensure responses include:
   - `Access-Control-Allow-Origin` (if cross-origin; otherwise omit)
-  - `Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length, Content-Encoding, ETag, Last-Modified`
+  - `Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length, ETag, Content-Encoding`
+    - Note: `Last-Modified` is CORS-safelisted and does not need explicit exposure.
   - `Access-Control-Max-Age` for preflights (if applicable)
 - Add security headers as appropriate for your app.
 

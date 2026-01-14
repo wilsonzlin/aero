@@ -134,7 +134,8 @@ Ensure:
 
 - `Access-Control-Allow-Methods: GET, HEAD, OPTIONS`
 - `Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization` (include only what you use)
-- `Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified`
+- `Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding`
+  - Note: `Last-Modified` is a CORS-safelisted response header and is exposed to JS by default (no `Expose-Headers` needed).
 
 If using S3 as origin, configure the bucket CORS rules accordingly. If using a custom origin, ensure OPTIONS is handled.
 

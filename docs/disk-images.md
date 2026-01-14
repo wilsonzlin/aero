@@ -67,7 +67,7 @@ Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since
 
 ```
 Access-Control-Allow-Origin: https://your-aero-origin.example
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 ```
 
 Notes:
@@ -75,6 +75,7 @@ Notes:
 - `Access-Control-Allow-Origin: *` is acceptable for public, non-credentialed access.
 - `Content-Range` is not a “simple” header, so it must be **exposed** if the UI needs to read it.
   - This matters for HTTP Range mode. Chunked mode does not read `Content-Range`.
+- `Last-Modified` is a CORS-safelisted response header and is exposed to JS by default (no `Expose-Headers` needed).
 
 ## Streaming images: caching behavior
 
