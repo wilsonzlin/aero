@@ -155,12 +155,20 @@ When running against the **versioned** AGPU device, treat BAR0 as the canonical 
    - Enable vblank IRQs via `AEROGPU_MMIO_REG_IRQ_ENABLE` (bit `AEROGPU_IRQ_SCANOUT_VBLANK`).
    - Poll status via `AEROGPU_MMIO_REG_IRQ_STATUS` and ack IRQs via `AEROGPU_MMIO_REG_IRQ_ACK`.
    - Consume timing information from:
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO`/`HI`
+      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO`/`HI`
+      - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
    - Win7/WDDM note: dxgkrnl gates vblank delivery via `DxgkDdiControlInterrupt` using
      `DXGK_INTERRUPT_TYPE_CRTC_VSYNC`. The miniport ISR must notify vblank via
      `DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId`.
+5. **Error reporting (ABI 1.3+)**
+   - If `AEROGPU_IRQ_ERROR` is set in `AEROGPU_MMIO_REG_IRQ_STATUS`, treat this as a fatal device error.
+   - The device also latches a structured error payload into:
+     - `AEROGPU_MMIO_REG_ERROR_CODE` (`enum aerogpu_error_code`)
+     - `AEROGPU_MMIO_REG_ERROR_FENCE_LO/HI` (submission fence associated with the error, if known)
+     - `AEROGPU_MMIO_REG_ERROR_COUNT` (monotonically increasing error counter)
+   - Note: acknowledging/clearing `AEROGPU_IRQ_ERROR` via `AEROGPU_MMIO_REG_IRQ_ACK` does **not** clear the latched
+     error payload; it remains valid until overwritten by a subsequent error.
 
 Legacy (`ARGP`) note: some legacy device models mirror the above FEATURES/IRQ/vblank timing registers to allow
 incremental migration. When a legacy device advertises `AEROGPU_FEATURE_VBLANK`, the KMD will enable vblank
