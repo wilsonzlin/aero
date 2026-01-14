@@ -18,10 +18,6 @@ crates/legacy/aero-d3d9-shader/Cargo.lock
 # likewise keep any per-crate lockfile untracked.
 crates/legacy/vm/Cargo.lock
 
-# `crates/aero-d3d9-shader` is a thin wrapper crate (excluded from the workspace); likewise keep any
-# per-crate lockfile untracked.
-crates/aero-d3d9-shader/Cargo.lock
-
 # Python
 __pycache__/
 *.py[cod]
