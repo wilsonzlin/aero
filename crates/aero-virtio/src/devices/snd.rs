@@ -449,23 +449,64 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 continue;
             }
 
-            let event = self
-                .pending_events
-                .pop_front()
-                .expect("pending_events was non-empty when event_len was read");
-
-            let mut written = 0usize;
+            // Ensure the guest buffer is valid before writing. If the guest supplies an out-of-bounds
+            // DMA range, treat it as a malformed eventq chain and complete it with 0 bytes (without
+            // dropping the pending event).
+            let mut checked = 0usize;
+            let mut guest_ok = true;
             for d in descs {
-                if written == event.len() {
+                if checked == event_len {
                     break;
                 }
-                let take = (d.len as usize).min(event.len() - written);
-                let dst = mem
-                    .get_slice_mut(d.addr, take)
-                    .map_err(|_| VirtioDeviceError::IoError)?;
-                dst.copy_from_slice(&event[written..written + take]);
-                written += take;
+                let take = (d.len as usize).min(event_len - checked);
+                if mem.get_slice(d.addr, take).is_err() {
+                    guest_ok = false;
+                    break;
+                }
+                checked += take;
             }
+            if !guest_ok {
+                need_irq |= queue
+                    .add_used(mem, chain.head_index(), 0)
+                    .map_err(|_| VirtioDeviceError::IoError)?;
+                continue;
+            }
+
+            let mut written = 0usize;
+            let mut wrote_all = true;
+            {
+                // Borrow the pending event immutably until the write completes; only pop it from
+                // the queue once we know it has been fully delivered.
+                let event = self
+                    .pending_events
+                    .front()
+                    .expect("pending_events was non-empty when event_len was read");
+
+                for d in descs {
+                    if written == event_len {
+                        break;
+                    }
+                    let take = (d.len as usize).min(event_len - written);
+                    let Ok(dst) = mem.get_slice_mut(d.addr, take) else {
+                        wrote_all = false;
+                        break;
+                    };
+                    dst.copy_from_slice(&event[written..written + take]);
+                    written += take;
+                }
+            }
+
+            if !wrote_all || written != event_len {
+                need_irq |= queue
+                    .add_used(mem, chain.head_index(), 0)
+                    .map_err(|_| VirtioDeviceError::IoError)?;
+                continue;
+            }
+
+            // The event was fully written into guest memory; retire it.
+            self.pending_events
+                .pop_front()
+                .expect("pending_events was non-empty when write succeeded");
 
             need_irq |= queue
                 .add_used(mem, chain.head_index(), written as u32)
@@ -1840,6 +1881,50 @@ mod tests {
         assert_eq!(read_u32_le(&mem, used + 16).unwrap(), 8);
         assert_eq!(mem.get_slice(buf_full, 8).unwrap(), &evt);
         assert!(snd.pending_events.is_empty());
+    }
+
+    #[test]
+    fn virtio_snd_eventq_flush_keeps_event_pending_when_guest_address_is_invalid() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let qsize = 1u16;
+        let mut queue = VirtQueue::new(
+            VirtQueueConfig {
+                size: qsize,
+                desc_addr: desc_table,
+                avail_addr: avail,
+                used_addr: used,
+            },
+            false,
+        )
+        .unwrap();
+
+        write_u16_le(&mut mem, avail, 0).unwrap();
+        write_u16_le(&mut mem, avail + 2, 1).unwrap();
+        write_u16_le(&mut mem, avail + 4, 0).unwrap();
+        write_u16_le(&mut mem, used, 0).unwrap();
+        write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+        // Descriptor points 4 bytes before the end of guest RAM but claims 8 bytes.
+        let oob_addr = 0x10000 - 4;
+        write_desc(&mut mem, desc_table, 0, oob_addr, 8, VIRTQ_DESC_F_WRITE, 0);
+
+        let chain = pop_chain(&mut queue, &mem);
+        snd.event_buffers.push_back(chain);
+
+        let evt = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        snd.pending_events.push_back(evt.to_vec());
+
+        snd.flush_eventq(&mut queue, &mut mem).unwrap();
+
+        // The invalid buffer should be completed with 0 bytes and the event should remain pending.
+        assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+        assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 0);
+        assert_eq!(snd.pending_events.len(), 1);
     }
 
     #[test]
