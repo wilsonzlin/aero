@@ -125,15 +125,18 @@ func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *m
 }
 
 func makeJWT(secret, sid string) string {
+	return makeJWTWithIat(secret, sid, time.Now().Unix())
+}
+
+func makeJWTWithIat(secret, sid string, iat int64) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	now := time.Now().Unix()
 	payloadJSON, _ := json.Marshal(struct {
 		Iat int64  `json:"iat"`
 		Exp int64  `json:"exp"`
 		SID string `json:"sid"`
 	}{
-		Iat: now,
-		Exp: now + 60,
+		Iat: iat,
+		Exp: iat + 60,
 		SID: sid,
 	})
 	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
@@ -328,10 +331,13 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 	api := newTestWebRTCAPI(t)
 	offerSDP := newOfferSDP(t, api)
 
-	token := makeJWT(cfg.JWTSecret, "sess_test")
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + token
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+	wsURLA := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + tokenA
+	wsURLB := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + tokenB
 
-	ws1, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ws1, _, err := websocket.DefaultDialer.Dial(wsURLA, nil)
 	if err != nil {
 		t.Fatalf("dial ws1: %v", err)
 	}
@@ -356,7 +362,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testin
 		t.Fatalf("unexpected ws1 message: %#v", got)
 	}
 
-	ws2, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	ws2, _, err := websocket.DefaultDialer.Dial(wsURLB, nil)
 	if err != nil {
 		t.Fatalf("dial ws2: %v", err)
 	}
@@ -387,9 +393,11 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testin
 	}
 	ts, _ := startSignalingServer(t, cfg)
 
-	token := makeJWT(cfg.JWTSecret, "sess_test")
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
 
-	do := func() *http.Response {
+	do := func(token string) *http.Response {
 		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
 		if err != nil {
 			t.Fatalf("NewRequest: %v", err)
@@ -402,7 +410,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testin
 		return resp
 	}
 
-	resp := do()
+	resp := do(tokenA)
 	if resp.StatusCode != http.StatusCreated {
 		defer resp.Body.Close()
 		t.Fatalf("first /session status=%d, want %d", resp.StatusCode, http.StatusCreated)
@@ -413,7 +421,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_SessionEndpoint(t *testin
 		t.Fatalf("expected non-empty session id, got %q", string(body))
 	}
 
-	resp = do()
+	resp = do(tokenB)
 	if resp.StatusCode != http.StatusConflict {
 		defer resp.Body.Close()
 		t.Fatalf("second /session status=%d, want %d", resp.StatusCode, http.StatusConflict)
@@ -438,7 +446,9 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 	}
 	ts, _ := startSignalingServer(t, cfg)
 
-	token := makeJWT(cfg.JWTSecret, "sess_test")
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
 
 	// Create an active session (via preallocation) so offer endpoints must reject
 	// concurrent session creation with the same JWT sid.
@@ -447,7 +457,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 		if err != nil {
 			t.Fatalf("NewRequest: %v", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Authorization", "Bearer "+tokenA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Do: %v", err)
@@ -476,7 +486,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 			t.Fatalf("NewRequest: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Authorization", "Bearer "+tokenB)
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -507,7 +517,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 			t.Fatalf("NewRequest: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Authorization", "Bearer "+tokenB)
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

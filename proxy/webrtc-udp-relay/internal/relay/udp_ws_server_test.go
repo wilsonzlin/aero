@@ -23,15 +23,18 @@ import (
 )
 
 func makeTestJWT(secret, sid string) string {
+	return makeTestJWTWithIat(secret, sid, time.Now().Unix())
+}
+
+func makeTestJWTWithIat(secret, sid string, iat int64) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	now := time.Now().Unix()
 	payloadJSON, _ := json.Marshal(struct {
 		Iat int64  `json:"iat"`
 		Exp int64  `json:"exp"`
 		SID string `json:"sid"`
 	}{
-		Iat: now,
-		Exp: now + 60,
+		Iat: iat,
+		Exp: iat + 60,
 		SID: sid,
 	})
 	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
@@ -292,15 +295,17 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID(t *testing.T
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	token := makeTestJWT(cfg.JWTSecret, "sess_test")
+	now := time.Now().Unix()
+	tokenA := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
 
-	c1 := dialWS(t, ts.URL, "/udp?token="+token)
+	c1 := dialWS(t, ts.URL, "/udp?token="+tokenA)
 	ready := readWSJSON(t, c1, 2*time.Second)
 	if ready["type"] != "ready" {
 		t.Fatalf("expected ready message, got %#v", ready)
 	}
 
-	c2 := dialWS(t, ts.URL, "/udp?token="+token)
+	c2 := dialWS(t, ts.URL, "/udp?token="+tokenB)
 	errMsg := readWSJSON(t, c2, 2*time.Second)
 	if errMsg["type"] != "error" || errMsg["code"] != "session_already_active" {
 		t.Fatalf("expected session_already_active error, got %#v", errMsg)
@@ -328,10 +333,12 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	token := makeTestJWT(cfg.JWTSecret, "sess_test")
+	now := time.Now().Unix()
+	tokenA := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
 
 	c1 := dialWS(t, ts.URL, "/udp")
-	if err := c1.WriteJSON(map[string]any{"type": "auth", "token": token}); err != nil {
+	if err := c1.WriteJSON(map[string]any{"type": "auth", "token": tokenA}); err != nil {
 		t.Fatalf("WriteJSON(auth): %v", err)
 	}
 	ready := readWSJSON(t, c1, 2*time.Second)
@@ -340,7 +347,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 	}
 
 	c2 := dialWS(t, ts.URL, "/udp")
-	if err := c2.WriteJSON(map[string]any{"type": "auth", "token": token}); err != nil {
+	if err := c2.WriteJSON(map[string]any{"type": "auth", "token": tokenB}); err != nil {
 		t.Fatalf("WriteJSON(auth): %v", err)
 	}
 	errMsg := readWSJSON(t, c2, 2*time.Second)
