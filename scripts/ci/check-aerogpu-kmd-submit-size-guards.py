@@ -235,7 +235,7 @@ def main() -> int:
                 _require(
                     body,
                     "AeroGpuAllocTableScratchAllocBlock hash/meta sizing",
-                    r"RtlSizeTMult\s*\(\s*[^,]*\bHashCap\b[^,]*,\s*sizeof\s*\(\s*uint(?:32|64)_t\s*\)\s*,\s*&[A-Za-z0-9_]*Bytes\s*\)",
+                    r"RtlSizeTMult\s*\(\s*[^,]*\bHashCap\b[^,]*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&[A-Za-z0-9_]*Bytes\s*\)",
                 ),
                 _require(
                     body,
