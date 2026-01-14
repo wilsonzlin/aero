@@ -347,6 +347,8 @@ Tip (guest-side fail-fast):
   selftest with:
   - virtio-net: `aero-virtio-selftest.exe --require-net-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
     - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireNetMsix`.
+  - virtio-input: `aero-virtio-selftest.exe --require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
+    - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireInputMsix`.
 
 Example (PowerShell):
 
@@ -1570,6 +1572,10 @@ with `-ExpectBlkMsi` (adds the guest selftest flag `--expect-blk-msi` / env var 
 To make virtio-net MSI-X a **guest-side** hard requirement (and fail the overall guest selftest when `virtio-net-msix`
 reports `mode!=msix`), generate the image with `-RequireNetMsix` (adds the guest selftest flag `--require-net-msix` /
 env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`).
+
+To make virtio-input MSI-X a **guest-side** hard requirement (and fail the overall guest selftest when `virtio-input-msix`
+reports `mode!=msix`), generate the image with `-RequireInputMsix` (adds the guest selftest flag `--require-input-msix` /
+env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`).
 
 For MSI/MSI-X-specific CI, you can also ask the host harness to fail deterministically when the guest image was not
 provisioned with this expectation:
