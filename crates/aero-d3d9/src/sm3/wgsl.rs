@@ -106,7 +106,7 @@ pub fn translate_to_wgsl(token_stream: &[u8]) -> Result<WgslTranslation, Sm3Wgsl
 ///
 /// These must participate in any shader cache key derivation because toggling them changes the
 /// generated WGSL.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct WgslOptions {
     /// When enabled, apply the classic D3D9 half-pixel center adjustment in the vertex shader.
     ///
@@ -119,14 +119,6 @@ pub struct WgslOptions {
     ///
     /// This shifts the final rasterization by (-0.5, -0.5) pixels in window space.
     pub half_pixel_center: bool,
-}
-
-impl Default for WgslOptions {
-    fn default() -> Self {
-        Self {
-            half_pixel_center: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

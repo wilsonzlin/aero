@@ -13005,6 +13005,7 @@ fn expanded_draw_passthrough_vs_wgsl(pass_locations: &BTreeSet<u32>) -> String {
     wgsl
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     device: &wgpu::Device,
     pipeline_cache: &'a mut PipelineCache,

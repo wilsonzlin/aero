@@ -30,7 +30,7 @@ pub const DOMAIN_EVAL_BINDING_OUT_VERTICES: u32 = 3;
 /// Returns the number of `dispatch.y` workgroups required to cover `vertex_count`
 /// vertices for a single patch.
 pub fn chunk_count_for_vertex_count(vertex_count: u32) -> u32 {
-    (vertex_count + DOMAIN_EVAL_WORKGROUP_SIZE_Y - 1) / DOMAIN_EVAL_WORKGROUP_SIZE_Y
+    vertex_count.div_ceil(DOMAIN_EVAL_WORKGROUP_SIZE_Y)
 }
 
 fn wgsl_ds_out_struct(out_reg_count: u32) -> String {

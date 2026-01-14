@@ -59,7 +59,7 @@ pub struct VertexPullingSlot {
 }
 
 /// Draw parameters consumed by vertex pulling compute shaders.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VertexPullingDrawParams {
     pub first_vertex: u32,
     pub first_instance: u32,
