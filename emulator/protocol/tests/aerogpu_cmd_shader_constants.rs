@@ -81,14 +81,12 @@ fn decode_set_shader_constants_i_rejects_wrong_opcode() {
 
 #[test]
 fn decode_set_shader_constants_b_decodes_payload_and_allows_trailing_bytes() {
-    // bool_count=2 => 2 scalar u32 values (0/1), with any trailing bytes ignored.
+    // bool_count=2 => u32_count=8 (vec4 per bool register).
     let stage = 0u32;
     let start_register = 3u32;
     let bool_count = 2u32;
     let reserved0 = 0u32;
-    let values: [u32; 2] = [0, 1];
-    // Forward-compat: append unknown trailing bytes.
-    let trailing: [u32; 6] = [2, 3, 0xAA55_AA55, 0xFFFF_FFFF, 0xDEAD_BEEF, 42];
+    let values: [u32; 8] = [0, 1, 2, 3, 0xAA55_AA55, 0xFFFF_FFFF, 0xDEAD_BEEF, 42];
 
     let mut payload = Vec::new();
     push_u32(&mut payload, stage);
@@ -98,11 +96,7 @@ fn decode_set_shader_constants_b_decodes_payload_and_allows_trailing_bytes() {
     for v in values {
         push_u32(&mut payload, v);
     }
-    for v in trailing {
-        push_u32(&mut payload, v);
-    }
     // Forward-compat: append unknown trailing bytes.
-    push_u32(&mut payload, 0xDEAD_BEEFu32);
     push_u32(&mut payload, 0xC0FF_EE00u32);
 
     let packet = build_packet(AerogpuCmdOpcode::SetShaderConstantsB, payload);
