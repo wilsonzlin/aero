@@ -50,6 +50,14 @@ function isSafeNonNegativeInt(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function validateChunkSize(chunkSize: number): void {
   if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
     throw new Error(`chunkSize must be a positive safe integer (got ${chunkSize})`);
@@ -86,33 +94,32 @@ function signatureMatches(meta: RemoteChunkCacheMetaRecord, expected: RemoteChun
 }
 
 function isValidMetaRecord(raw: unknown, cacheKey: string, signature: RemoteChunkCacheSignature): raw is RemoteChunkCacheMetaRecord {
-  if (!raw || typeof raw !== "object") return false;
-  const rec = raw as Partial<RemoteChunkCacheMetaRecord> & {
-    cacheKey?: unknown;
-    imageId?: unknown;
-    version?: unknown;
-    etag?: unknown;
-    lastModified?: unknown;
-    sizeBytes?: unknown;
-    chunkSize?: unknown;
-    bytesUsed?: unknown;
-    accessCounter?: unknown;
-  };
+  if (!isRecord(raw)) return false;
+  const rec = raw as Record<string, unknown>;
 
-  if (rec.cacheKey !== cacheKey) return false;
-  if (typeof rec.imageId !== "string" || rec.imageId !== signature.imageId) return false;
-  if (typeof rec.version !== "string" || rec.version !== signature.version) return false;
+  const recCacheKey = hasOwn(rec, "cacheKey") ? rec.cacheKey : undefined;
+  if (recCacheKey !== cacheKey) return false;
+  const imageId = hasOwn(rec, "imageId") ? rec.imageId : undefined;
+  if (typeof imageId !== "string" || imageId !== signature.imageId) return false;
+  const version = hasOwn(rec, "version") ? rec.version : undefined;
+  if (typeof version !== "string" || version !== signature.version) return false;
 
-  if (rec.etag !== undefined && rec.etag !== null && typeof rec.etag !== "string") return false;
-  if ((rec.etag ?? null) !== signature.etag) return false;
+  const etag = hasOwn(rec, "etag") ? rec.etag : undefined;
+  if (etag !== undefined && etag !== null && typeof etag !== "string") return false;
+  if ((etag ?? null) !== signature.etag) return false;
 
-  if (rec.lastModified !== undefined && rec.lastModified !== null && typeof rec.lastModified !== "string") return false;
-  if ((rec.lastModified ?? null) !== signature.lastModified) return false;
+  const lastModified = hasOwn(rec, "lastModified") ? rec.lastModified : undefined;
+  if (lastModified !== undefined && lastModified !== null && typeof lastModified !== "string") return false;
+  if ((lastModified ?? null) !== signature.lastModified) return false;
 
-  if (typeof rec.sizeBytes !== "number" || rec.sizeBytes !== signature.sizeBytes) return false;
-  if (typeof rec.chunkSize !== "number" || rec.chunkSize !== signature.chunkSize) return false;
-  if (!isSafeNonNegativeInt(rec.bytesUsed)) return false;
-  if (!isSafeNonNegativeInt(rec.accessCounter)) return false;
+  const sizeBytes = hasOwn(rec, "sizeBytes") ? rec.sizeBytes : undefined;
+  if (typeof sizeBytes !== "number" || sizeBytes !== signature.sizeBytes) return false;
+  const chunkSize = hasOwn(rec, "chunkSize") ? rec.chunkSize : undefined;
+  if (typeof chunkSize !== "number" || chunkSize !== signature.chunkSize) return false;
+  const bytesUsed = hasOwn(rec, "bytesUsed") ? rec.bytesUsed : undefined;
+  if (!isSafeNonNegativeInt(bytesUsed)) return false;
+  const accessCounter = hasOwn(rec, "accessCounter") ? rec.accessCounter : undefined;
+  if (!isSafeNonNegativeInt(accessCounter)) return false;
   return true;
 }
 
@@ -143,11 +150,12 @@ function arrayBufferExact(bytes: Uint8Array): ArrayBuffer {
 }
 
 function safeByteLengthFromChunkRecord(rec: unknown): number {
-  if (!rec || typeof rec !== "object") return 0;
-  const r = rec as { byteLength?: unknown; data?: unknown };
-  const bytes = bytesFromStoredChunkData(r.data);
+  if (!isRecord(rec)) return 0;
+  const r = rec as Record<string, unknown>;
+  const bytes = bytesFromStoredChunkData(hasOwn(r, "data") ? r.data : undefined);
   if (bytes) return bytes.byteLength;
-  if (isSafeNonNegativeInt(r.byteLength)) return r.byteLength;
+  const byteLength = hasOwn(r, "byteLength") ? r.byteLength : undefined;
+  if (isSafeNonNegativeInt(byteLength)) return byteLength;
   return 0;
 }
 
@@ -198,7 +206,8 @@ async function enforceCacheLimitInTx(opts: {
       }
 
       const rec = cursor.value as unknown;
-      const chunkIndex = (rec as { chunkIndex?: unknown }).chunkIndex;
+      const chunkIndex =
+        isRecord(rec) && hasOwn(rec, "chunkIndex") ? (rec as Record<string, unknown>).chunkIndex : undefined;
       const shouldSkip = protectedChunkIndex !== undefined && chunkIndex === protectedChunkIndex;
       if (shouldSkip) {
         cursor.continue();
@@ -385,7 +394,9 @@ export class IdbRemoteChunkCache {
       if (!rec) continue;
       meta.accessCounter += 1;
 
-      const bytes = bytesFromStoredChunkData((rec as { data?: unknown }).data);
+      const bytes = bytesFromStoredChunkData(
+        isRecord(rec) && hasOwn(rec, "data") ? (rec as Record<string, unknown>).data : undefined,
+      );
       if (!bytes) {
         chunksStore.delete([this.cacheKey, idx]);
         meta.bytesUsed = Math.max(0, meta.bytesUsed - safeByteLengthFromChunkRecord(rec));
@@ -463,14 +474,20 @@ export class IdbRemoteChunkCache {
 
         // Defensive: IndexedDB contents are untrusted/can be corrupt. Never serve data unless the
         // record is structurally valid and has the expected byte length for this chunk index.
-        const recObj = rec as Partial<RemoteChunkRecord> & { cacheKey?: unknown; chunkIndex?: unknown; data?: unknown };
-        if (recObj.cacheKey !== this.cacheKey || recObj.chunkIndex !== idx) {
+        if (!isRecord(rec)) {
+          chunksStore.delete([this.cacheKey, idx]);
+          continue;
+        }
+        const recObj = rec as Record<string, unknown>;
+        const recCacheKey = hasOwn(recObj, "cacheKey") ? recObj.cacheKey : undefined;
+        const recChunkIndex = hasOwn(recObj, "chunkIndex") ? recObj.chunkIndex : undefined;
+        if (recCacheKey !== this.cacheKey || recChunkIndex !== idx) {
           chunksStore.delete([this.cacheKey, idx]);
           meta.bytesUsed = Math.max(0, meta.bytesUsed - safeByteLengthFromChunkRecord(rec));
           continue;
         }
 
-        const bytes = bytesFromStoredChunkData(recObj.data);
+        const bytes = bytesFromStoredChunkData(hasOwn(recObj, "data") ? recObj.data : undefined);
         const expectedLen = expectedChunkByteLength(this.signature, idx);
         if (!bytes || expectedLen === 0 || bytes.byteLength !== expectedLen) {
           // Corrupt/mismatched record: delete and treat as miss.
@@ -712,7 +729,8 @@ export class IdbRemoteChunkCache {
             return;
           }
           const rec = cursor.value as unknown;
-          const idx = (rec as { chunkIndex?: unknown }).chunkIndex;
+          const idx =
+            isRecord(rec) && hasOwn(rec, "chunkIndex") ? (rec as Record<string, unknown>).chunkIndex : undefined;
           if (isSafeNonNegativeInt(idx)) out.push(idx);
           cursor.continue();
         };

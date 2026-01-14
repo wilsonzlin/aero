@@ -2,7 +2,7 @@ import "../../test/fake_indexeddb_auto.ts";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { clearIdb } from "./metadata";
+import { clearIdb, idbTxDone, openDiskManagerDb } from "./metadata";
 import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "./idb_remote_chunk_cache";
 
 const CHUNK_SIZE = 512 * 1024;
@@ -111,6 +111,60 @@ describe("IdbRemoteChunkCache", () => {
     const status = await cache2.getStatus();
     expect(status.bytesUsed).toBe(0);
     cache2.close();
+  });
+
+  it("does not observe chunk records inherited from Object.prototype", async () => {
+    const existingCacheKey = Object.getOwnPropertyDescriptor(Object.prototype, "cacheKey");
+    const existingChunkIndex = Object.getOwnPropertyDescriptor(Object.prototype, "chunkIndex");
+    const existingData = Object.getOwnPropertyDescriptor(Object.prototype, "data");
+    if (
+      (existingCacheKey && existingCacheKey.configurable === false) ||
+      (existingChunkIndex && existingChunkIndex.configurable === false) ||
+      (existingData && existingData.configurable === false)
+    ) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    const cache = await IdbRemoteChunkCache.open({
+      cacheKey: "k",
+      signature: {
+        imageId: "img",
+        version: "v1",
+        etag: "e1",
+        lastModified: null,
+        sizeBytes: 4 * CHUNK_SIZE,
+        chunkSize: CHUNK_SIZE,
+      },
+      cacheLimitBytes: null,
+    });
+
+    try {
+      Object.defineProperty(Object.prototype, "cacheKey", { value: "k", configurable: true });
+      Object.defineProperty(Object.prototype, "chunkIndex", { value: 0, configurable: true });
+      Object.defineProperty(Object.prototype, "data", { value: makeChunk(0x99).buffer, configurable: true });
+
+      // Write a corrupt record with no own properties. `remote_chunks` keyPath extraction can
+      // (depending on implementation) observe inherited properties; our read path must not.
+      const db = await openDiskManagerDb();
+      try {
+        const tx = db.transaction(["remote_chunks"], "readwrite");
+        tx.objectStore("remote_chunks").put({});
+        await idbTxDone(tx);
+      } finally {
+        db.close();
+      }
+
+      expect(await cache.get(0)).toBeNull();
+    } finally {
+      cache.close();
+      if (existingCacheKey) Object.defineProperty(Object.prototype, "cacheKey", existingCacheKey);
+      else delete (Object.prototype as any).cacheKey;
+      if (existingChunkIndex) Object.defineProperty(Object.prototype, "chunkIndex", existingChunkIndex);
+      else delete (Object.prototype as any).chunkIndex;
+      if (existingData) Object.defineProperty(Object.prototype, "data", existingData);
+      else delete (Object.prototype as any).data;
+    }
   });
 
   it("wraps quota errors during open as IdbRemoteChunkCacheQuotaError", async () => {

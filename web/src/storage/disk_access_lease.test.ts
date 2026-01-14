@@ -173,4 +173,51 @@ describe("createDiskAccessLeaseFromLeaseEndpoint", () => {
     const lease = createDiskAccessLeaseFromLeaseEndpoint("/lease", { delivery: "range", fetchFn });
     await expect(lease.refresh()).rejects.toThrow(/too large/i);
   });
+
+  it("does not accept required fields inherited from Object.prototype", async () => {
+    const fetchFn = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>().mockResolvedValue(
+      new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "url");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+    try {
+      Object.defineProperty(Object.prototype, "url", {
+        value: "https://cdn.example.test/disk.img?sig=proto",
+        configurable: true,
+      });
+      const lease = createDiskAccessLeaseFromLeaseEndpoint("/lease", { delivery: "range", fetchFn });
+      await expect(lease.refresh()).rejects.toThrow(/stream lease response url/i);
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "url", existing);
+      else delete (Object.prototype as any).url;
+    }
+  });
+
+  it("does not accept optional nested fields inherited from Object.prototype", async () => {
+    const fetchFn = vi.fn<[RequestInfo | URL, RequestInit?], Promise<Response>>().mockResolvedValue(
+      // Valid top-level url, but missing `chunked` (required for delivery=chunked).
+      new Response(JSON.stringify({ url: "https://cdn.example.test/ignored" }), { status: 200 }),
+    );
+
+    const existing = Object.getOwnPropertyDescriptor(Object.prototype, "chunked");
+    if (existing && existing.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+    try {
+      Object.defineProperty(Object.prototype, "chunked", {
+        value: { delivery: "chunked", manifestUrl: "/evil" },
+        configurable: true,
+      });
+      const lease = createDiskAccessLeaseFromLeaseEndpoint("/lease", { delivery: "chunked", fetchFn });
+      await expect(lease.refresh()).rejects.toThrow(/missing chunked\.manifestUrl/i);
+    } finally {
+      if (existing) Object.defineProperty(Object.prototype, "chunked", existing);
+      else delete (Object.prototype as any).chunked;
+    }
+  });
 });

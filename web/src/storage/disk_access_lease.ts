@@ -197,40 +197,61 @@ function requireNonEmptyString(value: unknown, label: string): string {
   return trimmed;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function parseStreamLeaseResponse(raw: unknown): StreamLeaseResponse {
-  if (!raw || typeof raw !== "object") {
+  if (!isRecord(raw)) {
     throw new Error("stream lease response must be a JSON object");
   }
-  const obj = raw as Partial<StreamLeaseResponse> & { chunked?: unknown };
+  const obj = raw as Record<string, unknown>;
 
-  const url = requireNonEmptyString(obj.url, "stream lease response url");
+  const url = requireNonEmptyString(hasOwn(obj, "url") ? obj.url : undefined, "stream lease response url");
 
   const expiresAt =
-    obj.expiresAt === undefined ? undefined : requireNonEmptyString(obj.expiresAt, "stream lease response expiresAt");
+    hasOwn(obj, "expiresAt")
+      ? obj.expiresAt === undefined
+        ? undefined
+        : requireNonEmptyString(obj.expiresAt, "stream lease response expiresAt")
+      : undefined;
 
   let chunked: StreamLeaseResponse["chunked"] | undefined;
-  if (obj.chunked !== undefined) {
-    if (!obj.chunked || typeof obj.chunked !== "object") {
+  if (hasOwn(obj, "chunked")) {
+    const chunkedRaw = obj.chunked;
+    if (!isRecord(chunkedRaw)) {
       throw new Error("stream lease response chunked must be an object");
     }
-    const ch = obj.chunked as { delivery?: unknown; manifestUrl?: unknown };
+    const ch = chunkedRaw as Record<string, unknown>;
     const delivery =
-      ch.delivery === undefined ? undefined : requireNonEmptyString(ch.delivery, "stream lease response chunked.delivery");
+      hasOwn(ch, "delivery")
+        ? ch.delivery === undefined
+          ? undefined
+          : requireNonEmptyString(ch.delivery, "stream lease response chunked.delivery")
+        : undefined;
     const manifestUrl =
-      ch.manifestUrl === undefined
-        ? undefined
-        : requireNonEmptyString(ch.manifestUrl, "stream lease response chunked.manifestUrl");
-    chunked = {
-      ...(delivery !== undefined ? { delivery } : {}),
-      ...(manifestUrl !== undefined ? { manifestUrl } : {}),
-    };
+      hasOwn(ch, "manifestUrl")
+        ? ch.manifestUrl === undefined
+          ? undefined
+          : requireNonEmptyString(ch.manifestUrl, "stream lease response chunked.manifestUrl")
+        : undefined;
+    const chunkedOut = Object.create(null) as NonNullable<StreamLeaseResponse["chunked"]>;
+    if (delivery !== undefined) chunkedOut.delivery = delivery;
+    if (manifestUrl !== undefined) chunkedOut.manifestUrl = manifestUrl;
+    chunked = chunkedOut;
   }
 
-  return {
-    url,
-    ...(expiresAt !== undefined ? { expiresAt } : {}),
-    ...(chunked !== undefined ? { chunked } : {}),
-  };
+  // Return a null-prototype object to ensure callers don't observe values inherited
+  // from `Object.prototype` (prototype pollution).
+  const out = Object.create(null) as StreamLeaseResponse;
+  out.url = url;
+  if (expiresAt !== undefined) out.expiresAt = expiresAt;
+  if (chunked !== undefined) out.chunked = chunked;
+  return out;
 }
 
 function resolveUrlWithOptionalLocationBase(input: string): URL | null {
