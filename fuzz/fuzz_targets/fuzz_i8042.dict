@@ -1,29 +1,56 @@
-"\x20" # i8042: read command byte
-"\x60" # i8042: write command byte
-"\xA7" # i8042: disable mouse port
-"\xA8" # i8042: enable mouse port
-"\xA9" # i8042: test mouse port
-"\xAA" # i8042: controller self-test
-"\xAB" # i8042: test keyboard port
-"\xAD" # i8042: disable keyboard port
-"\xAE" # i8042: enable keyboard port
-"\xD0" # i8042: read output port
-"\xD1" # i8042: write output port (next data write)
-"\xD2" # i8042: write next data byte to output buffer (keyboard)
-"\xD3" # i8042: write next data byte to output buffer (mouse)
-"\xD4" # i8042: write next data byte to mouse
+# i8042: read command byte
+"\x20"
+# i8042: write command byte
+"\x60"
+# i8042: disable mouse port
+"\xA7"
+# i8042: enable mouse port
+"\xA8"
+# i8042: test mouse port
+"\xA9"
+# i8042: controller self-test
+"\xAA"
+# i8042: test keyboard port
+"\xAB"
+# i8042: disable keyboard port
+"\xAD"
+# i8042: enable keyboard port
+"\xAE"
+# i8042: read output port
+"\xD0"
+# i8042: write output port (next data write)
+"\xD1"
+# i8042: write next data byte to output buffer (keyboard)
+"\xD2"
+# i8042: write next data byte to output buffer (mouse)
+"\xD3"
+# i8042: write next data byte to mouse
+"\xD4"
 
-"\xED" # PS/2 keyboard: set LEDs
-"\xEE" # PS/2 keyboard: echo
-"\xF0" # PS/2 keyboard: get/set scancode set
-"\xF2" # PS/2 keyboard: identify
-"\xF3" # PS/2 keyboard: set typematic
-"\xF4" # PS/2 keyboard: enable scanning
-"\xF5" # PS/2 keyboard: disable scanning
-"\xF6" # PS/2 keyboard: set defaults
-"\xFF" # PS/2 keyboard: reset
+# PS/2 keyboard: set LEDs
+"\xED"
+# PS/2 keyboard: echo
+"\xEE"
+# PS/2 keyboard: get/set scancode set
+"\xF0"
+# PS/2 keyboard: identify
+"\xF2"
+# PS/2 keyboard: set typematic
+"\xF3"
+# PS/2 keyboard: enable scanning
+"\xF4"
+# PS/2 keyboard: disable scanning
+"\xF5"
+# PS/2 keyboard: set defaults
+"\xF6"
+# PS/2 keyboard: reset
+"\xFF"
 
-"\xE0" # Set-2 scancode prefix
-"\xF0" # Set-2 break prefix
-"\x1C" # Set-2: 'A'
-"\x32" # Set-2: 'B'
+# Set-2 scancode prefix
+"\xE0"
+# Set-2 break prefix
+"\xF0"
+# Set-2: 'A'
+"\x1C"
+# Set-2: 'B'
+"\x32"
