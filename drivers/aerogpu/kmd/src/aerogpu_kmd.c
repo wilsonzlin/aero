@@ -2930,6 +2930,28 @@ static VOID AeroGpuRingCleanup(_Inout_ AEROGPU_ADAPTER* Adapter)
     AeroGpuFreeContiguousNonCached(Adapter, fencePageVa, PAGE_SIZE);
 }
 
+static VOID AeroGpuUnmapBar0(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter || !Adapter->Bar0) {
+        return;
+    }
+
+    /*
+     * Detach Bar0 from the adapter before unmapping so any concurrent paths that
+     * check `Adapter->Bar0` will observe NULL and avoid touching unmapped I/O
+     * space.
+     *
+     * This is defensive against teardown races where an ISR/DPC or a late
+     * DxgkDdi* callback might still run while StopDevice/StartDevice failure is
+     * unmapping BAR0.
+     */
+    PUCHAR bar0 = Adapter->Bar0;
+    const ULONG bar0Length = Adapter->Bar0Length;
+    Adapter->Bar0 = NULL;
+    Adapter->Bar0Length = 0;
+    MmUnmapIoSpace(bar0, bar0Length);
+}
+
 static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTER* Adapter)
 {
     if (!Adapter || !Adapter->Bar0 || !Adapter->RingVa || Adapter->RingEntryCount == 0) {
@@ -4414,9 +4436,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
 
     if (adapter->Bar0Length < sizeof(ULONG)) {
         AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes)", adapter->Bar0Length);
-        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-        adapter->Bar0 = NULL;
-        adapter->Bar0Length = 0;
+        AeroGpuUnmapBar0(adapter);
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
@@ -4452,9 +4472,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     if (magic == AEROGPU_MMIO_MAGIC) {
         if (adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
             AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes) for AGPU ABI", adapter->Bar0Length);
-            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-            adapter->Bar0 = NULL;
-            adapter->Bar0Length = 0;
+            AeroGpuUnmapBar0(adapter);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
@@ -4465,9 +4483,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         const ULONG abiMajor = abiVersion >> 16;
         if (abiMajor != AEROGPU_ABI_MAJOR) {
             AEROGPU_LOG("StartDevice: unsupported ABI major=%lu (abi=0x%08lx)", abiMajor, abiVersion);
-            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-            adapter->Bar0 = NULL;
-            adapter->Bar0Length = 0;
+            AeroGpuUnmapBar0(adapter);
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -4477,9 +4493,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         if ((features & AEROGPU_FEATURE_VBLANK) != 0 &&
             adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
             AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes) for vblank regs", adapter->Bar0Length);
-            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-            adapter->Bar0 = NULL;
-            adapter->Bar0Length = 0;
+            AeroGpuUnmapBar0(adapter);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
@@ -4490,9 +4504,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     } else {
         if (adapter->Bar0Length < (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
             AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes) for legacy ABI", adapter->Bar0Length);
-            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-            adapter->Bar0 = NULL;
-            adapter->Bar0Length = 0;
+            AeroGpuUnmapBar0(adapter);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
@@ -4687,9 +4699,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         adapter->InterruptRegistered = FALSE;
 
         AeroGpuRingCleanup(adapter);
-        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-        adapter->Bar0 = NULL;
-        adapter->Bar0Length = 0;
+        AeroGpuUnmapBar0(adapter);
         return ringSt;
     }
 
@@ -4924,9 +4934,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
     AeroGpuContigPoolPurge(adapter);
 
     if (adapter->Bar0) {
-        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-        adapter->Bar0 = NULL;
-        adapter->Bar0Length = 0;
+        AeroGpuUnmapBar0(adapter);
     }
 
     return STATUS_SUCCESS;
