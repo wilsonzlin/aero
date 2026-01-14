@@ -74,11 +74,11 @@ This is the **coordination hub**. You wire together the work from all other work
   `aero-devices-nvme` exposes MSI + MSI-X capabilities (currently single-vector MSI-X) and delivers
   message-signaled interrupts when enabled (see `crates/aero-devices-nvme/README.md`, plus
   `pc_platform_nvme` tests). Note: Windows 7 has no in-box NVMe driver.
-- **MSI/MSI-X delivery is APIC-mode only**:
-  `PlatformInterrupts::trigger_msi` intentionally drops MSIs while the platform is still in PIC
-  mode (matches the I/O APIC’s “don’t accumulate pending interrupts” behavior during the PIC→APIC
-  transition). If you are debugging “MSI not firing”, confirm the platform has switched to APIC mode
-  first.
+- **MSI/MSI-X delivery targets LAPIC(s)**:
+  `PlatformInterrupts::trigger_msi` decodes the MSI address/data and injects a fixed interrupt into
+  the selected LAPIC(s) (see `crates/platform/src/interrupts/msi.rs`). This does **not** depend on
+  the platform’s PIC vs APIC routing mode, but it *does* depend on the guest leaving the LAPIC
+  software-enabled (SVR[8]=1).
 ---
 
 ## Key Crates & Directories
