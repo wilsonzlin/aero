@@ -5445,7 +5445,8 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
     AEROVNET_NBL_SET_PENDING(Nbl, NbCount);
     AEROVNET_NBL_SET_STATUS(Nbl, NDIS_STATUS_SUCCESS);
 
-    for (Nb = NET_BUFFER_LIST_FIRST_NB(Nbl); Nb; Nb = NET_BUFFER_NEXT_NB(Nb)) {
+    for (Nb = NET_BUFFER_LIST_FIRST_NB(Nbl); Nb;) {
+      PNET_BUFFER NextNb = NET_BUFFER_NEXT_NB(Nb);
       AEROVNET_TX_REQUEST* TxReq;
       NDIS_STATUS SgStatus;
 
@@ -5457,6 +5458,7 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
         NDIS_STATUS TxStatus = (Adapter->State == AerovNetAdapterPaused && !Adapter->SurpriseRemoved) ? NDIS_STATUS_PAUSED : NDIS_STATUS_RESET_IN_PROGRESS;
         AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, TxStatus, &CompleteHead, &CompleteTail);
         NdisReleaseSpinLock(&Adapter->Lock);
+        Nb = NextNb;
         continue;
       }
 
@@ -5478,6 +5480,7 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
           Adapter->StatTxErrors++;
           AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
           NdisReleaseSpinLock(&Adapter->Lock);
+          Nb = NextNb;
           continue;
         }
 
@@ -5489,6 +5492,7 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
             AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
           }
           NdisReleaseSpinLock(&Adapter->Lock);
+          Nb = NextNb;
           continue;
         }
       }
@@ -5496,6 +5500,7 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
       if (IsListEmpty(&Adapter->TxFreeList)) {
         AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_RESOURCES, &CompleteHead, &CompleteTail);
         NdisReleaseSpinLock(&Adapter->Lock);
+        Nb = NextNb;
         continue;
       }
 
@@ -5537,6 +5542,8 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
         AerovNetSgMappingsDerefLocked(Adapter);
         NdisReleaseSpinLock(&Adapter->Lock);
       }
+
+      Nb = NextNb;
     }
 
     Nbl = NextNbl;
