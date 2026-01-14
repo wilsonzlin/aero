@@ -69,4 +69,3 @@ fn inject_input_batch_tracks_usb_consumer_control_state_before_configuration() {
         UsbInResult::Data(vec![0x00, 0x00])
     );
 }
-
