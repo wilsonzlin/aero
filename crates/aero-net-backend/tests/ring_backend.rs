@@ -15,7 +15,7 @@ thread_local! {
     ///
     /// This avoids flakiness when the test runner executes multiple tests in parallel: only the
     /// current test thread is constrained.
-    static MAX_ALLOC_BYTES: StdCell<Option<usize>> = StdCell::new(None);
+    static MAX_ALLOC_BYTES: StdCell<Option<usize>> = const { StdCell::new(None) };
 }
 
 struct LimitAlloc;
@@ -197,7 +197,6 @@ fn ring_backend_transmit_counts_push_and_drop_reasons() {
             rx_dropped_oversize_bytes: 0,
             rx_corrupt: 0,
             rx_broken: false,
-            ..Default::default()
         }
     );
 
@@ -243,7 +242,6 @@ fn ring_backend_poll_receive_drops_oversize_frames_with_bounded_work() {
                 * 10,
             rx_corrupt: 0,
             rx_broken: false,
-            ..Default::default()
         }
     );
     assert_eq!(
@@ -285,7 +283,7 @@ fn ring_backend_poll_receive_drops_oversize_records_without_marking_rx_broken() 
     let mut backend = L2TunnelRingBackend::with_max_frame_bytes(tx, rx.clone(), 8);
 
     // First call sees only an oversize frame => it is dropped and `poll_receive` returns None.
-    rx.try_push(&vec![0xaa; 32]).unwrap();
+    rx.try_push(&[0xaa_u8; 32]).unwrap();
     assert_eq!(backend.poll_receive(), None);
 
     assert_eq!(
