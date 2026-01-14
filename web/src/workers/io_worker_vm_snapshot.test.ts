@@ -600,6 +600,44 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(cachedUsb[0]!.bytes).toBe(canonicalBytes);
   });
 
+  it("uses a deterministic last-wins policy when multiple canonical USB entries are present", async () => {
+    const firstBytes = new Uint8Array([0x01]);
+    const secondBytes = new Uint8Array([0x02]);
+
+    const restore = vi.fn(() => ({
+      cpu: new Uint8Array([0xaa]),
+      mmu: new Uint8Array([0xbb]),
+      devices: [
+        { kind: "usb", bytes: firstBytes },
+        { kind: "usb", bytes: secondBytes },
+      ],
+    }));
+
+    const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
+    const usbLoad = vi.fn();
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: { load_state: usbLoad },
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    expect(usbLoad).toHaveBeenCalledWith(secondBytes);
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb"]);
+    const cachedUsb = res.restoredDevices.filter((d) => d.kind === "usb");
+    expect(cachedUsb).toHaveLength(1);
+    expect(cachedUsb[0]!.bytes).toBe(secondBytes);
+  });
+
   it("restores legacy raw UHCI USB blobs into UHCI when available (even if xHCI exists)", async () => {
     const usbState = makeAeroIoSnapshotHeader("UHRT");
 

@@ -1307,7 +1307,9 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
             : rawKind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)
               ? 1
               : 0;
-        if (nextPriority > usbPriority) {
+        // Prefer the canonical kind over legacy aliases, but if multiple entries of the same
+        // priority exist, apply a deterministic last-wins policy.
+        if (nextPriority > usbPriority || nextPriority === usbPriority) {
           usbPriority = nextPriority;
           usbBytes = e.bytes;
         }
