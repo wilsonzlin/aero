@@ -167,6 +167,15 @@ function isWeakEtag(etag: string): boolean {
   return trimmed.startsWith("W/") || trimmed.startsWith("w/");
 }
 
+function assertIdentityContentEncoding(headers: Headers, label: string): void {
+  // Disk streaming uses byte offsets; intermediaries must not apply compression transforms.
+  const raw = headers.get("content-encoding");
+  if (!raw) return;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === "identity") return;
+  throw new Error(`${label} unexpected Content-Encoding: ${raw}`);
+}
+
 function validatorsMatch(expected: string, actual: string): boolean {
   const e = expected.trim();
   const a = actual.trim();
@@ -228,6 +237,11 @@ export async function probeRemoteDisk(
   try {
     const contentRange = probe.headers.get("content-range") ?? "";
     const partialOk = probe.status === 206;
+    if (partialOk) {
+      // If Content-Encoding is visible and non-identity, fail fast. (In cross-origin cases where
+      // Content-Encoding is not exposed via CORS, this check is best-effort.)
+      assertIdentityContentEncoding(probe.headers, "Range probe");
+    }
     if (!etag) etag = probe.headers.get("etag");
     if (!lastModified) lastModified = probe.headers.get("last-modified");
 

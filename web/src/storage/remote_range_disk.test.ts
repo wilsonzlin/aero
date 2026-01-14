@@ -142,6 +142,8 @@ type RangeServerState = {
   fixHeadSizeAfter416?: boolean;
   etag?: string;
   lastModified?: string;
+  headContentEncoding?: string;
+  rangeContentEncoding?: string;
   requiredToken?: string;
   ignoreRange?: boolean;
   ignoreIfRangeMismatch?: boolean;
@@ -206,6 +208,7 @@ async function startRangeServer(state: RangeServerState): Promise<{
       stats.headRequests += 1;
       res.statusCode = 200;
       res.setHeader("content-length", String(state.sizeBytes));
+      if (state.headContentEncoding) res.setHeader("content-encoding", state.headContentEncoding);
       res.end();
       return;
     }
@@ -290,6 +293,7 @@ async function startRangeServer(state: RangeServerState): Promise<{
       res.setHeader("content-range", `bytes ${start}-${end}/${realSizeBytes}`);
     }
     res.setHeader("content-length", String(body.byteLength));
+    if (state.rangeContentEncoding) res.setHeader("content-encoding", state.rangeContentEncoding);
     res.end(body);
   });
 
@@ -857,6 +861,30 @@ describe("RemoteRangeDisk", () => {
         sparseCacheFactory: new MemorySparseCacheFactory(),
       }),
     ).rejects.toThrow(/sha256Manifest length mismatch/i);
+  });
+
+  it("rejects range responses with non-identity Content-Encoding", async () => {
+    const chunkSize = 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      rangeContentEncoding: "gzip",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      cacheKeyParts: { imageId: "bad-content-encoding", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    const buf = new Uint8Array(SECTOR_SIZE);
+    await expect(disk.readSectors(0, buf)).rejects.toThrow(/Content-Encoding/i);
+    await disk.close();
   });
 
   it("single read triggers exactly one Range fetch", async () => {

@@ -131,5 +131,53 @@ describe("probeRemoteDisk", () => {
     expect(firstEvent).toBe("close");
     expect(bytesSent).toBeLessThan(totalToSend);
   });
-});
 
+  it("rejects Range probes with non-identity Content-Encoding", async () => {
+    const { baseUrl, close } = await withServer((req, res) => {
+      if ((req.url ?? "") !== "/image.bin") {
+        res.statusCode = 404;
+        res.end("not found");
+        return;
+      }
+
+      if (req.method === "HEAD") {
+        res.statusCode = 200;
+        res.setHeader("accept-ranges", "bytes");
+        res.setHeader("content-length", "1024");
+        res.end();
+        return;
+      }
+
+      if (req.method === "GET") {
+        const range = req.headers.range;
+        if (typeof range !== "string") {
+          res.statusCode = 400;
+          res.end("missing Range");
+          return;
+        }
+        if (range !== "bytes=0-0") {
+          res.statusCode = 416;
+          res.end();
+          return;
+        }
+
+        res.statusCode = 206;
+        res.setHeader("accept-ranges", "bytes");
+        res.setHeader("content-range", "bytes 0-0/1024");
+        res.setHeader("content-length", "1");
+        // Disk streaming requires identity/absent encoding.
+        res.setHeader("content-encoding", "gzip");
+        res.end(Buffer.from([0]));
+        return;
+      }
+
+      res.statusCode = 405;
+      res.end("method not allowed");
+    });
+    closeServer = close;
+
+    await expect(probeRemoteDisk(`${baseUrl}/image.bin`, { credentials: "omit" })).rejects.toThrow(
+      /Content-Encoding/i,
+    );
+  });
+});

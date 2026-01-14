@@ -241,6 +241,10 @@ class RemoteValidatorMismatchError extends Error {
   }
 }
 
+class ProtocolError extends Error {
+  override name = "ProtocolError";
+}
+
 async function cancelBody(resp: Response): Promise<void> {
   try {
     await resp.body?.cancel();
@@ -405,6 +409,17 @@ function extractValidatorFromHeaders(headers: Headers): string | undefined {
   return (headers.get("etag") ?? headers.get("last-modified") ?? undefined) || undefined;
 }
 
+function assertIdentityContentEncoding(headers: Headers, label: string): void {
+  // Byte-addressed disk streaming requires `Content-Encoding` to be identity or absent. If the
+  // server applies compression, `Range` offsets apply to the encoded representation and the
+  // browser may transparently decode, breaking deterministic byte reads.
+  const raw = headers.get("content-encoding");
+  if (!raw) return;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized || normalized === "identity") return;
+  throw new ProtocolError(`${label} unexpected Content-Encoding: ${raw}`);
+}
+
 function parseContentRangeHeader(header: string): { start: number; endInclusive: number; total: number } {
   // Example: "bytes 0-0/12345"
   const m = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(header.trim());
@@ -505,6 +520,7 @@ function isRetryableHttpStatus(status: number): boolean {
 
 function isRetryableError(err: unknown): boolean {
   if (err instanceof RemoteValidatorMismatchError) return false;
+  if (err instanceof ProtocolError) return false;
   if (err instanceof ResponseTooLargeError) return false;
   if (err instanceof HttpStatusError) return isRetryableHttpStatus(err.status);
   if (isAbortError(err)) return false;
@@ -555,6 +571,12 @@ async function probeRemoteImage(
     if (probe.status !== 206) {
       await cancelBody(probe);
       throw new HttpStatusError(`unexpected range probe status ${probe.status}`, probe.status);
+    }
+    try {
+      assertIdentityContentEncoding(probe.headers, "range probe");
+    } catch (err) {
+      await cancelBody(probe);
+      throw err;
     }
 
     const contentRange = probe.headers.get("content-range");
@@ -1743,6 +1765,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (resp.status !== 206) {
       await cancelBody(resp);
       throw new HttpStatusError(`unexpected range response status ${resp.status}`, resp.status);
+    }
+    try {
+      assertIdentityContentEncoding(resp.headers, `range chunk ${chunkIndex}`);
+    } catch (err) {
+      await cancelBody(resp);
+      throw err;
     }
 
     const contentRange = resp.headers.get("content-range");
