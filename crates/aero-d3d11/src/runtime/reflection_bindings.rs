@@ -1095,6 +1095,7 @@ mod tests {
     #[test]
     fn pipeline_bindings_info_allows_internal_bind_group_4() {
         pollster::block_on(async {
+            const INTERNAL_GROUP: u32 = BIND_GROUP_INTERNAL_EMULATION + 1;
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
             {
                 Ok(rt) => rt,
@@ -1113,7 +1114,7 @@ mod tests {
                 kind: crate::BindingKind::Texture2D { slot: 0 },
             }];
             let internal = vec![crate::Binding {
-                group: BIND_GROUP_INTERNAL_EMULATION,
+                group: INTERNAL_GROUP,
                 binding: BINDING_BASE_TEXTURE,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 kind: crate::BindingKind::Texture2D { slot: 0 },
@@ -1127,12 +1128,12 @@ mod tests {
                     ShaderBindingSet::Internal(internal.as_slice()),
                 ],
                 BindGroupIndexValidation::GuestAndInternal {
-                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                    max_internal_bind_group_index: INTERNAL_GROUP,
                 },
             )
             .unwrap();
 
-            let internal_group_idx = BIND_GROUP_INTERNAL_EMULATION as usize;
+            let internal_group_idx = INTERNAL_GROUP as usize;
             assert_eq!(
                 info.group_bindings.len(),
                 internal_group_idx + 1
@@ -1144,7 +1145,7 @@ mod tests {
             assert_eq!(info.group_bindings[internal_group_idx].len(), 1);
             assert_eq!(
                 info.group_bindings[internal_group_idx][0].group,
-                BIND_GROUP_INTERNAL_EMULATION
+                INTERNAL_GROUP
             );
 
             assert_eq!(info.group_layouts.len(), internal_group_idx + 1);
