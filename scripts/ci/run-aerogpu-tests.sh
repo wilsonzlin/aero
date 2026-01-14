@@ -38,7 +38,9 @@ run npm run test:protocol
 run cargo test -p aero-protocol --locked
 run cargo test -p aero-devices-gpu --locked
 
-run cargo test -p aero-machine --locked --test aerogpu_submission_bridge
-run cargo test -p aero-machine --locked --test aerogpu_vsync_fence_pacing
-run cargo test -p aero-machine --locked --test aerogpu_ring_noop_fence
-run cargo test -p aero-machine --locked --test aerogpu_mmio_gpa_overflow
+run cargo test -p aero-machine --locked \
+  --test aerogpu_submission_bridge \
+  --test aerogpu_complete_fence_gating \
+  --test aerogpu_vsync_fence_pacing \
+  --test aerogpu_ring_noop_fence \
+  --test aerogpu_mmio_gpa_overflow
