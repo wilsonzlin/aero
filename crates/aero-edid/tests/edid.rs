@@ -311,3 +311,22 @@ fn standard_timings_fallback_to_legacy_when_preferred_not_encodable() {
     let first = parse_standard_timing([timings[0].0, timings[0].1]).expect("std timing #0 missing");
     assert_eq!(first, (1024, 768, 60));
 }
+
+#[test]
+fn standard_timings_encode_common_aspect_ratios() {
+    // Exercise additional aspect ratio encodings beyond the 16:9 case used by 1920×1080.
+    let cases = [
+        // 5:4
+        (aero_edid::Timing::new(1280, 1024, 60), (1280, 1024, 60)),
+        // 16:10
+        (aero_edid::Timing::new(1280, 800, 60), (1280, 800, 60)),
+    ];
+
+    for (preferred, expected) in cases {
+        let edid = aero_edid::generate_edid(preferred);
+        let timings = standard_timings(&edid);
+        let first =
+            parse_standard_timing([timings[0].0, timings[0].1]).expect("std timing #0 missing");
+        assert_eq!(first, expected);
+    }
+}
