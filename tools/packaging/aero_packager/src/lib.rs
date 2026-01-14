@@ -582,6 +582,25 @@ fn collect_files(
     // These are packaged verbatim under `tools/...` so they can ship alongside Guest Tools media
     // without being part of any driver package directory.
     let tools_dir = config.guest_tools_dir.join("tools");
+    if tools_dir.exists() {
+        // Treat a symlinked `tools/` as fatal even if it doesn't point to a directory, since
+        // silently skipping it can hide supply-chain issues (or accidentally package host paths
+        // if the link later becomes a directory).
+        let meta = fs::symlink_metadata(&tools_dir)
+            .with_context(|| format!("stat {}", tools_dir.display()))?;
+        if meta.file_type().is_symlink() {
+            bail!(
+                "refusing to package symlink {} (found under guest_tools/tools); replace the symlink with a real file or remove it",
+                tools_dir.display(),
+            );
+        }
+        if !meta.is_dir() {
+            bail!(
+                "guest tools tools path exists but is not a directory: {}",
+                format!("{tools_dir:?}")
+            );
+        }
+    }
     if tools_dir.is_dir() {
         let allowlist = DriverFileAllowlist::default();
         for entry in walkdir::WalkDir::new(&tools_dir)
