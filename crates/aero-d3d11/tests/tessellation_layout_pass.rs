@@ -133,7 +133,11 @@ async fn run_layout_pass_with_hs_factors_buffer(
                 binding: 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    // `wgsl_tessellation_layout_pass` declares this binding as `read_write` to avoid
+                    // wgpu `ResourceUsageConflict` validation errors when the tessellation runtime
+                    // allocates all scratch buffers from a single backing buffer. Keep this test's
+                    // bind group layout in sync with the shader's declared access mode.
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(hs_factors_size),
                 },
