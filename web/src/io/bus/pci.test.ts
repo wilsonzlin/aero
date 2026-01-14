@@ -797,6 +797,16 @@ describe("io/bus/pci", () => {
     expect(() => pciBus.reserveMmio(0x1000)).toThrow(/before MMIO BAR allocation/i);
   });
 
+  it("rejects MMIO reservations that overflow the 32-bit address space", () => {
+    const portBus = new PortIoBus();
+    const mmioBus = new MmioBus();
+    const pciBus = new PciBus(portBus, mmioBus);
+    pciBus.registerToPortBus();
+
+    // The PCI MMIO window begins at 0xE000_0000; reserving >512MiB would exceed 4GiB.
+    expect(() => pciBus.reserveMmio(0x3000_0000)).toThrow(/overflows 32-bit/i);
+  });
+
   it("prevents initPciConfig() from changing the header type (BAR writes must still remap)", () => {
     const portBus = new PortIoBus();
     const mmioBus = new MmioBus();
