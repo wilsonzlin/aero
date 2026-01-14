@@ -784,7 +784,8 @@ fn tier2_inline_tlb_cross_page_boundary_u64_store_skips_unreachable_mmu_translat
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u32_addr_value_load_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u32_addr_value_load_skips_unreachable_mmu_translate_calls()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -836,7 +837,8 @@ fn tier2_inline_tlb_cross_page_boundary_u32_addr_value_load_skips_unreachable_mm
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u32_binop_value_load_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u32_binop_value_load_skips_unreachable_mmu_translate_calls()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -888,7 +890,8 @@ fn tier2_inline_tlb_cross_page_boundary_u32_binop_value_load_skips_unreachable_m
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u32_store_addr_value_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u32_store_addr_value_skips_unreachable_mmu_translate_calls()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -940,7 +943,8 @@ fn tier2_inline_tlb_cross_page_boundary_u32_store_addr_value_skips_unreachable_m
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u32_store_binop_value_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u32_store_binop_value_skips_unreachable_mmu_translate_calls(
+) {
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -992,7 +996,8 @@ fn tier2_inline_tlb_cross_page_boundary_u32_store_binop_value_skips_unreachable_
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u64_addr_value_load_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u64_addr_value_load_skips_unreachable_mmu_translate_calls()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -1044,7 +1049,8 @@ fn tier2_inline_tlb_cross_page_boundary_u64_addr_value_load_skips_unreachable_mm
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u64_binop_value_load_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u64_binop_value_load_skips_unreachable_mmu_translate_calls()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -1096,7 +1102,8 @@ fn tier2_inline_tlb_cross_page_boundary_u64_binop_value_load_skips_unreachable_m
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u64_store_addr_value_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u64_store_addr_value_skips_unreachable_mmu_translate_calls()
+{
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![
@@ -1148,7 +1155,8 @@ fn tier2_inline_tlb_cross_page_boundary_u64_store_addr_value_skips_unreachable_m
 }
 
 #[test]
-fn tier2_inline_tlb_cross_page_boundary_u64_store_binop_value_skips_unreachable_mmu_translate_calls() {
+fn tier2_inline_tlb_cross_page_boundary_u64_store_binop_value_skips_unreachable_mmu_translate_calls(
+) {
     let trace = TraceIr {
         prologue: Vec::new(),
         body: vec![

@@ -591,10 +591,11 @@ fn wgpu_domain_shader_ds_eval_links_into_tessellation_domain_eval_wrapper() {
 
         // Build the domain-eval wrapper (triangle-domain integer partitioning).
         let out_reg_count: u32 = 1;
-        let ds_wgsl = aero_d3d11::runtime::tessellation::domain_eval::build_triangle_domain_eval_wgsl(
-            &translated.wgsl,
-            out_reg_count,
-        );
+        let ds_wgsl =
+            aero_d3d11::runtime::tessellation::domain_eval::build_triangle_domain_eval_wgsl(
+                &translated.wgsl,
+                out_reg_count,
+            );
 
         let ds_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ds_eval tri interpolation module"),
@@ -670,12 +671,11 @@ fn wgpu_domain_shader_ds_eval_links_into_tessellation_domain_eval_wrapper() {
             mapped_at_creation: false,
         });
 
-        let ds_pipeline =
-            aero_d3d11::runtime::tessellation::domain_eval::DomainEvalPipeline::new(
-                &device,
-                &ds_module,
-                &domain_bgl,
-            );
+        let ds_pipeline = aero_d3d11::runtime::tessellation::domain_eval::DomainEvalPipeline::new(
+            &device,
+            &ds_module,
+            &domain_bgl,
+        );
         let ds_internal_bg = ds_pipeline.create_internal_bind_group(
             &device,
             wgpu::BufferBinding {

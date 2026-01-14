@@ -533,8 +533,9 @@ fn d3d9_token_stream_legacy_fallback_shader_uses_executor_constants_layout() {
 
     // Sanity-check that this shader actually exercises the SM3->legacy fallback path. This keeps
     // the test meaningful if the strict SM3 pipeline gains support for this opcode in the future.
-    let translated = shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
-        .expect("shader translation succeeds");
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .expect("shader translation succeeds");
     assert_eq!(
         translated.backend,
         shader_translate::ShaderTranslateBackend::LegacyFallback
@@ -569,11 +570,7 @@ fn d3d9_token_stream_legacy_fallback_shader_uses_executor_constants_layout() {
     // Pixel shader c0 lives at index 256 in the packed register file.
     let ps_c0_offset_bytes = 256u64 * 16;
     let green = [0.0f32, 1.0, 0.0, 1.0];
-    queue.write_buffer(
-        &constants,
-        ps_c0_offset_bytes,
-        bytemuck::cast_slice(&green),
-    );
+    queue.write_buffer(&constants, ps_c0_offset_bytes, bytemuck::cast_slice(&green));
 
     let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("d3d9 constants bgl"),

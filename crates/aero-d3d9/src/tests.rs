@@ -3574,7 +3574,10 @@ fn shader_translate_cache_retranslates_when_wgsl_options_change() {
 
     {
         let cached = cache.get_or_translate(&vs_bytes).unwrap();
-        assert_eq!(cached.source, shader_translate::ShaderCacheLookupSource::Memory);
+        assert_eq!(
+            cached.source,
+            shader_translate::ShaderCacheLookupSource::Memory
+        );
     }
 
     cache.set_wgsl_options(shader::WgslOptions {

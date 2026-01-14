@@ -101,4 +101,3 @@ fn machine_virtio_net_msix_config_interrupt_delivers_lapic_vector() {
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x55));
 }
-

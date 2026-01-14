@@ -400,4 +400,3 @@ fn aerogpu_cmd_geometry_shader_reads_structured_srv_buffer_translated_prepass() 
         assert_eq!(px(w / 2, h / 2 - 10), [255, 0, 0, 255]);
     });
 }
-

@@ -62,7 +62,10 @@ fn swizzle_bits(swz: [u8; 4]) -> u32 {
 }
 
 fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
-    vec![operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1), idx]
+    vec![
+        operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1),
+        idx,
+    ]
 }
 
 fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {
@@ -335,13 +338,7 @@ async fn run_adj_test(
     writer.set_render_targets(&[RT1], 0);
     writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
     writer.set_index_buffer(IB, AerogpuIndexFormat::Uint16, 0);
-    writer.draw_indexed(
-        verts_per_prim as u32,
-        1,
-        0,
-        verts_per_prim as i32,
-        0,
-    );
+    writer.draw_indexed(verts_per_prim as u32, 1, 0, verts_per_prim as i32, 0);
 
     writer.present(0, 0);
     let stream = writer.finish();
@@ -383,14 +380,7 @@ fn aerogpu_cmd_geometry_shader_line_list_adj_translated_prepass() {
             "::aerogpu_cmd_geometry_shader_line_list_adj_translated_prepass"
         );
         // D3D primitive topology token for lineadj is 10 (matches `CmdPrimitiveTopology::LineListAdj`).
-        run_adj_test(
-            test_name,
-            AerogpuPrimitiveTopology::LineListAdj,
-            10,
-            4,
-            3,
-        )
-        .await;
+        run_adj_test(test_name, AerogpuPrimitiveTopology::LineListAdj, 10, 4, 3).await;
     });
 }
 
