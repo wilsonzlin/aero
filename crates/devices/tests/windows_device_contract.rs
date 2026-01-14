@@ -509,8 +509,8 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
             "{section}: install section mismatch"
         );
         assert_eq!(
-            kbd_install, fallback_install,
-            "{section}: install section mismatch"
+            fallback_install, kbd_install,
+            "{section}: generic fallback install section mismatch"
         );
 
         assert_ne!(
