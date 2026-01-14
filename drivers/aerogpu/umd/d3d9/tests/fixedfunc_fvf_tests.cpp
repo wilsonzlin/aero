@@ -2187,6 +2187,316 @@ bool TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp() {
   return true;
 }
 
+bool TestPsOnlyInteropVertexDeclXyzrhwTex1SynthesizesVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Bind an explicit vertex decl matching XYZRHW|TEX1 (no SetFVF call). The driver
+  // should infer the implied FVF and still be able to synthesize the fixed-function
+  // VS when only a pixel shader is bound.
+  const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZRHW|TEX1)")) {
+    return false;
+  }
+  cleanup.vertex_decls.push_back(hDecl);
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t decl_handle = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf == kFvfXyzrhwTex1, "SetVertexDecl inferred FVF == XYZRHW|TEX1")) {
+      return false;
+    }
+    auto* decl = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+    decl_handle = decl ? decl->handle : 0;
+  }
+  if (!Check(decl_handle != 0, "explicit decl handle non-zero")) {
+    return false;
+  }
+
+  // Bind only a user pixel shader.
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS passthrough)")) {
+    return false;
+  }
+
+  const VertexXyzrhwTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only interop via decl XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t expected_vs = 0;
+  aerogpu_handle_t expected_ps = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto* user_ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+    if (!Check(user_ps != nullptr, "user PS pointer")) {
+      return false;
+    }
+    expected_ps = user_ps->handle;
+
+    if (!Check(dev->fixedfunc_vs_tex1_nodiffuse != nullptr, "interop created fixedfunc_vs_tex1_nodiffuse")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs_tex1_nodiffuse, "interop bound fixedfunc VS (XYZRHW|TEX1)")) {
+      return false;
+    }
+    if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
+      return false;
+    }
+    expected_vs = dev->vs ? dev->vs->handle : 0;
+    if (!Check(expected_vs != 0, "synthesized VS handle non-zero")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosWhiteTex1),
+               "synthesized VS bytecode matches kVsPassthroughPosWhiteTex1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only interop via decl XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  // Explicit vertex decl input layout must remain bound (no SetFVF internal decl).
+  bool saw_decl_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == decl_handle) {
+      saw_decl_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_decl_layout, "SET_INPUT_LAYOUT binds the explicit decl layout")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs == expected_vs, "BIND_SHADERS uses synthesized VS handle")) {
+    return false;
+  }
+  if (!Check(last_bind->ps == expected_ps, "BIND_SHADERS uses user PS handle")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestPsOnlyInteropVertexDeclXyzTex1SynthesizesVsAndUploadsWvp() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Bind an explicit vertex decl matching XYZ|TEX1 (no SetFVF call). The driver
+  // should infer the implied FVF and still be able to synthesize the WVP fixed-function
+  // VS when only a pixel shader is bound.
+  const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|TEX1)")) {
+    return false;
+  }
+  cleanup.vertex_decls.push_back(hDecl);
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZ|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t decl_handle = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf == kFvfXyzTex1, "SetVertexDecl inferred FVF == XYZ|TEX1")) {
+      return false;
+    }
+    auto* decl = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+    decl_handle = decl ? decl->handle : 0;
+  }
+  if (!Check(decl_handle != 0, "explicit decl handle non-zero")) {
+    return false;
+  }
+
+  // Bind only a user pixel shader.
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS passthrough)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only interop via decl XYZ|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t expected_vs = 0;
+  aerogpu_handle_t expected_ps = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto* user_ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+    if (!Check(user_ps != nullptr, "user PS pointer")) {
+      return false;
+    }
+    expected_ps = user_ps->handle;
+
+    if (!Check(dev->fixedfunc_vs_xyz_tex1 != nullptr, "interop created fixedfunc_vs_xyz_tex1")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_tex1, "interop bound fixedfunc VS (XYZ|TEX1)")) {
+      return false;
+    }
+    if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
+      return false;
+    }
+    expected_vs = dev->vs ? dev->vs->handle : 0;
+    if (!Check(expected_vs != 0, "synthesized VS handle non-zero")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1),
+               "synthesized VS bytecode matches kVsTransformPosWhiteTex1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only interop via decl XYZ|TEX1)")) {
+    return false;
+  }
+
+  // Explicit vertex decl input layout must remain bound (no SetFVF internal decl).
+  bool saw_decl_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == decl_handle) {
+      saw_decl_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_decl_layout, "SET_INPUT_LAYOUT binds the explicit decl layout")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs == expected_vs, "BIND_SHADERS uses synthesized VS handle")) {
+    return false;
+  }
+  if (!Check(last_bind->ps == expected_ps, "BIND_SHADERS uses user PS handle")) {
+    return false;
+  }
+
+  // Expect a WVP upload for the fixed-function VS (identity columns by default).
+  constexpr float kIdentityCols[16] = {
+      1.0f, 0.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f, 0.0f,
+      0.0f, 0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+  bool saw_identity_wvp = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 0 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(kIdentityCols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, kIdentityCols, sizeof(kIdentityCols)) == 0) {
+      saw_identity_wvp = true;
+      break;
+    }
+  }
+  if (!Check(saw_identity_wvp, "PS-only interop (decl XYZ|TEX1) uploaded identity WVP constants")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestGetTextureStageStateRoundTrips() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -2754,6 +3064,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyInteropVertexDeclXyzrhwTex1SynthesizesVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyInteropVertexDeclXyzTex1SynthesizesVsAndUploadsWvp()) {
     return 1;
   }
   if (!aerogpu::TestGetTextureStageStateRoundTrips()) {
