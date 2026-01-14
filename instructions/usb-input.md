@@ -225,8 +225,8 @@ The I/O worker consumes the batches in `web/src/workers/io.worker.ts` (`type: "i
 # Run the USB/input-focused test suite (Rust + targeted web unit tests).
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
 # Note: by default this runs a focused subset of `aero-usb` tests (UHCI + external hub + HID
-# builtin snapshot). Use `--usb-all` if you want to run the full `aero-usb` integration suite
-# (includes EHCI/xHCI).
+# builtin snapshot + shared HID usage fixtures). Use `--usb-all` if you want to run the full
+# `aero-usb` integration suite (includes EHCI/xHCI).
 cargo xtask input
 
 # Run the full USB stack test suite (all `aero-usb` integration tests, including EHCI/xHCI).
