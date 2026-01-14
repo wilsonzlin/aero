@@ -65,6 +65,7 @@ It exists so the GPU worker can be ticked/woken even when the legacy shared fram
 
 - ScanoutState layout + publish protocol (Rust): `crates/aero-shared/src/scanout_state.rs`
 - ScanoutState layout + publish protocol (TS mirror): `web/src/ipc/scanout_state.ts`
+  - The GPU worker typically uses `trySnapshotScanoutState()` (bounded retries; returns `null` on failure) rather than `snapshotScanoutState()` (which throws on timeout) so present loops can recover.
 - Used by:
   - `web/src/main/frameScheduler.ts` (decides when to tick the GPU worker)
   - `web/src/workers/gpu-worker.ts` (chooses between legacy framebuffer and other output sources)
@@ -80,6 +81,7 @@ Related shared-memory descriptor: **hardware cursor state** uses the same seqloc
 
 - CursorState layout + publish protocol (Rust): `crates/aero-shared/src/cursor_state.rs`
 - CursorState layout + publish protocol (TS mirror): `web/src/ipc/cursor_state.ts`
+  - The GPU worker typically uses `trySnapshotCursorState()` (bounded retries; returns `null` on failure) rather than `snapshotCursorState()` (which throws on timeout).
 - Consumed by the GPU worker: `web/src/workers/gpu-worker.ts` (cursor snapshot + presenter cursor APIs / compositing)
   - `CursorState.format` also uses AeroGPU `AerogpuFormat` discriminants and follows the same X8 alpha + sRGB interpretation rules as scanout formats.
 
@@ -231,7 +233,7 @@ The key implementation detail is the “busy bit” seqlock:
 Code pointers:
 
 - Rust: module-level docs + `ScanoutState::publish()` / `ScanoutState::snapshot()` in `crates/aero-shared/src/scanout_state.rs`
-- TS: `publishScanoutState()` / `snapshotScanoutState()` in `web/src/ipc/scanout_state.ts`
+- TS: `publishScanoutState()` / `snapshotScanoutState()` / `trySnapshotScanoutState()` in `web/src/ipc/scanout_state.ts`
 
 ### How it is used today
 
