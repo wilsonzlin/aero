@@ -48,6 +48,8 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.
   - When the destination declaration includes diffuse color and the source format does not, the UMD fills it with opaque
     white (matching fixed-function behavior).
+  - When `D3DPV_DONOTCOPYDATA` is set in `ProcessVertices.Flags`, the UMD writes only the output position (`POSITIONT`) and
+    preserves all other destination bytes (no DIFFUSE/TEX writes, no zero-fill).
 
 ## Code anchors
 
