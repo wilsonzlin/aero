@@ -184,3 +184,26 @@ fn machine_win7_install_helper_boots_eltorito_iso_and_falls_back_to_hdd_after_ej
     run_until_halt(&mut m);
     assert_eq!(m.take_serial_output(), vec![b'D']);
 }
+
+#[test]
+fn machine_cd_first_policy_falls_back_to_hdd_when_iso_is_unbootable() {
+    // An unbootable ISO: no ISO9660/El Torito descriptors. CD boot should fail and fall back to HDD.
+    let iso_bytes = vec![0u8; 32 * 2048];
+    let iso = RawDisk::open(MemBackend::from_vec(iso_bytes)).unwrap();
+
+    let mut m = Machine::new_with_win7_storage(2 * 1024 * 1024).unwrap();
+    m.set_disk_image(build_minimal_mbr_disk(b'H')).unwrap();
+    m.attach_install_media_iso(Box::new(iso)).unwrap();
+
+    // Enable the CD-first policy while keeping boot_drive/boot_device as the HDD fallback.
+    m.set_cd_boot_drive(0xE0);
+    m.set_boot_from_cd_if_present(true);
+    m.reset();
+
+    assert_eq!(m.boot_device(), aero_machine::BootDevice::Hdd);
+    assert_eq!(m.cpu().gpr[gpr::RDX] as u8, 0x80);
+    assert_eq!(m.active_boot_device(), aero_machine::BootDevice::Hdd);
+
+    run_until_halt(&mut m);
+    assert_eq!(m.take_serial_output(), vec![b'H']);
+}
