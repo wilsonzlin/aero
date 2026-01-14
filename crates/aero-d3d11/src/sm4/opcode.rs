@@ -58,6 +58,10 @@ pub const OPCODE_IDIV: u32 = 0x3d;
 pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
+/// `loop` (structured loop).
+pub const OPCODE_LOOP: u32 = 0x2b;
+/// `endloop` (end of structured loop).
+pub const OPCODE_ENDLOOP: u32 = 0x2e;
 
 /// `setp` (set predicate register).
 ///
@@ -473,6 +477,8 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_ELSE => Some("else"),
         OPCODE_ENDIF => Some("endif"),
         OPCODE_SETP => Some("setp"),
+        OPCODE_LOOP => Some("loop"),
+        OPCODE_ENDLOOP => Some("endloop"),
         OPCODE_RET => Some("ret"),
         OPCODE_EMITTHENCUT => Some("emitthen_cut"),
         OPCODE_EMITTHENCUT_STREAM => Some("emitthen_cut_stream"),
@@ -533,12 +539,14 @@ mod tests {
     }
 
     #[test]
-    fn opcode_name_includes_switch_ops() {
+    fn opcode_name_includes_switch_and_loop_ops() {
         assert_eq!(opcode_name(OPCODE_BREAK), Some("break"));
         assert_eq!(opcode_name(OPCODE_SWITCH), Some("switch"));
         assert_eq!(opcode_name(OPCODE_CASE), Some("case"));
         assert_eq!(opcode_name(OPCODE_DEFAULT), Some("default"));
         assert_eq!(opcode_name(OPCODE_ENDSWITCH), Some("endswitch"));
+        assert_eq!(opcode_name(OPCODE_LOOP), Some("loop"));
+        assert_eq!(opcode_name(OPCODE_ENDLOOP), Some("endloop"));
     }
 
     #[test]

@@ -3835,13 +3835,13 @@ fn emit_instructions(
                 cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
             }
             Sm4Inst::Break => {
-                let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
-                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_case && !inside_loop {
-                    return Err(ShaderTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop or switch case".to_owned(),
-                        found: blocks
+                 let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
+                 let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                 if !inside_case && !inside_loop {
+                     return Err(ShaderTranslateError::MalformedControlFlow {
+                         inst_index,
+                         expected: "loop or switch case".to_owned(),
+                         found: blocks
                             .last()
                             .map(|b| b.describe())
                             .unwrap_or_else(|| "none".to_owned()),

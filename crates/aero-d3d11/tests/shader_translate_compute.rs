@@ -113,6 +113,38 @@ fn translates_compute_thread_group_size_and_entry_point() {
 }
 
 #[test]
+fn translates_loop_with_break() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Loop,
+            Sm4Inst::Break,
+            Sm4Inst::EndLoop,
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("loop {"),
+        "expected WGSL to contain a loop block:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("break;"),
+        "expected WGSL to contain a break:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_compute_raw_buffer_load_store() {
     let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");

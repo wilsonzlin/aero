@@ -2247,6 +2247,9 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_FTOU, 0x19);
     assert_eq!(OPCODE_ITOF, 0x1a);
     assert_eq!(OPCODE_UTOF, 0x1b);
+    // Structured control flow opcodes.
+    assert_eq!(OPCODE_LOOP, 0x2b);
+    assert_eq!(OPCODE_ENDLOOP, 0x2e);
     // Integer arithmetic opcodes.
     assert_eq!(OPCODE_IABS, 0x61);
     assert_eq!(OPCODE_INEG, 0x62);
@@ -2408,6 +2411,30 @@ fn decodes_sm5_ds_domain_declaration() {
         }]
     );
     assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
+}
+
+#[test]
+fn decodes_loop_endloop_and_break() {
+    let body = [
+        opcode_token(OPCODE_LOOP, 1),
+        opcode_token(OPCODE_BREAK, 1),
+        opcode_token(OPCODE_ENDLOOP, 1),
+        opcode_token(OPCODE_RET, 1),
+    ];
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions,
+        vec![
+            Sm4Inst::Loop,
+            Sm4Inst::Break,
+            Sm4Inst::EndLoop,
+            Sm4Inst::Ret
+        ]
+    );
 }
 
 #[test]
