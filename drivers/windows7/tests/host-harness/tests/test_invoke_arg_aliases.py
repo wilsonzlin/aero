@@ -203,6 +203,18 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.dry_run)
 
+    def test_require_expect_blk_msi_sets_flag(self) -> None:
+        args = self._parse(
+            [
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--require-expect-blk-msi",
+            ]
+        )
+        self.assertTrue(args.require_expect_blk_msi)
+
     def test_vectors_override_flags_parse(self) -> None:
         args = self._parse(
             [
