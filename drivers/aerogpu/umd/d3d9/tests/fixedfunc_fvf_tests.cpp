@@ -6105,6 +6105,130 @@ bool TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp() {
   return true;
 }
 
+bool TestPsOnlyInteropXyzTex1FogEnabledDoesNotSelectFogVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;     // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;      // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;  // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;      // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;        // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;        // D3DFOG_LINEAR
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  // Bind only a user pixel shader (VS stays NULL). Fog must not change the
+  // synthesized fixed-function VS output layout in PS-only interop mode.
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS passthrough)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.25f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.25f, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.25f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only interop XYZ|TEX1; fog enabled)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto* user_ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+    if (!Check(user_ps != nullptr, "user PS pointer")) {
+      return false;
+    }
+    if (!Check(dev->user_vs == nullptr, "PS-only interop: user_vs is NULL")) {
+      return false;
+    }
+    if (!Check(dev->user_ps == user_ps, "PS-only interop: user_ps is bound")) {
+      return false;
+    }
+    if (!Check(dev->vs != nullptr, "PS-only interop: synthesized VS is bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1),
+               "PS-only interop: fog does not select fog VS variant")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only interop fog enabled)")) {
+    return false;
+  }
+
+  // PS-only interop must not upload fixed-function fog constants (reserved PS
+  // registers c1..c2) since the user PS is bound.
+  size_t fog_const_uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 1 && sc->vec4_count == 2) {
+      ++fog_const_uploads;
+    }
+  }
+  if (!Check(fog_const_uploads == 0, "PS-only interop: does not upload fog PS constants")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestPsOnlyInteropXyzNormalIgnoresLightingAndDoesNotUploadLightingConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -11468,6 +11592,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyInteropXyzTex1FogEnabledDoesNotSelectFogVs()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropXyzNormalIgnoresLightingAndDoesNotUploadLightingConstants()) {
