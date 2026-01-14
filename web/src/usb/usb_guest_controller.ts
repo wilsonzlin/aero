@@ -6,10 +6,11 @@ import type { UsbPassthroughBridgeLike } from "./webusb_passthrough_runtime";
 /**
  * Root port reserved for the guest-visible EHCI WebUSB passthrough device.
  *
- * UHCI uses root port 1 because root port 0 is reserved for the external WebHID hub topology.
- * EHCI currently has no external hub attachment in the browser runtime, so we reserve port 0.
+ * Keep this consistent with the UHCI/xHCI convention:
+ * - root port 0 is available for an external hub / WebHID / synthetic HID topology, and
+ * - root port 1 is reserved for WebUSB passthrough.
  */
-export const EHCI_WEBUSB_GUEST_ROOT_PORT = 0;
+export const EHCI_WEBUSB_GUEST_ROOT_PORT = WEBUSB_GUEST_ROOT_PORT;
 
 export function webUsbGuestRootPortForMode(mode: UsbGuestControllerMode): number {
   return mode === "ehci" ? EHCI_WEBUSB_GUEST_ROOT_PORT : WEBUSB_GUEST_ROOT_PORT;
@@ -34,4 +35,3 @@ export function applyUsbSelectedToWebUsbBridgeForMode(
   applyUsbSelectedToWebUsbUhciBridge(bridge, msg);
   return bridge;
 }
-

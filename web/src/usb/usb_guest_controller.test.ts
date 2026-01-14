@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { applyUsbSelectedToWebUsbBridgeForMode } from "./usb_guest_controller";
+import { EHCI_WEBUSB_GUEST_ROOT_PORT, applyUsbSelectedToWebUsbBridgeForMode, webUsbGuestRootPortForMode } from "./usb_guest_controller";
+import { EXTERNAL_HUB_ROOT_PORT, WEBUSB_GUEST_ROOT_PORT } from "./uhci_external_hub";
 import { WebUsbPassthroughRuntime } from "./webusb_passthrough_runtime";
 import type { UsbHostAction, UsbHostCompletion, UsbSelectedMessage } from "./usb_proxy_protocol";
 
@@ -35,6 +36,12 @@ class FakePort {
 }
 
 describe("usb/usb_guest_controller", () => {
+  it("reserves a WebUSB root port that does not overlap the external hub", () => {
+    expect(EHCI_WEBUSB_GUEST_ROOT_PORT).toBe(WEBUSB_GUEST_ROOT_PORT);
+    expect(EHCI_WEBUSB_GUEST_ROOT_PORT).not.toBe(EXTERNAL_HUB_ROOT_PORT);
+    expect(webUsbGuestRootPortForMode("ehci")).toBe(WEBUSB_GUEST_ROOT_PORT);
+  });
+
   it("routes usb.selected to the EHCI bridge when mode=ehci and pumps actions/completions", async () => {
     const port = new FakePort();
 
@@ -87,4 +94,3 @@ describe("usb/usb_guest_controller", () => {
     expect(ehci.push_completion).toHaveBeenCalledWith(completion);
   });
 });
-
