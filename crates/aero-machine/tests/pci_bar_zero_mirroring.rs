@@ -306,6 +306,235 @@ fn snapshot_device_states_mirrors_virtio_input_keyboard_bar0_when_guest_clears_i
 }
 
 #[test]
+fn snapshot_device_states_mirrors_virtio_input_mouse_bar0_when_guest_clears_it_to_zero() {
+    let vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let mouse = vm.virtio_input_mouse().expect("virtio input enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::VIRTIO_INPUT_MOUSE.bdf;
+
+    let bar = 0u8;
+    let bar_cfg_offset = 0x10u16 + u16::from(bar) * 4;
+
+    // BIOS POST must assign a non-zero base address to BAR0 (virtio-pci MMIO window).
+    let bar0_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("virtio-input mouse config function must exist");
+        cfg.bar_range(bar)
+            .expect("virtio-input mouse BAR0 must exist")
+            .base
+    };
+    assert_ne!(
+        bar0_base, 0,
+        "expected virtio-input mouse BAR0 base to be assigned"
+    );
+
+    // Ensure the device model observes the assigned BAR0 base before we clear it.
+    {
+        let dev = mouse.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar0_base);
+    }
+
+    // Simulate a guest unassigning BAR0 by programming it to 0. Virtio BAR0 is 64-bit, so clear
+    // both halves.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, bar_cfg_offset, 4, 0);
+        pci_cfg
+            .bus_mut()
+            .write_config(bdf, bar_cfg_offset + 4, 4, 0);
+    }
+
+    // Snapshotting calls `SnapshotSource::device_states`, which must mirror BAR0 base=0 into the
+    // virtio-input device model so snapshots don't preserve stale BAR bases.
+    let _ = <Machine as aero_snapshot::SnapshotSource>::device_states(&vm);
+    {
+        let dev = mouse.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
+    }
+}
+
+#[test]
+fn snapshot_device_states_mirrors_uhci_bar4_when_guest_clears_it_to_zero() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let uhci = vm.uhci().expect("uhci enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::USB_UHCI_PIIX3.bdf;
+    let bar = UhciPciDevice::IO_BAR_INDEX;
+    let bar_cfg_offset = 0x10u16 + u16::from(bar) * 4;
+
+    // BIOS POST must assign a non-zero base address to BAR4 (UHCI I/O window).
+    let bar4_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("UHCI config function must exist");
+        cfg.bar_range(bar).expect("UHCI BAR4 must exist").base
+    };
+    assert_ne!(bar4_base, 0, "expected UHCI BAR4 base to be assigned");
+
+    // Ensure the device model observes the assigned BAR4 base before we clear it.
+    //
+    // UHCI sync occurs in the platform tick loop, so tick once to mirror the canonical PCI state
+    // into the controller.
+    vm.tick_platform(1);
+    {
+        let dev = uhci.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar4_base);
+    }
+
+    // Now simulate a guest unassigning BAR4 by programming it to 0.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, bar_cfg_offset, 4, 0);
+    }
+
+    // Snapshotting must mirror BAR4 base=0 into the UHCI device model.
+    let _ = <Machine as aero_snapshot::SnapshotSource>::device_states(&vm);
+    {
+        let mut dev = uhci.borrow_mut();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
+        // I/O BARs must still expose bit0=1 to indicate an I/O BAR even when the base is 0.
+        assert_eq!(dev.config_mut().read(bar_cfg_offset, 4), 0x1);
+    }
+}
+
+#[test]
+fn snapshot_device_states_mirrors_ehci_bar0_when_guest_clears_it_to_zero() {
+    let vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ehci: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let ehci = vm.ehci().expect("ehci enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::USB_EHCI_ICH9.bdf;
+    let bar = EhciPciDevice::MMIO_BAR_INDEX;
+    let bar_cfg_offset = 0x10u16 + u16::from(bar) * 4;
+
+    // BIOS POST must assign a non-zero base address to BAR0 (EHCI MMIO window).
+    let bar0_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("EHCI config function must exist");
+        cfg.bar_range(bar).expect("EHCI BAR0 must exist").base
+    };
+    assert_ne!(bar0_base, 0, "expected EHCI BAR0 base to be assigned");
+
+    // Ensure the device model observes the assigned BAR0 base before we clear it.
+    {
+        let dev = ehci.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar0_base);
+    }
+
+    // Now simulate a guest unassigning BAR0 by programming it to 0.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, bar_cfg_offset, 4, 0);
+    }
+
+    // Snapshotting must mirror BAR0 base=0 into the EHCI device model.
+    let _ = <Machine as aero_snapshot::SnapshotSource>::device_states(&vm);
+    {
+        let dev = ehci.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
+    }
+}
+
+#[test]
+fn snapshot_device_states_mirrors_xhci_bar0_when_guest_clears_it_to_zero() {
+    let vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let xhci = vm.xhci().expect("xhci enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::USB_XHCI_QEMU.bdf;
+    let bar = aero_devices::usb::xhci::XhciPciDevice::MMIO_BAR_INDEX;
+    let bar_cfg_offset = 0x10u16 + u16::from(bar) * 4;
+
+    // BIOS POST must assign a non-zero base address to BAR0 (xHCI MMIO window).
+    let bar0_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("xHCI config function must exist");
+        cfg.bar_range(bar).expect("xHCI BAR0 must exist").base
+    };
+    assert_ne!(bar0_base, 0, "expected xHCI BAR0 base to be assigned");
+
+    // Ensure the device model observes the assigned BAR0 base before we clear it.
+    {
+        let dev = xhci.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar0_base);
+    }
+
+    // Now simulate a guest unassigning BAR0 by programming it to 0.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, bar_cfg_offset, 4, 0);
+    }
+
+    // Snapshotting must mirror BAR0 base=0 into the xHCI device model.
+    let _ = <Machine as aero_snapshot::SnapshotSource>::device_states(&vm);
+    {
+        let dev = xhci.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
+    }
+}
+
+#[test]
 fn snapshot_device_states_mirrors_virtio_net_bar0_when_guest_clears_it_to_zero() {
     let vm = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
