@@ -48,10 +48,11 @@ Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed 
 specific than the generic fallback, so it will win).
 
 The repo also carries a legacy filename alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable)
-for workflows/tools that still reference `virtio-input.inf`. It is expected to stay byte-for-byte identical to
-`inf/aero_virtio_input.inf` from the first section header (`[Version]`) onward (only banner/comments may differ; see
-`../scripts/check-inf-alias.py`). Do not ship/install it alongside `aero_virtio_input.inf` (redundant overlapping INFs
-can lead to confusing binding/upgrade behavior).
+for workflows/tools that still reference `virtio-input.inf`. It is kept in sync with the canonical INF: expected to stay
+byte-for-byte identical to `inf/aero_virtio_input.inf` from the first section header (`[Version]`) onward (only
+banner/comments may differ; see `../scripts/check-inf-alias.py`). It is **not** a separate “fallback-only” variant (it
+contains the same strict HWID list, including the `...&REV_01` generic fallback). Do not ship/install it alongside
+`aero_virtio_input.inf` (redundant overlapping INFs can lead to confusing binding/upgrade behavior).
 
 This avoids “driver installs but won’t start” confusion: the driver enforces the
 contract major version at runtime, so binding to a non-contract `REV_00` device
