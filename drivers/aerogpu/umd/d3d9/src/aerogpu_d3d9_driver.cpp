@@ -25851,6 +25851,20 @@ static HRESULT AEROGPU_D3D9_CALL device_set_transform_portable(
     dev->fixedfunc_lighting_dirty = true;
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
+
+  // If the fixed-function WVP vertex shader path is currently active, eagerly
+  // refresh the reserved VS constant range so the next draw does not need to
+  // re-upload it (and so state queries/tests can observe the dirty bit cleared
+  // immediately after transform updates).
+  //
+  // Important: do not touch the reserved range when a user vertex shader is
+  // bound, as that would clobber app-provided constants.
+  if (!dev->user_vs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
+    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+  }
   return trace.ret(S_OK);
 }
 
@@ -25887,6 +25901,16 @@ static HRESULT AEROGPU_D3D9_CALL device_multiply_transform_portable(
     dev->fixedfunc_lighting_dirty = true;
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
+
+  // Mirror SetTransform: when fixed-function WVP rendering is active, eagerly
+  // update the reserved VS constant range on MultiplyTransform so the first
+  // subsequent draw does not redundantly re-upload the matrix constants.
+  if (!dev->user_vs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
+    const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+  }
   return trace.ret(S_OK);
 }
 
