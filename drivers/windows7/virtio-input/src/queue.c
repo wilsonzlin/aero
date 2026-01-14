@@ -306,6 +306,92 @@ VOID VirtioInputEvtIoDeviceControl(
         status = (copyBytes < sizeof(snapshot)) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
         break;
     }
+    case IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO: {
+        PUCHAR outBuf;
+        size_t outBytes;
+        size_t availBytes;
+        size_t copyBytes;
+        VIOINPUT_INTERRUPT_INFO snapshot;
+
+        if (OutputBufferLength == 0) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        outBuf = NULL;
+        outBytes = 0;
+        status = WdfRequestRetrieveOutputBuffer(Request, 0, (PVOID *)&outBuf, &outBytes);
+        if (!NT_SUCCESS(status)) {
+            break;
+        }
+
+        RtlZeroMemory(&snapshot, sizeof(snapshot));
+        snapshot.Size = sizeof(snapshot);
+        snapshot.Version = VIOINPUT_INTERRUPT_INFO_VERSION;
+
+        snapshot.Mode = (VIOINPUT_INTERRUPT_MODE)devCtx->Interrupts.Mode;
+        snapshot.ConfigVector = VIOINPUT_INTERRUPT_VECTOR_NONE;
+        snapshot.Queue0Vector = VIOINPUT_INTERRUPT_VECTOR_NONE;
+        snapshot.Queue1Vector = VIOINPUT_INTERRUPT_VECTOR_NONE;
+
+        snapshot.TotalInterruptCount = devCtx->Counters.VirtioInterrupts;
+        snapshot.TotalDpcCount = devCtx->Counters.VirtioDpcs;
+        snapshot.ConfigInterruptCount = devCtx->ConfigInterruptCount;
+        snapshot.Queue0InterruptCount = devCtx->QueueInterruptCount[0];
+        snapshot.Queue1InterruptCount = devCtx->QueueInterruptCount[1];
+
+        if (devCtx->Interrupts.Mode == VirtioPciInterruptModeIntx) {
+            snapshot.MessageCount = 0;
+            snapshot.Mapping = VioInputInterruptMappingAllOnVector0;
+            snapshot.UsedVectorCount = 0;
+            snapshot.IntxSpuriousCount = devCtx->Interrupts.u.Intx.SpuriousCount;
+        } else if (devCtx->Interrupts.Mode == VirtioPciInterruptModeMsix) {
+            snapshot.MessageCount = devCtx->Interrupts.u.Msix.MessageCount;
+            snapshot.UsedVectorCount = devCtx->Interrupts.u.Msix.UsedVectorCount;
+            snapshot.ConfigVector = devCtx->Interrupts.u.Msix.ConfigVector;
+
+            if (devCtx->Interrupts.u.Msix.QueueVectors != NULL) {
+                if (devCtx->Interrupts.QueueCount > 0) {
+                    snapshot.Queue0Vector = devCtx->Interrupts.u.Msix.QueueVectors[0];
+                }
+                if (devCtx->Interrupts.QueueCount > 1) {
+                    snapshot.Queue1Vector = devCtx->Interrupts.u.Msix.QueueVectors[1];
+                }
+            }
+
+            if (devCtx->Interrupts.u.Msix.UsedVectorCount <= 1) {
+                snapshot.Mapping = VioInputInterruptMappingAllOnVector0;
+            } else if (devCtx->Interrupts.u.Msix.UsedVectorCount == (USHORT)(1 + devCtx->Interrupts.QueueCount)) {
+                snapshot.Mapping = VioInputInterruptMappingPerQueue;
+            } else {
+                snapshot.Mapping = VioInputInterruptMappingUnknown;
+            }
+        } else {
+            snapshot.MessageCount = 0;
+            snapshot.Mapping = VioInputInterruptMappingUnknown;
+            snapshot.UsedVectorCount = 0;
+        }
+
+        availBytes = outBytes;
+        if (OutputBufferLength < availBytes) {
+            availBytes = OutputBufferLength;
+        }
+
+        copyBytes = availBytes;
+        if (copyBytes > sizeof(snapshot)) {
+            copyBytes = sizeof(snapshot);
+        }
+        // Only copy complete 32-bit fields (Size/Version + ULONG/LONG fields).
+        copyBytes &= ~(sizeof(ULONG) - 1u);
+
+        if (copyBytes != 0) {
+            RtlCopyMemory(outBuf, &snapshot, copyBytes);
+            info = copyBytes;
+        }
+
+        status = (copyBytes < sizeof(snapshot)) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+        break;
+    }
     case IOCTL_VIOINPUT_RESET_COUNTERS: {
         VioInputCountersReset(&devCtx->Counters);
         status = STATUS_SUCCESS;

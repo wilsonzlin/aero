@@ -1579,6 +1579,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--require-virtio-input-msix",
+        dest="require_virtio_input_msix",
+        action="store_true",
+        help=(
+            "Require the guest virtio-input-msix marker to report mode=msix. "
+            "This is optional so older guest selftest binaries (which don't emit the marker) can still run."
+        ),
+    )
+    parser.add_argument(
         "--with-virtio-snd",
         "--enable-virtio-snd",
         dest="enable_virtio_snd",
@@ -2158,6 +2167,7 @@ def main() -> int:
             irq_diag_carry = b""
             virtio_blk_marker_line: Optional[str] = None
             virtio_blk_marker_carry = b""
+            virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             saw_virtio_blk_pass = False
             saw_virtio_blk_fail = False
             saw_virtio_input_pass = False
@@ -2214,6 +2224,10 @@ def main() -> int:
                     tail += chunk
                     if len(tail) > 131072:
                         tail = tail[-131072:]
+                    if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
+                        marker = _parse_virtio_input_msix_marker(tail)
+                        if marker is not None:
+                            virtio_input_msix_marker = marker
 
                     if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                         saw_virtio_blk_pass = True
@@ -2737,12 +2751,32 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
-
                         if args.require_virtio_blk_msix:
                             ok, reason = _require_virtio_blk_msix_marker(tail)
                             if not ok:
                                 print(
                                     f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+
+                        if bool(args.require_virtio_input_msix):
+                            if virtio_input_msix_marker is None:
+                                print(
+                                    "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
+                                    "--require-virtio-input-msix was enabled (guest selftest too old?)",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            mode = virtio_input_msix_marker.fields.get("mode", "")
+                            if mode != "msix":
+                                print(
+                                    f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report mode=msix "
+                                    f"while --require-virtio-input-msix was enabled (mode={mode or 'missing'})",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -2885,6 +2919,10 @@ def main() -> int:
                         tail += chunk2
                         if len(tail) > 131072:
                             tail = tail[-131072:]
+                        if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
+                            marker = _parse_virtio_input_msix_marker(tail)
+                            if marker is not None:
+                                virtio_input_msix_marker = marker
                         if not saw_virtio_blk_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS" in tail:
                             saw_virtio_blk_pass = True
                         if not saw_virtio_blk_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL" in tail:
@@ -3275,12 +3313,32 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
-
                             if args.require_virtio_blk_msix:
                                 ok, reason = _require_virtio_blk_msix_marker(tail)
                                 if not ok:
                                     print(
                                         f"FAIL: VIRTIO_BLK_MSIX_REQUIRED: {reason}",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                            if bool(args.require_virtio_input_msix):
+                                if virtio_input_msix_marker is None:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
+                                        "--require-virtio-input-msix was enabled (guest selftest too old?)",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                mode = virtio_input_msix_marker.fields.get("mode", "")
+                                if mode != "msix":
+                                    print(
+                                        f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report mode=msix "
+                                        f"while --require-virtio-input-msix was enabled (mode={mode or 'missing'})",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -3817,6 +3875,30 @@ def _parse_marker_kv_fields(marker_line: str) -> dict[str, str]:
             continue
         out[k] = v
     return out
+
+
+@dataclass(frozen=True)
+class _VirtioInputMsixMarker:
+    status: str
+    fields: dict[str, str]
+    line: str
+
+
+def _parse_virtio_input_msix_marker(tail: bytes) -> Optional[_VirtioInputMsixMarker]:
+    """
+    Parse the guest marker emitted by the selftest for virtio-input interrupt diagnostics.
+
+    Example:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|messages=3|...
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|")
+    if marker_line is None:
+        return None
+
+    parts = marker_line.split("|")
+    status = parts[3] if len(parts) >= 4 else ""
+    fields = _parse_marker_kv_fields(marker_line)
+    return _VirtioInputMsixMarker(status=status, fields=fields, line=marker_line)
 
 
 _VIRTIO_IRQ_MARKER_RE = re.compile(r"^virtio-(?P<dev>.+)-irq\|(?P<level>INFO|WARN)(?:\|(?P<rest>.*))?$")

@@ -95,6 +95,9 @@
 #define IOCTL_VIOINPUT_QUERY_STATE \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
 
+#define IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS)
+
 #if VIOINPUT_DIAGNOSTICS
 #define IOCTL_VIOINPUT_GET_LOG_MASK \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_READ_ACCESS)
@@ -109,14 +112,16 @@
  */
 #define VIOINPUT_COUNTERS_VERSION 3
 #define VIOINPUT_STATE_VERSION 2
+#define VIOINPUT_INTERRUPT_INFO_VERSION 1
 
 /*
- * Minimal prefix returned by IOCTL_VIOINPUT_QUERY_COUNTERS / IOCTL_VIOINPUT_QUERY_STATE.
+ * Minimal prefix returned by IOCTL_VIOINPUT_QUERY_COUNTERS / IOCTL_VIOINPUT_QUERY_STATE /
+ * IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO.
  *
  * Tools may probe the driver with a smaller output buffer than the full
- * VIOINPUT_COUNTERS / VIOINPUT_STATE structs (e.g. after a version bump).
- * The driver should always try to return at least Size + Version so callers
- * can allocate the correct buffer size and retry.
+ * VIOINPUT_* structs (e.g. after a version bump). The driver should always try
+ * to return at least Size + Version so callers can allocate the correct buffer
+ * size and retry.
  */
 typedef struct _VIOINPUT_COUNTERS_V1_MIN {
     ULONG Size;
@@ -127,6 +132,11 @@ typedef struct _VIOINPUT_STATE_V1_MIN {
     ULONG Size;
     ULONG Version;
 } VIOINPUT_STATE_V1_MIN, *PVIOINPUT_STATE_V1_MIN;
+
+typedef struct _VIOINPUT_INTERRUPT_INFO_V1_MIN {
+    ULONG Size;
+    ULONG Version;
+} VIOINPUT_INTERRUPT_INFO_V1_MIN, *PVIOINPUT_INTERRUPT_INFO_V1_MIN;
 
 typedef struct _VIOINPUT_COUNTERS {
     ULONG Size;
@@ -220,6 +230,57 @@ typedef struct _VIOINPUT_STATE {
     // Whether StatusQDropOnFull is enabled for this device instance.
     ULONG StatusQDropOnFull;
 } VIOINPUT_STATE, *PVIOINPUT_STATE;
+
+/*
+ * Interrupt diagnostics snapshot.
+ *
+ * This IOCTL is intended for the Win7 guest selftest and host harness so they can
+ * deterministically validate MSI-X enablement and vector routing (config vs per-queue).
+ */
+typedef enum _VIOINPUT_INTERRUPT_MODE {
+    VioInputInterruptModeUnknown = 0,
+    VioInputInterruptModeIntx = 1,
+    VioInputInterruptModeMsix = 2,
+} VIOINPUT_INTERRUPT_MODE;
+
+typedef enum _VIOINPUT_INTERRUPT_MAPPING {
+    VioInputInterruptMappingUnknown = 0,
+    VioInputInterruptMappingAllOnVector0 = 1,
+    VioInputInterruptMappingPerQueue = 2,
+} VIOINPUT_INTERRUPT_MAPPING;
+
+/* Sentinel for "no vector assigned" (mirrors virtio spec VIRTIO_PCI_MSI_NO_VECTOR). */
+#define VIOINPUT_INTERRUPT_VECTOR_NONE ((USHORT)0xFFFF)
+
+typedef struct _VIOINPUT_INTERRUPT_INFO {
+    ULONG Size;
+    ULONG Version;
+
+    VIOINPUT_INTERRUPT_MODE Mode;
+
+    /* Number of message-signaled interrupts granted by the OS (0 when INTx). */
+    ULONG MessageCount;
+
+    /* MSI-X vector routing policy chosen (all queues on vector0 vs per-queue). */
+    VIOINPUT_INTERRUPT_MAPPING Mapping;
+
+    /* Number of vectors actually used by the driver (0 when INTx). */
+    USHORT UsedVectorCount;
+
+    /* Vectors programmed into virtio-pci common cfg (message numbers). */
+    USHORT ConfigVector;
+    USHORT Queue0Vector; /* eventq */
+    USHORT Queue1Vector; /* statusq */
+
+    /* Optional counters (best-effort snapshot). */
+    LONG IntxSpuriousCount;
+
+    LONG TotalInterruptCount;
+    LONG TotalDpcCount;
+    LONG ConfigInterruptCount;
+    LONG Queue0InterruptCount;
+    LONG Queue1InterruptCount;
+} VIOINPUT_INTERRUPT_INFO, *PVIOINPUT_INTERRUPT_INFO;
 
 #if VIOINPUT_DIAGNOSTICS
 

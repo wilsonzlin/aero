@@ -123,6 +123,11 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioSndMsix,
 
+  # If set, require the guest virtio-input-msix marker to report mode=msix.
+  # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireVirtioInputMsix,
+
   # If set, stream newly captured COM1 serial output to stdout while waiting.
   [Parameter(Mandatory = $false)]
   [switch]$FollowSerial,
@@ -559,6 +564,10 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputWheel")]
     [bool]$RequireVirtioInputWheelPass = $false,
+
+    # If true, require the virtio-input-msix marker to report mode=msix.
+    [Parameter(Mandatory = $false)]
+    [bool]$RequireVirtioInputMsixPass = $false,
     # Best-effort QMP channel for input injection.
     [Parameter(Mandatory = $false)] [string]$QmpHost = "127.0.0.1",
     [Parameter(Mandatory = $false)] [Nullable[int]]$QmpPort = $null
@@ -598,6 +607,34 @@ function Wait-AeroSelftestResult {
   $sawVirtioSndDuplexFail = $false
   $sawVirtioNetPass = $false
   $sawVirtioNetFail = $false
+
+  function Test-VirtioInputMsixRequirement {
+    param(
+      [Parameter(Mandatory = $true)] [string]$Tail
+    )
+
+    if (-not $RequireVirtioInputMsixPass) { return $null }
+
+    $matches = [regex]::Matches($Tail, "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-msix\|[^\r\n]+")
+    if ($matches.Count -le 0) {
+      return @{ Result = "MISSING_VIRTIO_INPUT_MSIX"; Tail = $Tail }
+    }
+
+    $line = $matches[$matches.Count - 1].Value
+    $status = ""
+    if ($line -match "^AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-msix\|([^|]+)") {
+      $status = $Matches[1]
+    }
+
+    $mode = ""
+    if ($line -match "mode=([^|\r\n]+)") { $mode = $Matches[1] }
+
+    if ($status -ne "PASS" -or $mode -ne "msix") {
+      return @{ Result = "VIRTIO_INPUT_MSIX_REQUIRED"; Tail = $Tail }
+    }
+
+    return $null
+  }
 
   while ((Get-Date) -lt $deadline) {
     $null = Try-HandleAeroHttpRequest -Listener $HttpListener -Path $HttpPath
@@ -796,6 +833,8 @@ function Wait-AeroSelftestResult {
             }
           }
 
+          $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
+          if ($null -ne $msixCheck) { return $msixCheck }
           return @{ Result = "PASS"; Tail = $tail }
         }
 
@@ -829,6 +868,8 @@ function Wait-AeroSelftestResult {
                     return @{ Result = "MISSING_VIRTIO_INPUT_WHEEL"; Tail = $tail }
                   }
                 }
+                $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
+                if ($null -ne $msixCheck) { return $msixCheck }
                 return @{ Result = "PASS"; Tail = $tail }
               }
               if ($sawVirtioSndDuplexSkip) {
@@ -869,6 +910,8 @@ function Wait-AeroSelftestResult {
           }
         }
 
+        $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
+        if ($null -ne $msixCheck) { return $msixCheck }
         return @{ Result = "PASS"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
@@ -2463,7 +2506,7 @@ try {
   $scriptExitCode = 0
 
   try {
-    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd) -RequireVirtioInputEventsPass ([bool]$needInputEvents) -RequireVirtioInputWheelPass ([bool]$needInputWheel) -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) -QmpHost "127.0.0.1" -QmpPort $qmpPort
+    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd) -RequireVirtioInputEventsPass ([bool]$needInputEvents) -RequireVirtioInputWheelPass ([bool]$needInputWheel) -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) -QmpHost "127.0.0.1" -QmpPort $qmpPort
     if ($needMsixCheck -and $result.Result -eq "PASS") {
       if (($null -eq $qmpPort) -or ($qmpPort -le 0)) {
         $result = @{
@@ -2566,6 +2609,22 @@ try {
     }
     "VIRTIO_INPUT_FAILED" {
       Write-Host "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_INPUT_MSIX" {
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while -RequireVirtioInputMsix was enabled (guest selftest too old?)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_MSIX_REQUIRED" {
+      Write-Host "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report mode=msix while -RequireVirtioInputMsix was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

@@ -96,6 +96,10 @@ struct Options {
   // This is intended to be paired with host-side QMP `input-send-event` injection of `abs` events.
   bool test_input_tablet_events = false;
 
+  // If set, require the virtio-input driver to be using MSI-X (message-signaled interrupts).
+  // Without this flag the selftest still emits an informational virtio-input-msix marker.
+  bool require_input_msix = false;
+
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
   DWORD io_chunk_kib = 1024;
@@ -150,6 +154,47 @@ static bool LessInsensitive(const std::wstring& a, const std::wstring& b) {
 // (pairs with IOCTL_HID_GET_DEVICE_DESCRIPTOR=0, IOCTL_HID_READ_REPORT=2, etc).
 #define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(1)
 #endif
+
+// Userspace mirror of `drivers/windows7/virtio-input/src/log.h` diagnostics IOCTLs.
+// These are used by the selftest to observe interrupt configuration (INTx vs MSI-X).
+static constexpr DWORD IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO =
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS);
+
+static constexpr USHORT VIOINPUT_INTERRUPT_VECTOR_NONE = 0xFFFFu;
+
+enum VIOINPUT_INTERRUPT_MODE : ULONG {
+  VioInputInterruptModeUnknown = 0,
+  VioInputInterruptModeIntx = 1,
+  VioInputInterruptModeMsix = 2,
+};
+
+enum VIOINPUT_INTERRUPT_MAPPING : ULONG {
+  VioInputInterruptMappingUnknown = 0,
+  VioInputInterruptMappingAllOnVector0 = 1,
+  VioInputInterruptMappingPerQueue = 2,
+};
+
+struct VIOINPUT_INTERRUPT_INFO {
+  ULONG Size;
+  ULONG Version;
+
+  VIOINPUT_INTERRUPT_MODE Mode;
+  ULONG MessageCount;
+  VIOINPUT_INTERRUPT_MAPPING Mapping;
+  USHORT UsedVectorCount;
+
+  USHORT ConfigVector;
+  USHORT Queue0Vector;
+  USHORT Queue1Vector;
+
+  LONG IntxSpuriousCount;
+
+  LONG TotalInterruptCount;
+  LONG TotalDpcCount;
+  LONG ConfigInterruptCount;
+  LONG Queue0InterruptCount;
+  LONG Queue1InterruptCount;
+};
 
 static std::wstring NormalizeGuidLikeString(std::wstring s) {
   s = ToLower(std::move(s));
@@ -2876,6 +2921,72 @@ static std::optional<std::vector<uint8_t>> ReadHidReportDescriptor(Logger& log, 
 
   buf.resize(bytes);
   return buf;
+}
+
+static const char* VirtioInputInterruptModeToString(ULONG mode) {
+  switch (mode) {
+    case VioInputInterruptModeIntx:
+      return "intx";
+    case VioInputInterruptModeMsix:
+      return "msix";
+    default:
+      return "unknown";
+  }
+}
+
+static const char* VirtioInputInterruptMappingToString(ULONG mapping) {
+  switch (mapping) {
+    case VioInputInterruptMappingAllOnVector0:
+      return "all-on-vector0";
+    case VioInputInterruptMappingPerQueue:
+      return "per-queue";
+    default:
+      return "unknown";
+  }
+}
+
+static std::optional<VIOINPUT_INTERRUPT_INFO> QueryVirtioInputInterruptInfo(Logger& log,
+                                                                            const std::wstring& device_path,
+                                                                            DWORD* win32_error_out) {
+  if (win32_error_out) *win32_error_out = ERROR_SUCCESS;
+  if (device_path.empty()) return std::nullopt;
+
+  HANDLE h = OpenHidDeviceForIoctl(device_path.c_str());
+  if (h == INVALID_HANDLE_VALUE) {
+    const DWORD err = GetLastError();
+    if (win32_error_out) *win32_error_out = err;
+    log.Logf("virtio-input-msix: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(),
+             static_cast<unsigned long>(err));
+    return std::nullopt;
+  }
+
+  VIOINPUT_INTERRUPT_INFO info{};
+  DWORD bytes = 0;
+  const BOOL ok =
+      DeviceIoControl(h, IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO, nullptr, 0, &info, sizeof(info), &bytes, nullptr);
+  const DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(h);
+
+  if (!ok) {
+    if (win32_error_out) *win32_error_out = err;
+    log.Logf("virtio-input-msix: IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO failed err=%lu", static_cast<unsigned long>(err));
+    return std::nullopt;
+  }
+
+  if (bytes < sizeof(info.Size) + sizeof(info.Version)) {
+    log.Logf("virtio-input-msix: IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO returned too few bytes=%lu",
+             static_cast<unsigned long>(bytes));
+    if (win32_error_out) *win32_error_out = ERROR_INSUFFICIENT_BUFFER;
+    return std::nullopt;
+  }
+
+  // Best-effort validation: tolerate older/newer versions by trusting the returned size.
+  if (info.Size != 0 && info.Size < sizeof(info.Size) + sizeof(info.Version)) {
+    log.Logf("virtio-input-msix: IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO returned invalid Size=%lu",
+             static_cast<unsigned long>(info.Size));
+  }
+
+  return info;
 }
 
 struct HidReportDescriptorSummary {
@@ -7842,6 +7953,7 @@ static void PrintUsage() {
       "  --test-snd                Alias for --require-snd\n"
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
+      "  --require-input-msix      Fail if virtio-input is not using MSI-X interrupts\n"
       "  --test-input-tablet-events Run virtio-input tablet (absolute pointer) HID input report test (optional)\n"
       "                           (alias: --test-tablet-events)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
@@ -7934,6 +8046,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.test_input_events = true;
     } else if (arg == L"--test-input-tablet-events" || arg == L"--test-tablet-events") {
       opt.test_input_tablet_events = true;
+    } else if (arg == L"--require-input-msix") {
+      opt.require_input_msix = true;
     } else if (arg == L"--require-snd-capture") {
       opt.require_snd_capture = true;
     } else if (arg == L"--test-snd-capture") {
@@ -8145,6 +8259,108 @@ int wmain(int argc, wchar_t** argv) {
                          L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
   }
   all_ok = all_ok && input.ok;
+
+  // virtio-input interrupt mode diagnostics (INTx vs MSI-X).
+  {
+    // Try to query both the keyboard and mouse interfaces (when present) so we can detect mixed configurations.
+    std::vector<VIOINPUT_INTERRUPT_INFO> infos;
+    DWORD last_err = ERROR_SUCCESS;
+
+    if (!input.keyboard_device_path.empty()) {
+      DWORD err = ERROR_SUCCESS;
+      if (const auto info = QueryVirtioInputInterruptInfo(log, input.keyboard_device_path, &err)) {
+        infos.push_back(*info);
+      } else if (err != ERROR_SUCCESS) {
+        last_err = err;
+      }
+    }
+    if (!input.mouse_device_path.empty() && input.mouse_device_path != input.keyboard_device_path) {
+      DWORD err = ERROR_SUCCESS;
+      if (const auto info = QueryVirtioInputInterruptInfo(log, input.mouse_device_path, &err)) {
+        infos.push_back(*info);
+      } else if (err != ERROR_SUCCESS) {
+        last_err = err;
+      }
+    }
+
+    if (infos.empty()) {
+      const bool ioctl_not_supported = last_err == ERROR_INVALID_FUNCTION || last_err == ERROR_NOT_SUPPORTED ||
+                                       last_err == ERROR_INVALID_PARAMETER;
+      if (ioctl_not_supported && !opt.require_input_msix) {
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|SKIP|reason=ioctl_not_supported|err=%lu",
+                 static_cast<unsigned long>(last_err));
+      } else {
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|FAIL|reason=query_failed|err=%lu",
+                 static_cast<unsigned long>(last_err));
+        if (opt.require_input_msix) all_ok = false;
+      }
+    } else {
+      int msix_devices = 0;
+      int intx_devices = 0;
+      int unknown_devices = 0;
+      for (const auto& info : infos) {
+        if (info.Mode == VioInputInterruptModeMsix) {
+          msix_devices++;
+        } else if (info.Mode == VioInputInterruptModeIntx) {
+          intx_devices++;
+        } else {
+          unknown_devices++;
+        }
+      }
+
+      const bool all_msix = msix_devices == static_cast<int>(infos.size());
+      const bool any_intx = intx_devices > 0;
+      const bool any_unknown = unknown_devices > 0;
+
+      // Choose a representative device whose fields match the overall mode we report.
+      const VIOINPUT_INTERRUPT_INFO* chosen = &infos.front();
+      if (any_intx) {
+        for (const auto& info : infos) {
+          if (info.Mode == VioInputInterruptModeIntx) {
+            chosen = &info;
+            break;
+          }
+        }
+      } else if (!all_msix && any_unknown) {
+        for (const auto& info : infos) {
+          if (info.Mode != VioInputInterruptModeMsix && info.Mode != VioInputInterruptModeIntx) {
+            chosen = &info;
+            break;
+          }
+        }
+      } else {
+        // Prefer keyboard when available (it tends to be enumerated earlier and is stable across images).
+        if (!input.keyboard_device_path.empty() && infos.size() > 1) {
+          chosen = &infos.front();
+        }
+      }
+
+      const char* overall_mode = all_msix ? "msix" : (any_intx ? "intx" : "unknown");
+      const bool require_ok = !opt.require_input_msix || std::string(overall_mode) == "msix";
+      const char* status = require_ok ? "PASS" : "FAIL";
+
+      auto vec_to_string = [](USHORT v) -> std::string {
+        if (v == VIOINPUT_INTERRUPT_VECTOR_NONE) return "none";
+        return std::to_string(static_cast<unsigned int>(v));
+      };
+
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|%s|mode=%s|messages=%lu|mapping=%s|used_vectors=%u|"
+          "config_vector=%s|queue0_vector=%s|queue1_vector=%s|msix_devices=%d|intx_devices=%d|unknown_devices=%d|"
+          "intx_spurious=%ld|total_interrupts=%ld|total_dpcs=%ld|config_irqs=%ld|queue0_irqs=%ld|queue1_irqs=%ld",
+          status, overall_mode, static_cast<unsigned long>(chosen->MessageCount),
+          VirtioInputInterruptMappingToString(chosen->Mapping), static_cast<unsigned int>(chosen->UsedVectorCount),
+          vec_to_string(chosen->ConfigVector).c_str(), vec_to_string(chosen->Queue0Vector).c_str(),
+          vec_to_string(chosen->Queue1Vector).c_str(), msix_devices, intx_devices, unknown_devices,
+          static_cast<long>(chosen->IntxSpuriousCount), static_cast<long>(chosen->TotalInterruptCount),
+          static_cast<long>(chosen->TotalDpcCount), static_cast<long>(chosen->ConfigInterruptCount),
+          static_cast<long>(chosen->Queue0InterruptCount), static_cast<long>(chosen->Queue1InterruptCount));
+
+      if (opt.require_input_msix && std::string(overall_mode) != "msix") {
+        all_ok = false;
+      }
+    }
+  }
 
   if (!opt.test_input_events) {
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set");
