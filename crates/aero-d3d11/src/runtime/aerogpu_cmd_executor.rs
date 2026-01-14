@@ -12771,9 +12771,10 @@ mod tests {
                 }
             };
 
-            // `GpuCapabilities::from_device` cannot derive compute support from the device alone.
+            // `GpuCapabilities::from_device` cannot determine compute support from a `wgpu::Device`
+            // alone (notably WebGL2 has no compute stage), so it defaults `supports_compute=false`.
             // `new_for_tests` must override this using adapter downlevel flags so that
-            // `PipelineCache` rejects compute pipelines deterministically on downlevel backends.
+            // `PipelineCache` enables/disables compute pipelines deterministically across backends.
             let shader_hash = 0x1234_u128;
             let key = ComputePipelineKey {
                 shader: shader_hash,
