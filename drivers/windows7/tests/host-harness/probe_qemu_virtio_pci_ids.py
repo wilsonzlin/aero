@@ -320,7 +320,10 @@ def _iter_pci_devices(query_pci_result: object) -> list[_PciId]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    # Disable long-option abbreviation matching for stability as the CLI grows. This tool is often
+    # invoked from scripts/CI and we want unknown args/typos to fail loudly instead of being silently
+    # consumed as abbreviated options.
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--qemu-system", default="qemu-system-x86_64", help="Path to qemu-system-* binary")
     parser.add_argument(
         "--with-virtio-snd",
