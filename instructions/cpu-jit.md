@@ -194,7 +194,8 @@ pub trait CpuBus {
 # Run CPU tests
 bash ./scripts/safe-run.sh cargo test -p aero-cpu-core --locked
 bash ./scripts/safe-run.sh cargo test -p aero-cpu-decoder --locked
-bash ./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked
+# Note: `aero-jit-x86` can exceed safe-run's 10-minute default on cold caches.
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-mmu --locked
 
 # Lint (treat warnings as errors)
