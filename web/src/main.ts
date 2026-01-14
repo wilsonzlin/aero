@@ -4925,6 +4925,45 @@ function renderAudioPanel(): HTMLElement {
     }
   }
 
+  function snapshotRingBufferOwnersForExport(): unknown {
+    try {
+      return {
+        audioOutput: {
+          effective: workerCoordinator.getAudioRingBufferOwner(),
+          override: workerCoordinator.getAudioRingBufferOwnerOverride(),
+          default: workerCoordinator.getAudioRingBufferOwnerDefault(),
+        },
+        microphone: {
+          effective: workerCoordinator.getMicrophoneRingBufferOwner(),
+          override: workerCoordinator.getMicrophoneRingBufferOwnerOverride(),
+          default: workerCoordinator.getMicrophoneRingBufferOwnerDefault(),
+        },
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  function snapshotRingBuffersForExport(): unknown {
+    try {
+      return workerCoordinator.getRingBufferAttachmentSnapshot();
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  function snapshotWorkerProducerForExport(): unknown {
+    try {
+      return {
+        bufferLevelFrames: workerCoordinator.getAudioProducerBufferLevelFrames(),
+        underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
+        overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   const exportMetricsButton = el("button", {
     text: "Export audio metrics (json)",
     onclick: async () => {
@@ -4950,19 +4989,8 @@ function renderAudioPanel(): HTMLElement {
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
           host: snapshotHostEnvForExport(),
           hostMediaDevices,
-          ringBufferOwners: {
-            audioOutput: {
-              effective: workerCoordinator.getAudioRingBufferOwner(),
-              override: workerCoordinator.getAudioRingBufferOwnerOverride(),
-              default: workerCoordinator.getAudioRingBufferOwnerDefault(),
-            },
-            microphone: {
-              effective: workerCoordinator.getMicrophoneRingBufferOwner(),
-              override: workerCoordinator.getMicrophoneRingBufferOwnerOverride(),
-              default: workerCoordinator.getMicrophoneRingBufferOwnerDefault(),
-            },
-          },
-          ringBuffers: workerCoordinator.getRingBufferAttachmentSnapshot(),
+          ringBufferOwners: snapshotRingBufferOwnersForExport(),
+          ringBuffers: snapshotRingBuffersForExport(),
           // Include all known audio outputs so QA can tell which ring was actually active.
           audioOutputs: {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
@@ -4971,11 +4999,7 @@ function renderAudioPanel(): HTMLElement {
             __aeroAudioOutputVirtioSndDemo: snapshotAudioOutput(g.__aeroAudioOutputVirtioSndDemo),
             __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
           },
-          workerProducer: {
-            bufferLevelFrames: workerCoordinator.getAudioProducerBufferLevelFrames(),
-            underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
-            overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
-          },
+          workerProducer: snapshotWorkerProducerForExport(),
           microphone: snapshotMicAttachment(),
           workers: snapshotWorkerCoordinator(),
           config: snapshotConfigForExport(),
@@ -5166,19 +5190,8 @@ function renderAudioPanel(): HTMLElement {
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
           host: snapshotHostEnvForExport(),
           hostMediaDevices,
-          ringBufferOwners: {
-            audioOutput: {
-              effective: workerCoordinator.getAudioRingBufferOwner(),
-              override: workerCoordinator.getAudioRingBufferOwnerOverride(),
-              default: workerCoordinator.getAudioRingBufferOwnerDefault(),
-            },
-            microphone: {
-              effective: workerCoordinator.getMicrophoneRingBufferOwner(),
-              override: workerCoordinator.getMicrophoneRingBufferOwnerOverride(),
-              default: workerCoordinator.getMicrophoneRingBufferOwnerDefault(),
-            },
-          },
-          ringBuffers: workerCoordinator.getRingBufferAttachmentSnapshot(),
+          ringBufferOwners: snapshotRingBufferOwnersForExport(),
+          ringBuffers: snapshotRingBuffersForExport(),
           audioOutputs: {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
@@ -5186,11 +5199,7 @@ function renderAudioPanel(): HTMLElement {
             __aeroAudioOutputVirtioSndDemo: snapshotAudioOutput(g.__aeroAudioOutputVirtioSndDemo),
             __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
           },
-          workerProducer: {
-            bufferLevelFrames: workerCoordinator.getAudioProducerBufferLevelFrames(),
-            underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
-            overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
-          },
+          workerProducer: snapshotWorkerProducerForExport(),
           microphone: snapshotMicAttachment(),
           workers: snapshotWorkerCoordinator(),
           config: snapshotConfigForExport(),
