@@ -4048,6 +4048,7 @@ function renderAudioPanel(): HTMLElement {
     writeFrameIndex: number;
     availableFrames: number;
     framesCaptured: number;
+    signal: AudioSignalStats;
   };
 
   type MicWavSnapshotMeta = {
@@ -4058,7 +4059,115 @@ function renderAudioPanel(): HTMLElement {
     availableSamples: number;
     samplesCaptured: number;
     droppedSamples: number;
+    signal: AudioSignalStats;
   };
+
+  type AudioSignalStats = {
+    /**
+     * Peak absolute sample value (max |s|), overall across all channels.
+     *
+     * Typically in `[0, 1]` for unclipped Web Audio float samples.
+     */
+    peakAbs: number;
+    /**
+     * RMS sample value, overall across all channels.
+     *
+     * Typically in `[0, 1]` for unclipped Web Audio float samples.
+     */
+    rms: number;
+    /**
+     * Mean sample value, overall across all channels.
+     *
+     * Non-zero DC offsets can indicate bugs in mixing/resampling or bias in the input signal.
+     */
+    dcOffset: number;
+    peakAbsPerChannel: number[];
+    rmsPerChannel: number[];
+    dcOffsetPerChannel: number[];
+  };
+
+  function computeAudioSignalStats(interleaved: Float32Array, channelCount: number): AudioSignalStats {
+    const cc = channelCount >>> 0;
+    if (cc === 0) {
+      return {
+        peakAbs: 0,
+        rms: 0,
+        dcOffset: 0,
+        peakAbsPerChannel: [],
+        rmsPerChannel: [],
+        dcOffsetPerChannel: [],
+      };
+    }
+    const frames = Math.floor(interleaved.length / cc);
+    if (frames <= 0) {
+      const zeros = Array.from({ length: cc }, () => 0);
+      return {
+        peakAbs: 0,
+        rms: 0,
+        dcOffset: 0,
+        peakAbsPerChannel: zeros,
+        rmsPerChannel: zeros,
+        dcOffsetPerChannel: zeros,
+      };
+    }
+
+    const sum = new Float64Array(cc);
+    const sumSq = new Float64Array(cc);
+    const peak = new Float64Array(cc);
+    let totalSum = 0;
+    let totalSumSq = 0;
+    let totalPeak = 0;
+
+    for (let i = 0; i < interleaved.length; i += cc) {
+      for (let c = 0; c < cc; c += 1) {
+        let s = interleaved[i + c] ?? 0;
+        if (!Number.isFinite(s)) s = 0;
+        const abs = Math.abs(s);
+        if (abs > peak[c]) peak[c] = abs;
+        if (abs > totalPeak) totalPeak = abs;
+        sum[c] += s;
+        sumSq[c] += s * s;
+        totalSum += s;
+        totalSumSq += s * s;
+      }
+    }
+
+    const denomPerChannel = frames;
+    const denomTotal = frames * cc;
+    const peakAbsPerChannel = Array.from(peak, (v) => (Number.isFinite(v) ? v : 0));
+    const rmsPerChannel = Array.from(sumSq, (v) => {
+      const ms = v / denomPerChannel;
+      return Number.isFinite(ms) && ms > 0 ? Math.sqrt(ms) : 0;
+    });
+    const dcOffsetPerChannel = Array.from(sum, (v) => {
+      const mean = v / denomPerChannel;
+      return Number.isFinite(mean) ? mean : 0;
+    });
+
+    const totalRms = (() => {
+      const ms = totalSumSq / denomTotal;
+      return Number.isFinite(ms) && ms > 0 ? Math.sqrt(ms) : 0;
+    })();
+    const totalDc = (() => {
+      const mean = totalSum / denomTotal;
+      return Number.isFinite(mean) ? mean : 0;
+    })();
+
+    return {
+      peakAbs: Number.isFinite(totalPeak) ? totalPeak : 0,
+      rms: totalRms,
+      dcOffset: totalDc,
+      peakAbsPerChannel,
+      rmsPerChannel,
+      dcOffsetPerChannel,
+    };
+  }
+
+  function formatDbfsFromLinear(value: number): string {
+    const v = typeof value === "number" && Number.isFinite(value) ? value : 0;
+    if (v <= 0) return "-inf";
+    return (20 * Math.log10(v)).toFixed(1);
+  }
 
   function snapshotAudioOutputWav(
     out: unknown,
@@ -4082,8 +4191,15 @@ function renderAudioPanel(): HTMLElement {
 
     const readIndex = ring.readIndex as Uint32Array;
     const writeIndex = ring.writeIndex as Uint32Array;
-    const read = Atomics.load(readIndex, 0) >>> 0;
-    const write = Atomics.load(writeIndex, 0) >>> 0;
+    let read: number;
+    let write: number;
+    try {
+      read = Atomics.load(readIndex, 0) >>> 0;
+      write = Atomics.load(writeIndex, 0) >>> 0;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `Failed to read audio output ring indices: ${message}` };
+    }
     let available = (write - read) >>> 0;
     if (available > cap) available = cap;
     if (available === 0) return { ok: false, error: "Audio output ringBuffer is empty." };
@@ -4101,6 +4217,7 @@ function renderAudioPanel(): HTMLElement {
     }
 
     const wav = encodeWavPcm16(interleaved, sampleRate, cc);
+    const signal = computeAudioSignalStats(interleaved, cc);
     const meta: AudioOutputWavSnapshotMeta = {
       sampleRate,
       channelCount: cc,
@@ -4109,6 +4226,7 @@ function renderAudioPanel(): HTMLElement {
       writeFrameIndex: write,
       availableFrames: available,
       framesCaptured: frames,
+      signal,
     };
     return { ok: true, wav, meta };
   }
@@ -4164,6 +4282,7 @@ function renderAudioPanel(): HTMLElement {
       if (second > 0) mono.set(data.subarray(0, second), first);
 
       const wav = encodeWavPcm16(mono, sampleRate, 1);
+      const signal = computeAudioSignalStats(mono, 1);
       const meta: MicWavSnapshotMeta = {
         sampleRate,
         capacitySamples,
@@ -4172,6 +4291,7 @@ function renderAudioPanel(): HTMLElement {
         availableSamples: available,
         samplesCaptured: toRead,
         droppedSamples,
+        signal,
       };
       return { ok: true, wav, meta };
     } catch (err) {
@@ -4517,7 +4637,7 @@ function renderAudioPanel(): HTMLElement {
               data: encoder.encode(JSON.stringify({ timeIso, ...res.meta }, null, 2)),
             });
             summaryLines.push(
-              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount}`,
+              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
             );
           }
 
@@ -4529,7 +4649,7 @@ function renderAudioPanel(): HTMLElement {
               data: encoder.encode(JSON.stringify({ timeIso, ...micRes.meta }, null, 2)),
             });
             summaryLines.push(
-              `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} sr=${micRes.meta.sampleRate}`,
+              `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} sr=${micRes.meta.sampleRate} rms=${formatDbfsFromLinear(micRes.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(micRes.meta.signal.peakAbs)}dBFS`,
             );
           } else {
             summaryLines.push(`microphone-buffered: ${micRes.error}`);
