@@ -1224,8 +1224,15 @@ fn translates_isubc_uses_raw_bits_without_float_int_heuristics() {
         translated.wgsl
     );
     assert!(
-        !translated.wgsl.contains("floor(") && !translated.wgsl.contains("u32("),
-        "isubc lowering should not use float→int heuristics (floor/u32 casts):\n{}",
+        !translated.wgsl.contains("floor("),
+        "isubc lowering should not use float→int heuristics (floor):\n{}",
+        translated.wgsl
+    );
+    assert!(
+        // Numeric float->u32 conversions for register operands would look like `vec4<u32>(rN)`.
+        !translated.wgsl.contains("vec4<u32>(r0)")
+            && !translated.wgsl.contains("vec4<u32>(r1)"),
+        "isubc lowering should not use numeric vec4<u32>(f32) conversions:\n{}",
         translated.wgsl
     );
 }
