@@ -378,6 +378,15 @@ impl PciConfigSpace {
 
         let mut effects = PciConfigWriteEffects::default();
 
+        // Ensure the raw backing bytes reflect the latest capability state before applying a config
+        // write.
+        //
+        // Device models may mutate capability state internally (for example, MSI pending bits when a
+        // vector is masked). If a guest then performs a config-space write (for example, to unmask
+        // MSI), `sync_capabilities_from_config()` below must see the up-to-date pending bits in the
+        // byte array, otherwise it would clobber the device-managed fields.
+        self.sync_capabilities_to_config();
+
         if (0x10..=0x27).contains(&offset) {
             // BAR writes must be 32-bit aligned accesses.
             let aligned = offset & !0x3;
