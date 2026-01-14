@@ -4259,6 +4259,13 @@ static BOOLEAN AeroGpuIsSupportedVidPnModeDimensions(_In_ ULONG Width, _In_ ULON
     return FALSE;
 }
 
+static __forceinline BOOLEAN AeroGpuVidPnModeDimsApproximatelyEqual(_In_ ULONG W0, _In_ ULONG H0, _In_ ULONG W1, _In_ ULONG H1)
+{
+    const ULONG diffW = (W0 > W1) ? (W0 - W1) : (W1 - W0);
+    const ULONG diffH = (H0 > H1) ? (H0 - H1) : (H1 - H0);
+    return (diffW <= 2u && diffH <= 2u) ? TRUE : FALSE;
+}
+
 static BOOLEAN AeroGpuIsSupportedVidPnPixelFormat(_In_ D3DDDIFORMAT Format)
 {
     /*
@@ -4646,7 +4653,7 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
     }
 
     if (havePinnedSourceDims && havePinnedTargetDims) {
-        if (pinnedSourceW != pinnedTargetW || pinnedSourceH != pinnedTargetH) {
+        if (!AeroGpuVidPnModeDimsApproximatelyEqual(pinnedSourceW, pinnedSourceH, pinnedTargetW, pinnedTargetH)) {
             supported = FALSE;
             goto Cleanup;
         }
@@ -4657,7 +4664,7 @@ static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, 
         BOOLEAN haveCommon = FALSE;
         for (UINT i = 0; i < sourceDimCount && !haveCommon; ++i) {
             for (UINT j = 0; j < targetDimCount; ++j) {
-                if (sourceDims[i].Width == targetDims[j].Width && sourceDims[i].Height == targetDims[j].Height) {
+                if (AeroGpuVidPnModeDimsApproximatelyEqual(sourceDims[i].Width, sourceDims[i].Height, targetDims[j].Width, targetDims[j].Height)) {
                     haveCommon = TRUE;
                     break;
                 }
