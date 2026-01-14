@@ -36,15 +36,21 @@ Device Manager names:
 - Generic fallback (when subsystem IDs are not exposed): `PCI\VEN_1AF4&DEV_1052&REV_01` → `inf/aero_virtio_input.inf`
 - Tablet (absolute pointer / EV_ABS): `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` → `inf/aero_virtio_tablet.inf`
 
-The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the keyboard and mouse PCI functions show up as separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**). When binding via the generic fallback entry, Device Manager will show **Aero VirtIO Input Device**.
+The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the keyboard and mouse PCI functions show up as
+separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
 
 If your environment does not expose the Aero subsystem IDs (for example stock QEMU), the generic fallback entry
 (`PCI\VEN_1AF4&DEV_1052&REV_01`) in `inf/aero_virtio_input.inf` can still bind (as long as the device reports `REV_01`,
-for example via `x-pci-revision=0x01`).
+for example via `x-pci-revision=0x01`). When binding via this entry, Device Manager will show
+**Aero VirtIO Input Device**.
 
 The repo also carries a legacy filename alias (`inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
 for workflows/tools that still reference `virtio-input.inf`. From `[Version]` onward, it is intended to remain
-byte-for-byte identical to `inf/aero_virtio_input.inf`; do **not** ship/install both filenames at the same time.
+byte-for-byte identical to `inf/aero_virtio_input.inf` (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`);
+do **not** ship/install both filenames at the same time.
+
+Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed (its `SUBSYS_0012...` HWID is more
+specific than the generic fallback, so it will win).
 
 This avoids “driver installs but won’t start” confusion: the driver enforces the
 contract major version at runtime, so binding to a non-contract `REV_00` device
