@@ -419,7 +419,7 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
     - controller-local slot/endpoint state (enabled slots, Slot/Endpoint context mirrors + transfer
       ring cursors, active endpoints, EP0 control TD state), and
     - controller-local forward-progress state (command ring cursor/kick flag, pending event TRBs,
-      and event ring producer state).
+      dropped-event counter, and event ring producer state).
   - Current limitations: the snapshot only covers the subset of xHCI behavior implemented by this
     model; guest RAM contents for rings/contexts/buffers are still owned by the VM memory snapshot,
     and host-side async work (WebUSB/WebHID) is reset across restore.
