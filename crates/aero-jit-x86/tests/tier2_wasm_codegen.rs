@@ -1118,6 +1118,123 @@ fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
     assert_eq!(bumped_page1, 3);
 }
 
+#[test]
+fn tier2_loop_trace_inline_code_version_guard_invalidates_after_store_bumps_table() {
+    // Compile a small Tier-2 loop trace that:
+    // - checks page 0's code version each iteration (inline table read; no host import),
+    // - performs a guest memory store that bumps page 0's entry in the code-version table, then
+    // - repeats.
+    //
+    // On the 2nd iteration, the code-version guard should detect the bumped entry and trigger a
+    // code invalidation exit.
+    //
+    // Include an iteration-limit guard so the test terminates even if invalidation is broken.
+    let mut trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            // Guard page 0 on each iteration.
+            Instr::GuardCodeVersion {
+                page: 0,
+                expected: 1,
+                exit_rip: 0x9999,
+            },
+            // Write to guest memory page 0. The WASM host helpers bump the code-version table for
+            // the affected pages to simulate self-modifying code invalidation.
+            Instr::StoreMem {
+                addr: Operand::Const(0),
+                src: Operand::Const(0xAB),
+                width: Width::W8,
+            },
+            // Increment RAX as a loop counter.
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            Instr::Const { dst: v(1), value: 1 },
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Value(v(1)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(2)),
+            },
+            // Exit after 3 iterations if invalidation doesn't happen (avoid hanging forever).
+            Instr::Const { dst: v(3), value: 3 },
+            Instr::BinOp {
+                dst: v(4),
+                op: BinOp::LtU,
+                lhs: Operand::Value(v(2)),
+                rhs: Operand::Value(v(3)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::Guard {
+                cond: Operand::Value(v(4)),
+                expected: true,
+                exit_rip: 0x7777,
+            },
+        ],
+        kind: TraceKind::Loop,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &opt.regalloc,
+        Tier2WasmOptions {
+            code_version_guard_import: false,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1111;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let table_ptr = install_code_version_table(&memory, &mut store, &[1]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 0x9999, "trace should invalidate via guard exit");
+
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(
+        exit_reason,
+        jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION,
+        "trace should set TRACE_EXIT_REASON_CODE_INVALIDATION"
+    );
+
+    // The store should bump page 0 once (1 -> 2) before the guard invalidates on the next
+    // iteration.
+    let bumped_page0 = read_u32_from_memory(&memory, &store, table_ptr as usize);
+    assert_eq!(bumped_page0, 2);
+
+    // The store itself should have executed exactly once.
+    let mut byte = [0u8; 1];
+    memory.read(&store, 0, &mut byte).unwrap();
+    assert_eq!(byte[0], 0xAB);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod random_traces {
     use super::*;
@@ -1548,7 +1665,7 @@ mod random_traces {
         // traces overall while still remaining deterministic.
         let mut rng = ChaCha8Rng::seed_from_u64(0x5EED_C0DE);
         for i in 0..50 {
-            let mut env = RuntimeEnv::default();
+            let env = RuntimeEnv::default();
             let mut code_versions: Vec<u32> = (0..8).map(|_| rng.gen()).collect();
             if code_versions.iter().all(|v| *v == 0) {
                 code_versions[0] = 1;
