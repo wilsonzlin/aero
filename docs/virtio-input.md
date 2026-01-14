@@ -119,6 +119,9 @@ Windows 7 has no in-box virtio-input driver. A minimal approach is to ship a cus
 2. Negotiates virtio features and sets `DRIVER_OK`.
 3. Creates a HID keyboard + HID mouse interface for Windows by translating `virtio_input_event` streams into HID reports.
 4. Optionally forwards LED state changes (Caps Lock / Num Lock / Scroll Lock) from Windows to `statusq`.
+   - The contract requires that **all** `statusq` descriptors are consumed/completed (contents may be ignored).
+   - The in-tree Win7 guest selftest can validate this end-to-end via `--test-input-led` (marker: `virtio-input-led`), and the
+     host harness can enforce it with PowerShell `-WithInputLed` / Python `--with-input-led`.
 
 Contract note:
 
