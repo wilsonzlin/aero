@@ -27,6 +27,20 @@ import {
   restoreMachineSnapshotAndReattachDisks,
   restoreMachineSnapshotFromOpfsAndReattachDisks,
 } from "../runtime/machine_snapshot_disks";
+import {
+  serializeVmSnapshotError,
+  type VmSnapshotErr,
+  type VmSnapshotMachineRestoreFromOpfsMessage,
+  type VmSnapshotMachineRestoredMessage,
+  type VmSnapshotMachineSaveToOpfsMessage,
+  type VmSnapshotMachineSavedMessage,
+  type VmSnapshotOk,
+  type VmSnapshotPauseMessage,
+  type VmSnapshotPausedMessage,
+  type VmSnapshotResumeMessage,
+  type VmSnapshotResumedMessage,
+  type VmSnapshotSerializedError,
+} from "../runtime/snapshot_protocol";
 import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
 import type { WasmApi } from "../runtime/wasm_loader";
 
@@ -70,9 +84,9 @@ type InputBatchRecycleMessage = {
   buffer: ArrayBuffer;
 };
 
-type MachineSnapshotSerializedError = { name: string; message: string; stack?: string };
-type MachineSnapshotResultOk = { ok: true };
-type MachineSnapshotResultErr = { ok: false; error: MachineSnapshotSerializedError };
+type MachineSnapshotSerializedError = VmSnapshotSerializedError;
+type MachineSnapshotResultOk = VmSnapshotOk;
+type MachineSnapshotResultErr = VmSnapshotErr;
 
 type MachineSnapshotRestoreFromOpfsMessage = {
   kind: "machine.snapshot.restoreFromOpfs";
@@ -89,33 +103,6 @@ type MachineSnapshotRestoreMessage = {
 type MachineSnapshotRestoredMessage =
   | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultOk)
   | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultErr);
-
-type VmSnapshotPauseMessage = {
-  kind: "vm.snapshot.pause";
-  requestId: number;
-};
-
-type VmSnapshotResumeMessage = {
-  kind: "vm.snapshot.resume";
-  requestId: number;
-};
-
-type VmSnapshotMachineSaveToOpfsMessage = {
-  kind: "vm.snapshot.machine.saveToOpfs";
-  requestId: number;
-  path: string;
-};
-
-type VmSnapshotMachineRestoreFromOpfsMessage = {
-  kind: "vm.snapshot.machine.restoreFromOpfs";
-  requestId: number;
-  path: string;
-};
-
-type VmSnapshotPausedMessage = { kind: "vm.snapshot.paused"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
-type VmSnapshotResumedMessage = { kind: "vm.snapshot.resumed"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
-type VmSnapshotMachineSavedMessage = { kind: "vm.snapshot.machine.saved"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
-type VmSnapshotMachineRestoredMessage = { kind: "vm.snapshot.machine.restored"; requestId: number } & (MachineSnapshotResultOk | MachineSnapshotResultErr);
 
 let wasmApi: WasmApi | null = null;
 let wasmMachine: InstanceType<WasmApi["Machine"]> | null = null;
@@ -159,8 +146,7 @@ function pushEvent(evt: Event): void {
 }
 
 function serializeError(err: unknown): MachineSnapshotSerializedError {
-  if (err instanceof Error) return { name: err.name || "Error", message: err.message, stack: err.stack };
-  return { name: "Error", message: String(err) };
+  return serializeVmSnapshotError(err);
 }
 
 function getMachineRamSizeBytes(): number {
