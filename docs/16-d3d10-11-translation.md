@@ -464,14 +464,18 @@ bring up correctness incrementally:
     expansion) without any compute passes. This is optional and can be added later.
   - **P1b (baseline):** general GS emulation via compute expansion as specified below.
   - Initial P1b limitations (explicit):
-    - no stream-out / transform feedback (`CreateGeometryShaderWithStreamOutput`),
-    - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
-    - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported;
-      the runtime must reject them deterministically until the adjacency path is implemented,
-    - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
-    - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
-    - output ordering is implementation-defined unless we add a deterministic prefix-sum mode (affects
-      strict `SV_PrimitiveID` expectations).
+     - no stream-out / transform feedback (`CreateGeometryShaderWithStreamOutput`),
+     - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
+     - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported;
+       the runtime must reject them deterministically until the adjacency path is implemented,
+     - **primitive restart** for indexed strip topologies is initially unsupported:
+       - D3D11 encodes strip restart in the index buffer as `0xFFFF` (u16) / `0xFFFFFFFF` (u32).
+       - Until we implement restart-aware strip assembly in compute, the runtime must reject draws
+         that use indexed `LINESTRIP`/`TRIANGLESTRIP` with restart indices.
+     - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
+     - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
+     - output ordering is implementation-defined unless we add a deterministic prefix-sum mode (affects
+       strict `SV_PrimitiveID` expectations).
 
 - **P2 (tessellation: HS/DS)**
   - Tessellation is staged by supported **domain / partitioning**:
@@ -725,11 +729,17 @@ For non-patch topologies, the number of *input primitives* (`input_prim_count`) 
 | `TRIANGLELIST_ADJ` | 6 / prim | `input_vertex_invocations / 6` |
 | `TRIANGLESTRIP_ADJ` | `2*prim + 4` | `max(0, (input_vertex_invocations.saturating_sub(4)) / 2)` |
 
-Rules:
+ Rules:
 
-- Any leftover vertices that don’t form a full primitive are ignored (matching D3D behavior).
-- `*_ADJ` topologies require a GS that consumes adjacency (`lineadj`/`triadj`); otherwise the draw is
-  invalid.
+ - Any leftover vertices that don’t form a full primitive are ignored (matching D3D behavior).
+ - `*_ADJ` topologies require a GS that consumes adjacency (`lineadj`/`triadj`); otherwise the draw is
+   invalid.
+ - **Primitive restart (indexed strip topologies):** for `LINESTRIP`/`TRIANGLESTRIP` with indexed
+   draws, D3D11 uses a special index value to restart the strip (`0xFFFF` for u16 indices,
+   `0xFFFFFFFF` for u32 indices). The simple formulas above assume there are no restart indices. For
+   initial bring-up, treat any draw that contains restart indices as unsupported/invalid; a full
+   implementation will need a restart-aware strip assembly path (either a preprocessing pass that
+   expands strips into lists, or per-primitive bounds checks in the assembly stage).
 
 For patchlist topologies:
 
