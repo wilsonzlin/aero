@@ -308,7 +308,12 @@ fn fb_gpa_overflow_does_not_claim_wddm_scanout_until_fixed() {
         AeroGpuFormat::B8G8R8X8Unorm as u32,
     );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, FB_OVERFLOW as u32);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (FB_OVERFLOW >> 32) as u32);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FB_GPA_HI,
+        4,
+        (FB_OVERFLOW >> 32) as u32,
+    );
 
     let legacy = scanout_state.snapshot();
     assert_eq!(legacy.source, SCANOUT_SOURCE_LEGACY_TEXT);
@@ -319,7 +324,12 @@ fn fb_gpa_overflow_does_not_claim_wddm_scanout_until_fixed() {
     // Fix the framebuffer address while scanout remains enabled; WDDM scanout should now claim and
     // publish the valid descriptor.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, FB_VALID as u32);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (FB_VALID >> 32) as u32);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FB_GPA_HI,
+        4,
+        (FB_VALID >> 32) as u32,
+    );
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap.base_paddr(), FB_VALID);

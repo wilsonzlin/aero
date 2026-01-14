@@ -82,7 +82,7 @@ fn build_gs_linelist_to_triangle_color_dxbc() -> Vec<u8> {
     tokens.push(0x0020_F012); // v0[0].xyzw (2D indexing)
     tokens.push(0); // reg
     tokens.push(0); // vertex
-    // mov o1.xyzw, v1[0].xyzw
+                    // mov o1.xyzw, v1[0].xyzw
     tokens.push(opcode_token(sm4_opcode::OPCODE_MOV, 6));
     tokens.push(0x0010_F022); // o1.xyzw
     tokens.push(1);
@@ -98,7 +98,7 @@ fn build_gs_linelist_to_triangle_color_dxbc() -> Vec<u8> {
     tokens.push(0x0020_F012); // v0[1].xyzw (2D indexing)
     tokens.push(0); // reg
     tokens.push(1); // vertex
-    // mov o1.xyzw, v1[1].xyzw
+                    // mov o1.xyzw, v1[1].xyzw
     tokens.push(opcode_token(sm4_opcode::OPCODE_MOV, 6));
     tokens.push(0x0010_F022); // o1.xyzw
     tokens.push(1);
@@ -341,4 +341,3 @@ fn aerogpu_cmd_geometry_shader_linelist_instance_step_rate_respected() {
         );
     });
 }
-
