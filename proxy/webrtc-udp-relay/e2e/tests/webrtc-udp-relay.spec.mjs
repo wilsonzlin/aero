@@ -1089,6 +1089,81 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
   }
 });
 
+test("rejects concurrent HTTP session allocations with the same JWT sid", async ({ page }) => {
+  const jwtSecret = "e2e-jwt-secret";
+  const now = Math.floor(Date.now() / 1000);
+  const token = mintHS256JWT({
+    sid: "sess_e2e_http",
+    iat: now,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "jwt",
+    JWT_SECRET: jwtSecret,
+  });
+  const web = await startWebServer();
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, token }) => {
+        const postJSON = async (path, body) => {
+          const resp = await fetch(`http://127.0.0.1:${relayPort}${path}`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+          });
+          return { status: resp.status, json: await resp.json().catch(() => null) };
+        };
+
+        const sess1 = await fetch(`http://127.0.0.1:${relayPort}/session`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const sess1Status = sess1.status;
+        const sess1Body = await sess1.text();
+
+        const sess2 = await fetch(`http://127.0.0.1:${relayPort}/session`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const sess2Status = sess2.status;
+        const sess2JSON = await sess2.json().catch(() => null);
+
+        const webrtcOffer = await postJSON("/webrtc/offer", { type: "offer", sdp: "v=0" });
+        const offerV1 = await postJSON("/offer", { version: 1, offer: { type: "offer", sdp: "v=0" } });
+
+        return { sess1Status, sess1Body, sess2Status, sess2JSON, webrtcOffer, offerV1 };
+      },
+      { relayPort: relay.port, token },
+    );
+
+    expect(res.sess1Status).toBe(201);
+    expect(res.sess1Body).toMatch(/^[0-9a-f]{32}$/);
+
+    expect(res.sess2Status).toBe(409);
+    expect(res.sess2JSON?.code).toBe("session_already_active");
+
+    expect(res.webrtcOffer.status).toBe(409);
+    expect(res.webrtcOffer.json?.code).toBe("session_already_active");
+
+    expect(res.offerV1.status).toBe(409);
+    expect(res.offerV1.json?.code).toBe("session_already_active");
+  } finally {
+    await Promise.all([web.close(), relay.kill()]);
+  }
+});
+
 test("rejects unauthorized /webrtc/signal WebSocket messages with AUTH_MODE=jwt", async ({ page }) => {
   const jwtSecret = "e2e-jwt-secret";
   const now = Math.floor(Date.now() / 1000);
