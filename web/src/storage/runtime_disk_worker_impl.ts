@@ -10,6 +10,7 @@ import {
   hasOpfsSyncAccessHandle,
   idbReq,
   idbTxDone,
+  OPFS_DISKS_PATH,
   openDiskManagerDb,
   pickDefaultBackend,
   type DiskBackend,
@@ -202,10 +203,10 @@ function safeOpfsNameComponent(input: string): string {
 
 async function openOpfsSparseDisk(
   name: string,
-  opts: { diskSizeBytes: number; blockSizeBytes: number },
+  opts: { diskSizeBytes: number; blockSizeBytes: number; dirPath?: string },
 ): Promise<OpfsAeroSparseDisk> {
   try {
-    const opened = await OpfsAeroSparseDisk.open(name);
+    const opened = await OpfsAeroSparseDisk.open(name, { dirPath: opts.dirPath });
     if (opened.capacityBytes !== opts.diskSizeBytes) {
       await opened.close?.();
       throw new Error(`sparse disk size mismatch: expected=${opts.diskSizeBytes} actual=${opened.capacityBytes}`);
@@ -221,6 +222,7 @@ async function openOpfsSparseDisk(
     return await OpfsAeroSparseDisk.create(name, {
       diskSizeBytes: opts.diskSizeBytes,
       blockSizeBytes: opts.blockSizeBytes,
+      dirPath: opts.dirPath,
     });
   }
 }
@@ -610,6 +612,8 @@ async function openDiskFromMetadata(
   if (localMeta.backend === "opfs") {
     const fileName = localMeta.fileName;
     const sizeBytes = localMeta.sizeBytes;
+    const dirPath = typeof localMeta.opfsDirectory === "string" && localMeta.opfsDirectory.trim() ? localMeta.opfsDirectory.trim() : undefined;
+    const snapshotDirPath = dirPath && dirPath !== OPFS_DISKS_PATH ? dirPath : undefined;
 
     async function openBase(): Promise<AsyncSectorDisk> {
       if (localMeta.remote) {
@@ -627,7 +631,7 @@ async function openDiskFromMetadata(
       }
       switch (localMeta.format) {
         case "aerospar": {
-          const disk = await OpfsAeroSparseDisk.open(fileName);
+          const disk = await OpfsAeroSparseDisk.open(fileName, { dirPath });
           if (disk.capacityBytes !== sizeBytes) {
             await disk.close?.();
             throw new Error(`disk size mismatch: expected=${sizeBytes} actual=${disk.capacityBytes}`);
@@ -637,7 +641,7 @@ async function openDiskFromMetadata(
         case "raw":
         case "iso":
         case "unknown":
-          return await OpfsRawDisk.open(fileName, { create: false, sizeBytes });
+          return await OpfsRawDisk.open(fileName, { create: false, sizeBytes, dirPath });
         case "qcow2":
         case "vhd":
           throw new Error(`unsupported OPFS disk format ${localMeta.format} (convert to aerospar first)`);
@@ -655,6 +659,7 @@ async function openDiskFromMetadata(
         overlay = await openOpfsSparseDisk(overlayName, {
           diskSizeBytes: localMeta.sizeBytes,
           blockSizeBytes: overlayBlockSizeBytes ?? 1024 * 1024,
+          dirPath,
         });
 
         return {
@@ -668,6 +673,7 @@ async function openDiskFromMetadata(
                 kind: "local",
                 backend: "opfs",
                 key: localMeta.fileName,
+                ...(snapshotDirPath ? { dirPath: snapshotDirPath } : {}),
                 format: localMeta.format,
                 diskKind: localMeta.kind,
                 sizeBytes: localMeta.sizeBytes,
@@ -706,6 +712,7 @@ async function openDiskFromMetadata(
             kind: "local",
             backend: "opfs",
             key: localMeta.fileName,
+            ...(snapshotDirPath ? { dirPath: snapshotDirPath } : {}),
             format: localMeta.format,
             diskKind: localMeta.kind,
             sizeBytes: localMeta.sizeBytes,
@@ -782,10 +789,11 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
   const backend = entry.backend;
   if (backend.kind === "local") {
     if (backend.backend === "opfs") {
+      const dirPath = typeof backend.dirPath === "string" && backend.dirPath.trim() ? backend.dirPath.trim() : undefined;
       let base: AsyncSectorDisk;
       switch (backend.format) {
         case "aerospar": {
-          const disk = await OpfsAeroSparseDisk.open(backend.key);
+          const disk = await OpfsAeroSparseDisk.open(backend.key, { dirPath });
           if (disk.capacityBytes !== backend.sizeBytes) {
             await disk.close?.();
             throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${disk.capacityBytes}`);
@@ -796,7 +804,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
         case "raw":
         case "iso":
         case "unknown":
-          base = await OpfsRawDisk.open(backend.key, { create: false, sizeBytes: backend.sizeBytes });
+          base = await OpfsRawDisk.open(backend.key, { create: false, sizeBytes: backend.sizeBytes, dirPath });
           break;
         case "qcow2":
         case "vhd":
@@ -809,6 +817,7 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
           overlay = await openOpfsSparseDisk(backend.overlay.fileName, {
             diskSizeBytes: backend.overlay.diskSizeBytes,
             blockSizeBytes: backend.overlay.blockSizeBytes,
+            dirPath,
           });
           return {
             disk: new OpfsCowDisk(base, overlay),

@@ -874,7 +874,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             let totalBytes = 0;
             // Remote-streaming disks store local writes in a runtime overlay.
             try {
-              totalBytes += await opfsGetDiskSizeBytes(`${meta.id}.overlay.aerospar`);
+              totalBytes += await opfsGetDiskSizeBytes(`${meta.id}.overlay.aerospar`, meta.opfsDirectory);
             } catch {
               // ignore
             }
@@ -1069,7 +1069,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (meta.backend === "opfs") {
         await opfsResizeDisk(meta.fileName, newSizeBytes, progressCb, meta.opfsDirectory);
         // Resizing invalidates COW overlays (table size depends on disk size).
-        await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
+        await opfsDeleteDisk(`${meta.id}.overlay.aerospar`, meta.opfsDirectory);
       } else {
         await idbResizeDisk(meta.id, meta.sizeBytes, newSizeBytes, progressCb);
       }
@@ -1101,7 +1101,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           // Converted images write a sidecar manifest (best-effort cleanup).
           await opfsDeleteDisk(`${meta.id}.manifest.json`);
           // Best-effort cleanup of runtime COW overlay files.
-          await opfsDeleteDisk(`${meta.id}.overlay.aerospar`);
+          await opfsDeleteDisk(`${meta.id}.overlay.aerospar`, meta.opfsDirectory);
         } else {
           const db = await openDiskManagerDb();
           try {
