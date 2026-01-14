@@ -548,7 +548,7 @@ Limitations (bring-up):
 - **Fixed-function pipeline is still limited:** `ensure_fixedfunc_pipeline_locked()` synthesizes a small `ps_2_0` token stream for the supported subset of stage0 texture stage state (see above).
   - The pixel shader bytecode is generated at runtime by a tiny “ps_2_0 token builder” in `src/aerogpu_d3d9_driver.cpp` (no offline shader generation step is required).
   - Stage1+ texture stage state, fog, and more complete fixed-function lighting (multiple lights/specular/etc) are still TODOs.
-- **Shader int/bool constants are cached only:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks, but do not currently emit constant updates into the AeroGPU command stream.
+- **Shader int/bool constants are supported:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks and emit constant updates into the AeroGPU command stream (`AEROGPU_CMD_SET_SHADER_CONSTANTS_I/B`).
 - **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via
   `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
   `pfnComposeRects` is also accepted as an `S_OK` no-op (see `device_compose_rects()`).
@@ -744,7 +744,6 @@ AeroGPU command stream. This includes:
 - transforms / clip planes / N-patch mode
 - stream source frequency (instancing; CPU expansion subset)
 - software vertex processing
-- shader int/bool constants
 - lighting/material
 - palettes / clip status / gamma ramp
 - resource priority
