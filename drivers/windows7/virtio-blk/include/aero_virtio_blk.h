@@ -111,9 +111,14 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
      * In that mode we must program virtio MSI-X vector routing (msix_config /
      * queue_msix_vector) and must not rely on the virtio ISR status byte.
      *
-     * When message-signaled interrupts are not available, we fall back to INTx
-     * (shared line) semantics and use the virtio ISR status byte as the
-     * read-to-ack mechanism.
+     * When message-signaled interrupts are not available, we use INTx (shared
+     * line) semantics and use the virtio ISR status byte as the read-to-ack
+     * mechanism.
+     *
+     * Note: on Aero contract devices, when MSI-X is enabled at the PCI layer,
+     * MSI-X is exclusive. If virtio MSI-X selectors are left at
+     * VIRTIO_PCI_MSI_NO_VECTOR (`0xFFFF`), interrupts for that source are
+     * suppressed (no INTx fallback).
      */
     BOOLEAN UseMsi;
     USHORT MsiMessageCount;

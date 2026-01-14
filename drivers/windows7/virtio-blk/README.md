@@ -33,7 +33,7 @@ The miniport supports both:
 - **MSI/MSI-X (message-signaled)** — when Windows assigns message interrupts, the driver programs the virtio MSI-X routing registers (`msix_config` / `queue_msix_vector`) and services completions without relying on ISR status.
 
 On Windows 7, message-signaled interrupts are opt-in via INF. The shipped `inf/aero_virtio_blk.inf` requests MSI/MSI-X
-and Windows will fall back to INTx when MSI isn't available.
+and Windows will use INTx when MSI/MSI-X isn't available.
 
 #### INF registry keys
 

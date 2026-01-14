@@ -119,7 +119,10 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   /*
    * Vector programming failed (readback NO_VECTOR): fall back to INTx.
    *
-   * Contract v1 requires INTx correctness; MSI/MSI-X is an optional enhancement.
+   * Note: on Aero contract devices, MSI-X is exclusive when enabled at the PCI layer.
+   * Therefore we must not proceed with MSI-X enabled but virtio vectors left at
+   * NO_VECTOR (interrupts would be suppressed). We explicitly disable MSI-X routing
+   * and switch to the INTx path instead.
    */
   devExt->UseMsi = FALSE;
   devExt->MsiMessageCount = 0;
