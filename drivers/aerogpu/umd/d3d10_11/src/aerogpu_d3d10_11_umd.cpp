@@ -4280,6 +4280,8 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(E_INVALIDARG);
     }
     if (pDesc->cull_mode > AEROGPU_CULL_BACK) {
+      // Cull mode is serialized into the AeroGPU command stream. Reject unknown values so we
+      // do not emit invalid protocol enums.
       AEROGPU_D3D10_RET_HR(E_INVALIDARG);
     }
     if (pDesc->front_ccw > 1u || pDesc->scissor_enable > 1u || pDesc->depth_clip_enable > 1u) {
