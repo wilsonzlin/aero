@@ -1767,7 +1767,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
     const bootDriveOk = trySetMachineBootDrive(m, configuredBootDrive);
     if (!bootDriveOk && msg.cd && desiredBootDrive === BIOS_DRIVE_CD0 && !useCdFirstPolicy) {
-      throw new Error("Machine.set_boot_drive is unavailable in this WASM build; cannot boot from install media.");
+      throw new Error(
+        "Machine boot-drive APIs are unavailable in this WASM build; cannot boot from install media (expected set_boot_drive/setBootDrive or set_boot_device/setBootDevice).",
+      );
     }
 
     try {
