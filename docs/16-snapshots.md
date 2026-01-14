@@ -245,6 +245,12 @@ For forward compatibility, the runtime also supports a fallback spelling for unk
 Note: older runtimes that do not recognize `gpu.aerogpu` may still encode/decode this device as
 `device.25` (the generic fallback spelling). This is acceptable for forward compatibility.
 
+The web runtime may also store **host-managed** snapshot state under reserved `device.<id>` entries that do **not** correspond to a Rust `DeviceId` enum variant. These blobs are treated as opaque by the Rust snapshot tooling and exist to make browser-specific integrations round-trip correctly across save/restore.
+
+Current reserved web-only ids:
+
+- `device.1000000000` — `RuntimeDiskWorker` snapshot state (disk overlay refs + remote cache bindings). This is host-side persistence state and is separate from the guest-visible disk controller snapshot (`DeviceId::DISK_CONTROLLER`).
+
 #### Disk controllers (`DeviceId::DISK_CONTROLLER` = `6`)
 
 `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES` (see `Validation / corruption handling` above), and by convention `DeviceState.version/flags` mirror the *inner* `aero-io-snapshot` device `SnapshotVersion (major, minor)` (see `Recommended device payload convention (DEVICES)` above).
