@@ -440,7 +440,8 @@ constexpr uint32_t kD3DGetDataFlush = 0x1u;
 // - 2D images (Size==0, mapped to CREATE_TEXTURE2D)
 //
 // For Size==0 resources, we validate Type explicitly so we don't accidentally
-// treat volume/cube resources as 2D textures.
+// treat volume resources as 2D textures. Cube textures are supported by
+// representing them as 2D texture arrays with Depth==6.
 constexpr uint32_t kD3dRTypeSurface = 1u; // D3DRTYPE_SURFACE
 constexpr uint32_t kD3dRTypeVolume = 2u; // D3DRTYPE_VOLUME
 constexpr uint32_t kD3dRTypeTexture = 3u; // D3DRTYPE_TEXTURE
@@ -460,12 +461,14 @@ bool d3d9_validate_nonbuffer_type(uint32_t type, uint32_t depth, D3d9NonBufferTy
     case kD3dRTypeTexture:
       // For 2D textures, Depth is interpreted as array layers (Depth>=1).
       return depth >= 1;
+    case kD3dRTypeCubeTexture:
+      // Cube textures are represented as `CREATE_TEXTURE2D` with `array_layers=6`.
+      return depth == 6;
     case kD3dRTypeSurface:
       // Surfaces cannot be arrays.
       return depth == 1;
     case kD3dRTypeVolume:
     case kD3dRTypeVolumeTexture:
-    case kD3dRTypeCubeTexture:
       return false;
     default:
       if (type == 0 && policy == D3d9NonBufferTypeValidation::AllowUnknownAsSurface) {
@@ -9373,9 +9376,11 @@ static HRESULT device_open_resource_impl(
   }
   res->mip_levels = mip_levels;
 
-  // AeroGPU cannot represent non-2D textures/surfaces in the protocol. Reject
-  // shared allocations that describe volume/cube resources to avoid importing a
-  // handle that the host will interpret incorrectly.
+  // AeroGPU cannot represent volume resources in the guest↔host protocol. Reject
+  // shared allocations that describe them to avoid importing a handle that the
+  // host will interpret incorrectly.
+  //
+  // Cube textures are represented as 2D arrays with Depth==6 and are accepted.
   if (open_size_bytes == 0 &&
       !d3d9_validate_nonbuffer_type(res->type, res->depth, D3d9NonBufferTypeValidation::AllowUnknownAsSurface)) {
     return D3DERR_INVALIDCALL;
