@@ -423,6 +423,11 @@ test-input:
 test-input-e2e:
   cargo xtask input --e2e
 
+test-conformance *args:
+  # Instruction semantics differential testing (Aero vs native host backend).
+  # Note: supported on x86_64 unix only.
+  cargo xtask conformance {{args}}
+
 gen-scancodes:
   #!/usr/bin/env bash
   set -euo pipefail
