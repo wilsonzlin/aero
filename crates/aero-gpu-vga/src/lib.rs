@@ -2379,6 +2379,47 @@ mod tests {
     }
 
     #[test]
+    fn text_mode_respects_crtc_start_address_and_byte_mode() {
+        let mut dev = VgaDevice::new();
+        dev.set_text_mode_80x25();
+
+        // Disable cursor for deterministic output.
+        dev.crtc[0x0A] = 0x20;
+
+        // Two cells with different background colors so we can detect which one is at the origin.
+        let base = 0xB8000u32;
+        // Cell 0: bg=1 (blue), fg=0 (black).
+        dev.mem_write_u8(base, b' ');
+        dev.mem_write_u8(base + 1, 0x10);
+        // Cell 1: bg=2 (green), fg=0.
+        dev.mem_write_u8(base + 2, b' ');
+        dev.mem_write_u8(base + 3, 0x20);
+
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[1]));
+
+        // Default CRTC byte mode is off; start address is interpreted as a word offset, so
+        // start=1 selects cell 1.
+        dev.crtc[0x0C] = 0;
+        dev.crtc[0x0D] = 1;
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[2]));
+
+        // Enable CRTC byte mode (0x17 bit6). Now start=1 is a byte offset and rounds down to cell 0.
+        dev.crtc[0x17] |= 0x40;
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[1]));
+
+        // start=2 bytes selects cell 1.
+        dev.crtc[0x0D] = 2;
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[2]));
+    }
+
+    #[test]
     fn pel_mask_applies_to_text_mode_palette_lookup() {
         let mut dev = VgaDevice::new();
         dev.set_text_mode_80x25();
