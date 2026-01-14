@@ -352,6 +352,7 @@ The current implementation targets:
   - When the device exposes `AEROGPU_UMDPRIV_FEATURE_TRANSFER` (ABI minor `>= 1`), the UMD emits `AEROGPU_CMD_COPY_TEXTURE2D`
     with `AEROGPU_COPY_FLAG_WRITEBACK_DST` so the host writes pixels into the destination surface's backing allocation.
     This requires allocation-backed systemmem surfaces (`backing_alloc_id != 0`).
+    (The same transfer/writeback path is also used for full-surface `CopyRects` into allocation-backed systemmem surfaces.)
   - Otherwise, the UMD falls back to a submit+wait and a CPU-side copy.
 - **EVENT queries (DWM):** `CreateQuery`/`IssueQuery`/`GetQueryData` are implemented for `D3DQUERYTYPE_EVENT` only; other query
   types return `D3DERR_NOTAVAILABLE` (see `device_create_query()` / `device_issue_query()` / `device_get_query_data()` in
