@@ -71,3 +71,5 @@ to keep it available for reference and targeted tests.
 - Targeted legacy tests/benches require opting in via:
   - `cargo test --locked -p emulator --features legacy-audio`
   - `cargo bench --locked -p emulator --features legacy-audio`
+
+See also: [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md) (broader `crates/emulator` → canonical stack plan + deletion targets).
