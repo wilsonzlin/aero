@@ -71,7 +71,12 @@ bash ./scripts/safe-run.sh \
     --debugcon-out stdout
 ```
 
-Note: the CLI opens the disk image as a native file-backed disk. By default it is **writable** (guest writes can modify the image). Use `--disk-ro` or a copy if you want a read-only base.
+The CLI requires at least one of:
+
+- `--disk` (primary HDD image)
+- `--install-iso` (ATAPI CD-ROM install/recovery media)
+
+When `--disk` is used, the CLI opens the disk image as a native file-backed disk. By default it is **writable** (guest writes can modify the image). Use `--disk-ro` or a copy if you want a read-only base.
 
 To keep a base image immutable while still allowing guest writes, use a copy-on-write overlay:
 

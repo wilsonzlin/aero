@@ -29,6 +29,11 @@ mod native {
             ArgGroup::new("stop")
                 .required(true)
                 .args(["max_insts", "max_ms"])
+        ),
+        group(
+            ArgGroup::new("media")
+                .required(true)
+                .args(["disk", "install_iso"])
         )
     )]
     pub struct Args {
@@ -36,16 +41,16 @@ mod native {
         ///
         /// The virtual capacity must be a multiple of 512 bytes.
         #[arg(long)]
-        disk: PathBuf,
+        disk: Option<PathBuf>,
 
         /// Open the disk image read-only (guest writes will fail).
-        #[arg(long, conflicts_with = "disk_overlay")]
+        #[arg(long, conflicts_with = "disk_overlay", requires = "disk")]
         disk_ro: bool,
 
         /// Optional copy-on-write overlay image (AEROSPAR).
         ///
         /// If provided, the base `--disk` is opened read-only and guest writes go to the overlay.
-        #[arg(long)]
+        #[arg(long, requires = "disk")]
         disk_overlay: Option<PathBuf>,
 
         /// Allocation unit (block size) used when creating a new `--disk-overlay` (bytes).
@@ -85,7 +90,7 @@ mod native {
         snapshot_save: Option<PathBuf>,
 
         /// Load a snapshot (aero_snapshot format) before running.
-        #[arg(long)]
+        #[arg(long, requires = "disk")]
         snapshot_load: Option<PathBuf>,
 
         /// Optional install/recovery ISO to attach as an ATAPI CD-ROM (IDE secondary master).
@@ -147,22 +152,30 @@ mod native {
         //
         // Note: these refs are metadata only; disk bytes always remain external to the snapshot
         // blob.
-        let base_image = args.disk.display().to_string();
-        if let Some(overlay) = &args.disk_overlay {
-            machine
-                .set_ahci_port0_disk_overlay_ref(base_image.clone(), overlay.display().to_string());
-        } else {
-            machine.set_ahci_port0_disk_overlay_ref(base_image.clone(), "");
-        }
+        let base_image = args
+            .disk
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        if let Some(disk) = &args.disk {
+            if let Some(overlay) = &args.disk_overlay {
+                machine.set_ahci_port0_disk_overlay_ref(
+                    base_image.clone(),
+                    overlay.display().to_string(),
+                );
+            } else {
+                machine.set_ahci_port0_disk_overlay_ref(base_image.clone(), "");
+            }
 
-        let disk_backend = if let Some(overlay) = &args.disk_overlay {
-            open_disk_backend_with_overlay(&args.disk, overlay, args.disk_overlay_block_size)?
-        } else {
-            open_disk_backend(&args.disk, args.disk_ro)?
-        };
-        machine
-            .set_disk_backend(disk_backend)
-            .map_err(|e| anyhow!("{e}"))?;
+            let disk_backend = if let Some(overlay) = &args.disk_overlay {
+                open_disk_backend_with_overlay(disk, overlay, args.disk_overlay_block_size)?
+            } else {
+                open_disk_backend(disk, args.disk_ro)?
+            };
+            machine
+                .set_disk_backend(disk_backend)
+                .map_err(|e| anyhow!("{e}"))?;
+        }
 
         // Track whether the firmware "CD-first when present" policy is enabled so we can disable it
         // after the first guest-initiated reset (Windows setup reboots into the installed HDD while
