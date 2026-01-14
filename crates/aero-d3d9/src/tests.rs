@@ -1274,6 +1274,121 @@ fn assemble_ps3_pow_components() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_exp_log_pow_sat_x2_order() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 1.0, 1.0, 1.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+        ],
+    ));
+    // def c1, 4.0, 4.0, 4.0, 4.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            4.0f32.to_bits(),
+            4.0f32.to_bits(),
+            4.0f32.to_bits(),
+            4.0f32.to_bits(),
+        ],
+    ));
+    // def c2, 2.0, 2.0, 2.0, 2.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            2.0f32.to_bits(),
+            2.0f32.to_bits(),
+            2.0f32.to_bits(),
+            2.0f32.to_bits(),
+        ],
+    ));
+    // def c3, 0.25, 0.25, 0.25, 0.25
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 3, 0xF),
+            0.25f32.to_bits(),
+            0.25f32.to_bits(),
+            0.25f32.to_bits(),
+            0.25f32.to_bits(),
+        ],
+    ));
+
+    // exp_sat_x2 r0, c0
+    out.extend(enc_inst_with_extra(
+        0x000E,
+        3u32 << 20, // saturate + mul2
+        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+    // mul r0, r0, c3
+    out.extend(enc_inst(
+        0x0005,
+        &[enc_dst(0, 0, 0xF), enc_src(0, 0, 0xE4), enc_src(2, 3, 0xE4)],
+    ));
+
+    // log_sat_x2 r1, c1
+    out.extend(enc_inst_with_extra(
+        0x000F,
+        3u32 << 20, // saturate + mul2
+        &[enc_dst(0, 1, 0xF), enc_src(2, 1, 0xE4)],
+    ));
+    // mul r1, r1, c3
+    out.extend(enc_inst(
+        0x0005,
+        &[enc_dst(0, 1, 0xF), enc_src(0, 1, 0xE4), enc_src(2, 3, 0xE4)],
+    ));
+
+    // pow_sat_x2 r2, c2, c2
+    out.extend(enc_inst_with_extra(
+        0x0020,
+        3u32 << 20, // saturate + mul2
+        &[enc_dst(0, 2, 0xF), enc_src(2, 2, 0xE4), enc_src(2, 2, 0xE4)],
+    ));
+    // mul r2, r2, c3
+    out.extend(enc_inst(
+        0x0005,
+        &[enc_dst(0, 2, 0xF), enc_src(0, 2, 0xE4), enc_src(2, 3, 0xE4)],
+    ));
+
+    // mov r3, r0
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    // mov r3.y, r1.x
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)],
+    ));
+    // mov r3.z, r2.x
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)],
+    ));
+    // mov r3.w, c0.x (alpha = 1.0)
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0x8), enc_src(2, 0, 0x00)],
+    ));
+
+    // mov oC0, r3
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 3, 0xE4)],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_predicated_exp_log_pow_modifiers() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -2387,6 +2502,56 @@ fn sm3_exp_log_pow_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "1806680cf63f0d89928fe033c641adc922232f74f257867de050efb43f50edb9"
+    );
+}
+
+#[test]
+fn sm3_exp_log_pow_sat_x2_order_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3());
+    let ps = build_sm3_ir(&assemble_ps3_exp_log_pow_sat_x2_order());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    for (pos, (u, v), color) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, color);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Each math op uses `sat_x2` but is then multiplied by 0.25; this keeps the final value in
+    // range while still validating the result-modifier order (shift before saturate).
+    assert_eq!(rt.get(4, 4).to_rgba8(), [64, 64, 64, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "6faf128775a825392b4e9f890b11c8c9000d945aefdb18b2f244f3af397fd8a1"
     );
 }
 
