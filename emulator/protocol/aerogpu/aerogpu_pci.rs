@@ -207,3 +207,32 @@ pub enum AerogpuFormat {
     BC7RgbaUnorm = 70,
     BC7RgbaUnormSrgb = 71,
 }
+
+impl AerogpuFormat {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Invalid),
+            1 => Some(Self::B8G8R8A8Unorm),
+            2 => Some(Self::B8G8R8X8Unorm),
+            3 => Some(Self::R8G8B8A8Unorm),
+            4 => Some(Self::R8G8B8X8Unorm),
+            5 => Some(Self::B5G6R5Unorm),
+            6 => Some(Self::B5G5R5A1Unorm),
+            7 => Some(Self::B8G8R8A8UnormSrgb),
+            8 => Some(Self::B8G8R8X8UnormSrgb),
+            9 => Some(Self::R8G8B8A8UnormSrgb),
+            10 => Some(Self::R8G8B8X8UnormSrgb),
+            32 => Some(Self::D24UnormS8Uint),
+            33 => Some(Self::D32Float),
+            64 => Some(Self::BC1RgbaUnorm),
+            65 => Some(Self::BC1RgbaUnormSrgb),
+            66 => Some(Self::BC2RgbaUnorm),
+            67 => Some(Self::BC2RgbaUnormSrgb),
+            68 => Some(Self::BC3RgbaUnorm),
+            69 => Some(Self::BC3RgbaUnormSrgb),
+            70 => Some(Self::BC7RgbaUnorm),
+            71 => Some(Self::BC7RgbaUnormSrgb),
+            _ => None,
+        }
+    }
+}

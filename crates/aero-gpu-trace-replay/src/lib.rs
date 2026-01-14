@@ -1002,48 +1002,7 @@ pub fn decode_cmd_stream_listing(
                         let backing_alloc_id = u32_le_at(pkt.payload, 32).unwrap();
                         let backing_offset_bytes = u32_le_at(pkt.payload, 36).unwrap();
 
-                        let format_name = match format {
-                            v if v == AerogpuFormat::Invalid as u32 => Some("Invalid"),
-                            v if v == AerogpuFormat::B8G8R8A8Unorm as u32 => Some("B8G8R8A8Unorm"),
-                            v if v == AerogpuFormat::B8G8R8X8Unorm as u32 => Some("B8G8R8X8Unorm"),
-                            v if v == AerogpuFormat::R8G8B8A8Unorm as u32 => Some("R8G8B8A8Unorm"),
-                            v if v == AerogpuFormat::R8G8B8X8Unorm as u32 => Some("R8G8B8X8Unorm"),
-                            v if v == AerogpuFormat::B5G6R5Unorm as u32 => Some("B5G6R5Unorm"),
-                            v if v == AerogpuFormat::B5G5R5A1Unorm as u32 => Some("B5G5R5A1Unorm"),
-                            v if v == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
-                                Some("B8G8R8A8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
-                                Some("B8G8R8X8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {
-                                Some("R8G8B8A8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
-                                Some("R8G8B8X8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => {
-                                Some("D24UnormS8Uint")
-                            }
-                            v if v == AerogpuFormat::D32Float as u32 => Some("D32Float"),
-                            v if v == AerogpuFormat::BC1RgbaUnorm as u32 => Some("BC1RgbaUnorm"),
-                            v if v == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
-                                Some("BC1RgbaUnormSrgb")
-                            }
-                            v if v == AerogpuFormat::BC2RgbaUnorm as u32 => Some("BC2RgbaUnorm"),
-                            v if v == AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
-                                Some("BC2RgbaUnormSrgb")
-                            }
-                            v if v == AerogpuFormat::BC3RgbaUnorm as u32 => Some("BC3RgbaUnorm"),
-                            v if v == AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
-                                Some("BC3RgbaUnormSrgb")
-                            }
-                            v if v == AerogpuFormat::BC7RgbaUnorm as u32 => Some("BC7RgbaUnorm"),
-                            v if v == AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
-                                Some("BC7RgbaUnormSrgb")
-                            }
-                            _ => None,
-                        };
+                        let format_name = AerogpuFormat::from_u32(format).map(|f| format!("{f:?}"));
 
                         let _ = write!(
                             line,
@@ -1170,48 +1129,7 @@ pub fn decode_cmd_stream_listing(
                         let base_array_layer = u32_le_at(pkt.payload, 20).unwrap();
                         let array_layer_count = u32_le_at(pkt.payload, 24).unwrap();
 
-                        let format_name = match format {
-                            v if v == AerogpuFormat::Invalid as u32 => Some("Invalid"),
-                            v if v == AerogpuFormat::B8G8R8A8Unorm as u32 => Some("B8G8R8A8Unorm"),
-                            v if v == AerogpuFormat::B8G8R8X8Unorm as u32 => Some("B8G8R8X8Unorm"),
-                            v if v == AerogpuFormat::R8G8B8A8Unorm as u32 => Some("R8G8B8A8Unorm"),
-                            v if v == AerogpuFormat::R8G8B8X8Unorm as u32 => Some("R8G8B8X8Unorm"),
-                            v if v == AerogpuFormat::B5G6R5Unorm as u32 => Some("B5G6R5Unorm"),
-                            v if v == AerogpuFormat::B5G5R5A1Unorm as u32 => Some("B5G5R5A1Unorm"),
-                            v if v == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => {
-                                Some("B8G8R8A8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => {
-                                Some("B8G8R8X8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => {
-                                Some("R8G8B8A8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => {
-                                Some("R8G8B8X8UnormSrgb")
-                            }
-                            v if v == AerogpuFormat::D24UnormS8Uint as u32 => {
-                                Some("D24UnormS8Uint")
-                            }
-                            v if v == AerogpuFormat::D32Float as u32 => Some("D32Float"),
-                            v if v == AerogpuFormat::BC1RgbaUnorm as u32 => Some("BC1RgbaUnorm"),
-                            v if v == AerogpuFormat::BC1RgbaUnormSrgb as u32 => {
-                                Some("BC1RgbaUnormSrgb")
-                            }
-                            v if v == AerogpuFormat::BC2RgbaUnorm as u32 => Some("BC2RgbaUnorm"),
-                            v if v == AerogpuFormat::BC2RgbaUnormSrgb as u32 => {
-                                Some("BC2RgbaUnormSrgb")
-                            }
-                            v if v == AerogpuFormat::BC3RgbaUnorm as u32 => Some("BC3RgbaUnorm"),
-                            v if v == AerogpuFormat::BC3RgbaUnormSrgb as u32 => {
-                                Some("BC3RgbaUnormSrgb")
-                            }
-                            v if v == AerogpuFormat::BC7RgbaUnorm as u32 => Some("BC7RgbaUnorm"),
-                            v if v == AerogpuFormat::BC7RgbaUnormSrgb as u32 => {
-                                Some("BC7RgbaUnormSrgb")
-                            }
-                            _ => None,
-                        };
+                        let format_name = AerogpuFormat::from_u32(format).map(|f| format!("{f:?}"));
 
                         let _ = write!(
                             line,
