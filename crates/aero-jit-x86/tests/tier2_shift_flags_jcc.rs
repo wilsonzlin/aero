@@ -761,6 +761,54 @@ fn tier2_masks_8bit_shift_count_to_zero_for_flag_updates() {
 }
 
 #[test]
+fn tier2_masks_16bit_shift_count_to_zero_for_flag_updates() {
+    // 66 mov ax, 1
+    // 66 shl ax, 32      ; x86 masks to 5 bits => count==0 => flags unchanged and ZF stays 0
+    // jz +3              ; must NOT take
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
+        0x66, 0xC1, 0xE0, 0x20, // shl ax, 32
+        0x74, 0x03, // jz +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_masks_32bit_shift_count_to_zero_for_flag_updates() {
+    // mov eax, 1
+    // shl eax, 32         ; x86 masks to 5 bits => count==0 => flags unchanged and ZF stays 0
+    // jz +3               ; must NOT take
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+        0xC1, 0xE0, 0x20, // shl eax, 32
+        0x74, 0x03, // jz +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_masks_64bit_shift_count_for_flag_updates() {
     // mov rax, 0x8000_0000 (sign-extended to 0xFFFF_FFFF_8000_0000 => MSB=1)
     // shl rax, 65        ; x86 masks to 6 bits => count==1
@@ -781,6 +829,30 @@ fn tier2_masks_64bit_shift_count_for_flag_updates() {
 
     let (_func, exit, state) = run_x86(CODE);
     assert_eq!(exit, RunExit::SideExit { next_rip: 18 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_masks_32bit_shift_count_for_flag_updates() {
+    // mov eax, 0x8000_0000
+    // shl eax, 33         ; x86 masks to 5 bits => count==1
+    // jc +3               ; must take (CF=1)
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
+        0xC1, 0xE0, 0x21, // shl eax, 33
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 15 });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
 }
 
