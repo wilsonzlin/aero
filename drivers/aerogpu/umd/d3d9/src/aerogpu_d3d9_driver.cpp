@@ -5771,8 +5771,8 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       // state changes (SetFVF / SetVertexDecl, SetTransform/MultiplyTransform,
       // SetLight/SetMaterial, user shader/constant writes that overlap the
       // reserved ranges). Forcing it here can cause redundant uploads because
-      // SetTransform may have already updated the fixed-function constant range
-      // eagerly.
+      // SetTransform/MultiplyTransform may have already updated the fixed-function
+      // constant range eagerly.
       if (!emit_bind_shaders_locked(dev)) {
         dev->vs = prev_vs;
         dev->ps = prev_ps;
