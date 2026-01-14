@@ -666,12 +666,21 @@ fn translate_hs(
                 }
             }
             Sm4Decl::HsOutputControlPointCount { count } => {
-                output_control_points = Some(*count);
-                if *count > 32 {
+                if *count == 0 || *count > 32 {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
                         inst_index: 0,
                         opcode: format!("hs_output_control_points_{count}"),
                     });
+                }
+                if let Some(prev) = output_control_points {
+                    if prev != *count {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index: 0,
+                            opcode: format!("hs_output_control_points_{prev}_vs_{count}"),
+                        });
+                    }
+                } else {
+                    output_control_points = Some(*count);
                 }
             }
             _ => {}
@@ -768,8 +777,8 @@ fn translate_hs(
     //
     // Layout:
     // - Control point inputs/outputs are indexed as:
-    //     ((primitive_id * 32 + output_control_point_id) * STRIDE + reg_index)
-    //   where `32` is the supported maximum `outputcontrolpoints`.
+    //     ((primitive_id * HS_CONTROL_POINTS_PER_PATCH + control_point_id) * STRIDE + reg_index)
+    //   where `HS_CONTROL_POINTS_PER_PATCH` is the hull shader output control-point count (<= 32).
     // - Patch constant outputs are indexed as:
     //     (primitive_id * STRIDE + reg_index)
     w.line("struct HsRegBuffer { data: array<vec4<f32>> };");
@@ -819,6 +828,9 @@ fn translate_hs(
     w.line("const HS_MAX_CONTROL_POINTS: u32 = 32u;");
     if let Some(count) = output_control_points {
         w.line(&format!("const HS_OUTPUT_CONTROL_POINTS: u32 = {count}u;"));
+        w.line("const HS_CONTROL_POINTS_PER_PATCH: u32 = HS_OUTPUT_CONTROL_POINTS;");
+    } else {
+        w.line("const HS_CONTROL_POINTS_PER_PATCH: u32 = HS_MAX_CONTROL_POINTS;");
     }
     w.line("");
 
@@ -828,12 +840,12 @@ fn translate_hs(
     w.indent();
     w.line("let hs_output_control_point_id: u32 = id.x;");
     w.line("let hs_primitive_id: u32 = id.y;");
-    w.line("if (hs_output_control_point_id >= HS_MAX_CONTROL_POINTS) { return; }");
+    w.line("if (hs_output_control_point_id >= HS_CONTROL_POINTS_PER_PATCH) { return; }");
     w.line(
-        "let hs_in_base: u32 = (hs_primitive_id * HS_MAX_CONTROL_POINTS + hs_output_control_point_id) * HS_IN_STRIDE;",
+        "let hs_in_base: u32 = (hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + hs_output_control_point_id) * HS_IN_STRIDE;",
     );
     w.line(
-        "let hs_out_base: u32 = (hs_primitive_id * HS_MAX_CONTROL_POINTS + hs_output_control_point_id) * HS_CP_OUT_STRIDE;",
+        "let hs_out_base: u32 = (hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + hs_output_control_point_id) * HS_CP_OUT_STRIDE;",
     );
     w.line("");
 
@@ -860,7 +872,7 @@ fn translate_hs(
     w.line("let hs_primitive_id: u32 = id.x;");
     w.line("let hs_output_control_point_id: u32 = 0u;");
     w.line(
-        "let hs_in_base: u32 = (hs_primitive_id * HS_MAX_CONTROL_POINTS + hs_output_control_point_id) * HS_IN_STRIDE;",
+        "let hs_in_base: u32 = (hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + hs_output_control_point_id) * HS_IN_STRIDE;",
     );
     w.line("let hs_out_base: u32 = hs_primitive_id * HS_PC_OUT_STRIDE;");
     w.line("");
