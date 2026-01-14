@@ -11,15 +11,31 @@ fn wasm_machine_enables_aerogpu_by_default() {
     // runtime can coordinate presentation across workers.
     #[cfg(feature = "wasm-threaded")]
     {
+        // Keep constants in sync with:
+        // - `crates/aero-shared/src/scanout_state.rs`
+        // - `crates/aero-shared/src/cursor_state.rs`
+        const SCANOUT_STATE_BYTE_LEN: u32 = 8 * 4;
+        const CURSOR_STATE_BYTE_LEN: u32 = 12 * 4;
+
         assert_ne!(
             machine.scanout_state_ptr(),
             0,
             "scanout_state_ptr must be non-zero in wasm-threaded builds"
         );
+        assert_eq!(
+            machine.scanout_state_len_bytes(),
+            SCANOUT_STATE_BYTE_LEN,
+            "unexpected scanout_state_len_bytes in wasm-threaded build"
+        );
         assert_ne!(
             machine.cursor_state_ptr(),
             0,
             "cursor_state_ptr must be non-zero in wasm-threaded builds"
+        );
+        assert_eq!(
+            machine.cursor_state_len_bytes(),
+            CURSOR_STATE_BYTE_LEN,
+            "unexpected cursor_state_len_bytes in wasm-threaded build"
         );
     }
 
