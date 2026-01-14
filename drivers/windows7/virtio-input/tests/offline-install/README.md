@@ -15,7 +15,7 @@ test images where you want input working immediately).
 > - Legacy filename alias (disabled by default): `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
 >   - Exists for compatibility with workflows/tools that still reference `virtio-input.inf`.
 >   - Adds an opt-in strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` for
->     environments where the Aero subsystem IDs are not exposed.
+>     environments where the Aero subsystem IDs are not exposed (Device Manager name: **Aero VirtIO Input Device**).
 >   - Allowed to diverge from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the
 >     fallback entry; outside the models sections it is expected to stay in sync (see
 >     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
