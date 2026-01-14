@@ -27,6 +27,8 @@
 #include <winhttp.h>
 #include <ws2tcpip.h>
 
+#include <aero_virtio_net_diag.h>
+
 #include <algorithm>
 #include <cmath>
 #include <climits>
@@ -529,85 +531,6 @@ struct AerovblkQueryInfoResult {
   size_t returned_len = 0; // Bytes of `info` returned by the driver (variable-length contract).
 };
 
-// Userspace mirror of `drivers/windows7/virtio-net/src/aero_virtio_net.c` diagnostics interface.
-static constexpr const wchar_t* kAerovnetDiagDevicePath = L"\\\\.\\AeroVirtioNetDiag";
-static constexpr ULONG kAerovnetDiagIoctlQuery =
-    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800u, METHOD_BUFFERED, FILE_READ_ACCESS);
-static constexpr ULONG kAerovnetInterruptModeIntx = 0u;
-static constexpr ULONG kAerovnetInterruptModeMsi = 1u;
-static constexpr USHORT kAerovnetNoVector = 0xFFFFu;
-
-#pragma pack(push, 1)
-struct AEROVNET_DIAG_INFO {
-  ULONG Version;
-  ULONG Size;
-
-  ULONGLONG HostFeatures;
-  ULONGLONG GuestFeatures;
-
-  ULONG InterruptMode;
-  ULONG MessageCount;
-
-  USHORT MsixConfigVector;
-  USHORT MsixRxVector;
-  USHORT MsixTxVector;
-
-  USHORT RxQueueSize;
-  USHORT TxQueueSize;
-
-  USHORT RxAvailIdx;
-  USHORT RxUsedIdx;
-  USHORT TxAvailIdx;
-  USHORT TxUsedIdx;
-
-  ULONG Flags;
-
-  UCHAR TxChecksumSupported;
-  UCHAR TxTsoV4Supported;
-  UCHAR TxTsoV6Supported;
-  UCHAR TxChecksumV4Enabled;
-  UCHAR TxChecksumV6Enabled;
-  UCHAR TxTsoV4Enabled;
-  UCHAR TxTsoV6Enabled;
-  UCHAR Reserved0;
-
-  ULONGLONG StatTxPackets;
-  ULONGLONG StatTxBytes;
-  ULONGLONG StatRxPackets;
-  ULONGLONG StatRxBytes;
-  ULONGLONG StatTxErrors;
-  ULONGLONG StatRxErrors;
-  ULONGLONG StatRxNoBuffers;
-
-  ULONG RxVqErrorFlags;
-  ULONG TxVqErrorFlags;
-
-  ULONG TxTsoMaxOffloadSize;
-  UCHAR TxUdpChecksumV4Enabled;
-  UCHAR TxUdpChecksumV6Enabled;
-  UCHAR Reserved1;
-  UCHAR Reserved2;
-
-  UCHAR CtrlVqNegotiated;
-  UCHAR CtrlRxNegotiated;
-  UCHAR CtrlVlanNegotiated;
-  UCHAR CtrlMacAddrNegotiated;
-
-  USHORT CtrlVqQueueIndex;
-  USHORT CtrlVqQueueSize;
-  ULONG CtrlVqErrorFlags;
-
-  ULONGLONG CtrlCmdSent;
-  ULONGLONG CtrlCmdOk;
-  ULONGLONG CtrlCmdErr;
-  ULONGLONG CtrlCmdTimeout;
-};
-#pragma pack(pop)
-
-static_assert(offsetof(AEROVNET_DIAG_INFO, Version) == 0x00, "AEROVNET_DIAG_INFO layout");
-static_assert(offsetof(AEROVNET_DIAG_INFO, HostFeatures) == 0x08, "AEROVNET_DIAG_INFO layout");
-static_assert(offsetof(AEROVNET_DIAG_INFO, GuestFeatures) == 0x10, "AEROVNET_DIAG_INFO layout");
-static_assert(offsetof(AEROVNET_DIAG_INFO, InterruptMode) == 0x18, "AEROVNET_DIAG_INFO layout");
 static_assert(sizeof(AEROVNET_DIAG_INFO) <= 256, "AEROVNET_DIAG_INFO size");
 
 static std::string VirtioFeaturesToString(ULONGLONG f) {
@@ -1244,7 +1167,7 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
 }
 
 static void EmitVirtioNetDiagMarker(Logger& log) {
-  HANDLE h = CreateFileW(kAerovnetDiagDevicePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+  HANDLE h = CreateFileW(AEROVNET_DIAG_DEVICE_PATH, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
     const DWORD err = GetLastError();
@@ -1258,7 +1181,7 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
 
   AEROVNET_DIAG_INFO info{};
   DWORD bytes = 0;
-  const BOOL ok = DeviceIoControl(h, kAerovnetDiagIoctlQuery, nullptr, 0, &info, sizeof(info), &bytes, nullptr);
+  const BOOL ok = DeviceIoControl(h, AEROVNET_DIAG_IOCTL_QUERY, nullptr, 0, &info, sizeof(info), &bytes, nullptr);
   const DWORD err = ok ? 0 : GetLastError();
   CloseHandle(h);
 
@@ -1272,11 +1195,11 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
   }
 
   const char* mode = "unknown";
-  if (info.InterruptMode == kAerovnetInterruptModeIntx) {
+  if (info.InterruptMode == AEROVNET_INTERRUPT_MODE_INTX) {
     mode = "intx";
-  } else if (info.InterruptMode == kAerovnetInterruptModeMsi) {
-    if (info.MsixConfigVector != kAerovnetNoVector || info.MsixRxVector != kAerovnetNoVector ||
-        info.MsixTxVector != kAerovnetNoVector) {
+  } else if (info.InterruptMode == AEROVNET_INTERRUPT_MODE_MSI) {
+    if (info.MsixConfigVector != kVirtioPciMsiNoVector || info.MsixRxVector != kVirtioPciMsiNoVector ||
+        info.MsixTxVector != kVirtioPciMsiNoVector) {
       mode = "msix";
     } else {
       mode = "msi";

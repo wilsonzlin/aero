@@ -159,6 +159,31 @@ You can also use `aero-virtio-selftest.exe`:
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
 
+### User-mode diagnostics interface (`\\.\AeroVirtioNetDiag`)
+
+For deterministic debugging/CI scraping, the driver exposes a lightweight, read-only user-mode diagnostics device:
+
+- Win32 device path: `\\.\AeroVirtioNetDiag`
+- IOCTL: `AEROVNET_DIAG_IOCTL_QUERY` (`0x00226000`)
+- Output struct: `AEROVNET_DIAG_INFO` (packed, versioned)
+
+The IOCTL contract is defined in a shared, WDK-free header so both the kernel driver and the guest selftest can include it:
+
+- `include/aero_virtio_net_diag.h`
+
+The query reports:
+
+- Offered/negotiated virtio feature bits (`HostFeatures`, `GuestFeatures`)
+- Interrupt mode (INTx vs MSI/MSI-X), message count, and the programmed virtio MSI-X vectors
+  (`msix_config` + `queue_msix_vector` for RX/TX)
+- Queue sizes and ring indices, plus virtqueue error flags (corruption indicators)
+- Offload enablement toggles (NDIS-controlled) and ctrl-vq state/counters (when negotiated)
+
+Notes:
+
+- The interface is **diagnostic-only** (no writable IOCTLs).
+- Callers must validate the returned byte count: the driver may return a truncated struct for compatibility.
+
 ### TX cancellation diagnostics (DBG builds)
 
 When built with `DBG`, the miniport tracks how many sends were cancelled at each stage of the TX pipeline:

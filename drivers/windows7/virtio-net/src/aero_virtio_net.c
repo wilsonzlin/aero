@@ -1,4 +1,5 @@
 #include "../include/aero_virtio_net.h"
+#include "../include/aero_virtio_net_diag.h"
 #include "../include/aero_virtio_net_offload.h"
 
 #define VIRTIO_NET_HDR_OFFLOAD_USE_EXTERNAL_HDR 1
@@ -29,94 +30,7 @@ static const WCHAR g_AerovNetDiagSddl[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;
 #define AEROVNET_DIAG_DEVICE_NAME L"\\Device\\AeroVirtioNetDiag"
 #define AEROVNET_DIAG_SYMBOLIC_NAME L"\\DosDevices\\AeroVirtioNetDiag"
 
-// Private IOCTLs: function code range 0x800-0xFFF is reserved for customer use.
-#define IOCTL_AEROVNET_DIAG_QUERY CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800u, METHOD_BUFFERED, FILE_READ_ACCESS)
-
-// Interrupt mode values for `AEROVNET_DIAG_INFO::InterruptMode`.
-#define AEROVNET_INTERRUPT_MODE_INTX 0u
-#define AEROVNET_INTERRUPT_MODE_MSI 1u
-
-#define AEROVNET_DIAG_INFO_VERSION 1u
-
-#pragma pack(push, 1)
-typedef struct _AEROVNET_DIAG_INFO {
-  ULONG Version;
-  ULONG Size;
-
-  ULONGLONG HostFeatures;
-  ULONGLONG GuestFeatures;
-
-  ULONG InterruptMode;
-  ULONG MessageCount;
-
-  USHORT MsixConfigVector;
-  USHORT MsixRxVector;
-  USHORT MsixTxVector;
-
-  USHORT RxQueueSize;
-  USHORT TxQueueSize;
-
-  // virtqueue indices (best-effort, snapshot).
-  USHORT RxAvailIdx;
-  USHORT RxUsedIdx;
-  USHORT TxAvailIdx;
-  USHORT TxUsedIdx;
-
-  ULONG Flags;
-
-  // Offload support + enablement.
-  UCHAR TxChecksumSupported;
-  UCHAR TxTsoV4Supported;
-  UCHAR TxTsoV6Supported;
-  UCHAR TxChecksumV4Enabled;
-  UCHAR TxChecksumV6Enabled;
-  UCHAR TxTsoV4Enabled;
-  UCHAR TxTsoV6Enabled;
-  UCHAR Reserved0;
-
-  ULONGLONG StatTxPackets;
-  ULONGLONG StatTxBytes;
-  ULONGLONG StatRxPackets;
-  ULONGLONG StatRxBytes;
-  ULONGLONG StatTxErrors;
-  ULONGLONG StatRxErrors;
-  ULONGLONG StatRxNoBuffers;
-
-  ULONG RxVqErrorFlags;
-  ULONG TxVqErrorFlags;
-
-  // TX offload configuration (NDIS-controlled).
-  ULONG TxTsoMaxOffloadSize;
-  UCHAR TxUdpChecksumV4Enabled;
-  UCHAR TxUdpChecksumV6Enabled;
-  UCHAR Reserved1;
-  UCHAR Reserved2;
-
-  // Optional virtio-net control virtqueue (when VIRTIO_NET_F_CTRL_VQ is negotiated).
-  UCHAR CtrlVqNegotiated;
-  UCHAR CtrlRxNegotiated;
-  UCHAR CtrlVlanNegotiated;
-  UCHAR CtrlMacAddrNegotiated;
-
-  USHORT CtrlVqQueueIndex;
-  USHORT CtrlVqQueueSize;
-  ULONG CtrlVqErrorFlags;
-
-  ULONGLONG CtrlCmdSent;
-  ULONGLONG CtrlCmdOk;
-  ULONGLONG CtrlCmdErr;
-  ULONGLONG CtrlCmdTimeout;
-} AEROVNET_DIAG_INFO;
-#pragma pack(pop)
-
 C_ASSERT(sizeof(AEROVNET_DIAG_INFO) <= 256);
-
-// Flags for `AEROVNET_DIAG_INFO::Flags`.
-#define AEROVNET_DIAG_FLAG_USE_MSIX 0x00000001u
-#define AEROVNET_DIAG_FLAG_MSIX_ALL_ON_VECTOR0 0x00000002u
-#define AEROVNET_DIAG_FLAG_SURPRISE_REMOVED 0x00000004u
-#define AEROVNET_DIAG_FLAG_ADAPTER_RUNNING 0x00000008u
-#define AEROVNET_DIAG_FLAG_ADAPTER_PAUSED 0x00000010u
 
 static NTSTATUS AerovNetDiagDispatchCreateClose(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);
 static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _Inout_ PIRP Irp);
@@ -4942,7 +4856,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   Status = STATUS_INVALID_DEVICE_REQUEST;
   CopyLen = 0;
 
-  if (Ioctl != IOCTL_AEROVNET_DIAG_QUERY) {
+  if (Ioctl != AEROVNET_DIAG_IOCTL_QUERY) {
     Irp->IoStatus.Status = Status;
     Irp->IoStatus.Information = 0;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
