@@ -337,6 +337,11 @@ def main() -> int:
             for e in [
                 _require(
                     body,
+                    "AeroGpuCmdStreamRequiresAllocTable safe header bound check",
+                    r"streamSize\s*-\s*offset.*?sizeof\s*\(\s*struct\s+aerogpu_cmd_hdr\s*\)",
+                ),
+                _require(
+                    body,
                     "AeroGpuCmdStreamRequiresAllocTable overflow-checked end",
                     r"NTSTATUS\s+(?P<st_var>[A-Za-z0-9_]+)\s*=\s*RtlULongAdd\s*\(\s*offset\s*,\s*hdr\.size_bytes\s*,\s*&(?P<end_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
                     r"\bNT_SUCCESS\s*\(\s*(?P=st_var)\s*\).*?"
@@ -346,6 +351,11 @@ def main() -> int:
                     body_nocomments,
                     "AeroGpuCmdStreamRequiresAllocTable unsafe end arithmetic",
                     r"offset\s*\+\s*hdr\.size_bytes",
+                ),
+                _forbid(
+                    body_nocomments,
+                    "AeroGpuCmdStreamRequiresAllocTable unsafe header arithmetic",
+                    r"offset\s*\+\s*sizeof\s*\(\s*struct\s+aerogpu_cmd_hdr\s*\)",
                 ),
             ]
             if e
