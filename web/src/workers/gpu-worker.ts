@@ -547,6 +547,13 @@ let cursorHotY = 0;
 // Normally true; temporarily disabled for cursor-less screenshots.
 let cursorRenderEnabled = true;
 
+// Track what cursor image has been uploaded to the current presenter so cursor *position* updates
+// don't repeatedly re-upload the texture.
+let cursorPresenterLastImageOwner: CursorPresenter | null = null;
+let cursorPresenterLastImage: Uint8Array | null = null;
+let cursorPresenterLastImageWidth = 0;
+let cursorPresenterLastImageHeight = 0;
+
 // -----------------------------------------------------------------------------
 // Hardware cursor (CursorState descriptor) tracking.
 // -----------------------------------------------------------------------------
@@ -562,7 +569,10 @@ const getCursorPresenter = (): CursorPresenter | null => presenter as unknown as
 
 const syncCursorToPresenter = (): void => {
   const p = getCursorPresenter();
-  if (!p) return;
+  if (!p) {
+    cursorPresenterLastImageOwner = null;
+    return;
+  }
 
   if (p.setCursorRenderEnabled) {
     try {
@@ -573,10 +583,21 @@ const syncCursorToPresenter = (): void => {
   }
 
   if (cursorImage && cursorWidth > 0 && cursorHeight > 0 && p.setCursorImageRgba8) {
-    try {
-      p.setCursorImageRgba8(cursorImage, cursorWidth, cursorHeight);
-    } catch (err) {
-      postPresenterError(err, presenter?.backend);
+    const presenterChanged = cursorPresenterLastImageOwner !== p;
+    const imageChanged =
+      cursorPresenterLastImage !== cursorImage ||
+      cursorPresenterLastImageWidth !== cursorWidth ||
+      cursorPresenterLastImageHeight !== cursorHeight;
+    if (presenterChanged || imageChanged) {
+      try {
+        p.setCursorImageRgba8(cursorImage, cursorWidth, cursorHeight);
+        cursorPresenterLastImageOwner = p;
+        cursorPresenterLastImage = cursorImage;
+        cursorPresenterLastImageWidth = cursorWidth;
+        cursorPresenterLastImageHeight = cursorHeight;
+      } catch (err) {
+        postPresenterError(err, presenter?.backend);
+      }
     }
   }
 
@@ -902,6 +923,9 @@ const syncHardwareCursorFromState = (): void => {
       cursorImage = null;
       cursorWidth = 0;
       cursorHeight = 0;
+      cursorPresenterLastImage = null;
+      cursorPresenterLastImageWidth = 0;
+      cursorPresenterLastImageHeight = 0;
     }
   }
 
@@ -2109,6 +2133,7 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
 
   presenter?.destroy?.();
   presenter = null;
+  cursorPresenterLastImageOwner = null;
   presenterFallback = undefined;
   presenterSrcWidth = 0;
   presenterSrcHeight = 0;
@@ -3181,6 +3206,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
   const prevPresenterBackend = presenter?.backend ?? null;
   presenter?.destroy?.();
   presenter = null;
+  cursorPresenterLastImageOwner = null;
   latestFrameTimings = null;
   presenterFallback = undefined;
   presenterErrorGeneration += 1;
@@ -3543,6 +3569,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
         presenter?.destroy?.();
         presenter = null;
+        cursorPresenterLastImageOwner = null;
         latestFrameTimings = null;
         presenterFallback = undefined;
         presenterInitPromise = null;
@@ -3603,6 +3630,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         cursorImage = null;
         cursorWidth = 0;
         cursorHeight = 0;
+        cursorPresenterLastImageOwner = null;
+        cursorPresenterLastImage = null;
+        cursorPresenterLastImageWidth = 0;
+        cursorPresenterLastImageHeight = 0;
         cursorEnabled = false;
         cursorX = 0;
         cursorY = 0;
@@ -4639,6 +4670,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       uninstallContextLossHandlers();
       presenter?.destroy?.();
       presenter = null;
+      cursorPresenterLastImageOwner = null;
       runtimeInit = null;
       runtimeCanvas = null;
       runtimeOptions = null;
