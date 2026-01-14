@@ -598,13 +598,16 @@ fn validate_wgsl_binding_contract(
     let mut samp_slots = HashSet::<u32>::new();
 
     for line in wgsl.lines() {
+        let Some(group) = parse_wgsl_attr_u32(line, "group") else {
+            continue;
+        };
+        let Some(binding) = parse_wgsl_attr_u32(line, "binding") else {
+            continue;
+        };
+
         if let Some(name) = parse_wgsl_uniform_var_name(line) {
             match name {
                 "constants" => {
-                    let group = parse_wgsl_attr_u32(line, "group")
-                        .ok_or_else(|| "constants uniform is missing @group()".to_string())?;
-                    let binding = parse_wgsl_attr_u32(line, "binding")
-                        .ok_or_else(|| "constants uniform is missing @binding()".to_string())?;
                     if group != 0 || binding != 0 {
                         return Err(format!(
                             "constants uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(0)"
@@ -614,10 +617,6 @@ fn validate_wgsl_binding_contract(
                     continue;
                 }
                 "constants_i" => {
-                    let group = parse_wgsl_attr_u32(line, "group")
-                        .ok_or_else(|| "constants_i uniform is missing @group()".to_string())?;
-                    let binding = parse_wgsl_attr_u32(line, "binding")
-                        .ok_or_else(|| "constants_i uniform is missing @binding()".to_string())?;
                     if group != 0 || binding != 1 {
                         return Err(format!(
                             "constants_i uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(1)"
@@ -627,10 +626,6 @@ fn validate_wgsl_binding_contract(
                     continue;
                 }
                 "constants_b" => {
-                    let group = parse_wgsl_attr_u32(line, "group")
-                        .ok_or_else(|| "constants_b uniform is missing @group()".to_string())?;
-                    let binding = parse_wgsl_attr_u32(line, "binding")
-                        .ok_or_else(|| "constants_b uniform is missing @binding()".to_string())?;
                     if group != 0 || binding != 2 {
                         return Err(format!(
                             "constants_b uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(2)"
@@ -641,10 +636,6 @@ fn validate_wgsl_binding_contract(
                 }
                 "half_pixel" => {
                     has_half_pixel = true;
-                    let group = parse_wgsl_attr_u32(line, "group")
-                        .ok_or_else(|| "half_pixel uniform is missing @group()".to_string())?;
-                    let binding = parse_wgsl_attr_u32(line, "binding")
-                        .ok_or_else(|| "half_pixel uniform is missing @binding()".to_string())?;
                     if group != 3 || binding != 0 {
                         return Err(format!(
                             "half_pixel uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(3) @binding(0)"
@@ -652,7 +643,11 @@ fn validate_wgsl_binding_contract(
                     }
                     continue;
                 }
-                _ => {}
+                other => {
+                    return Err(format!(
+                        "WGSL declares unexpected uniform binding '{other}' (@group({group}) @binding({binding}))"
+                    ));
+                }
             }
         }
 
@@ -667,7 +662,9 @@ fn validate_wgsl_binding_contract(
                 }
             }
             if digits_end == 0 {
-                continue;
+                return Err(format!(
+                    "WGSL declares unexpected texture binding name (@group({group}) @binding({binding}))"
+                ));
             }
             let idx: u32 = rest[..digits_end]
                 .parse()
@@ -677,10 +674,6 @@ fn validate_wgsl_binding_contract(
                     "WGSL declares out-of-range texture binding tex{idx} (MAX_SAMPLERS={MAX_SAMPLERS})"
                 ));
             }
-            let group = parse_wgsl_attr_u32(line, "group")
-                .ok_or_else(|| format!("tex{idx} binding is missing @group()"))?;
-            let binding = parse_wgsl_attr_u32(line, "binding")
-                .ok_or_else(|| format!("tex{idx} binding is missing @binding()"))?;
             if group != sampler_group_expected {
                 return Err(format!(
                     "tex{idx} has unexpected @group({group}); expected @group({sampler_group_expected})"
@@ -704,6 +697,7 @@ fn validate_wgsl_binding_contract(
             if !tex_slots.insert(idx) {
                 return Err(format!("WGSL declares tex{idx} more than once"));
             }
+            continue;
         }
 
         if let Some(pos) = line.find("var samp") {
@@ -717,7 +711,9 @@ fn validate_wgsl_binding_contract(
                 }
             }
             if digits_end == 0 {
-                continue;
+                return Err(format!(
+                    "WGSL declares unexpected sampler binding name (@group({group}) @binding({binding}))"
+                ));
             }
             let idx: u32 = rest[..digits_end]
                 .parse()
@@ -727,10 +723,6 @@ fn validate_wgsl_binding_contract(
                     "WGSL declares out-of-range sampler binding samp{idx} (MAX_SAMPLERS={MAX_SAMPLERS})"
                 ));
             }
-            let group = parse_wgsl_attr_u32(line, "group")
-                .ok_or_else(|| format!("samp{idx} binding is missing @group()"))?;
-            let binding = parse_wgsl_attr_u32(line, "binding")
-                .ok_or_else(|| format!("samp{idx} binding is missing @binding()"))?;
             if group != sampler_group_expected {
                 return Err(format!(
                     "samp{idx} has unexpected @group({group}); expected @group({sampler_group_expected})"
@@ -748,7 +740,12 @@ fn validate_wgsl_binding_contract(
             if !samp_slots.insert(idx) {
                 return Err(format!("WGSL declares samp{idx} more than once"));
             }
+            continue;
         }
+
+        return Err(format!(
+            "WGSL declares unexpected resource binding (@group({group}) @binding({binding}))"
+        ));
     }
 
     if !has_constants {
