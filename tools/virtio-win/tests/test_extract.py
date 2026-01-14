@@ -48,6 +48,130 @@ def _has_pycdlib() -> bool:
     return True
 
 
+def _iso9660_dir_ident(name: str) -> str:
+    # ISO-9660 directory identifiers are typically restricted to A-Z0-9_.
+    # For this synthetic test ISO, a conservative transform is good enough; the
+    # extractor's matching is case-insensitive and tolerates common substitutions
+    # like "." -> "_".
+    out = []
+    for c in name.upper():
+        if "A" <= c <= "Z" or "0" <= c <= "9" or c == "_":
+            out.append(c)
+        else:
+            out.append("_")
+    return "".join(out) or "_"
+
+
+def _iso9660_file_ident(name: str) -> str:
+    # ISO-9660 files are stored with a version suffix (e.g. `;1`). We also
+    # intentionally represent "no extension" as a trailing dot (`VERSION.;1`) to
+    # keep coverage for extractor normalization behavior.
+    base, dot, ext = name.rpartition(".")
+    if dot:
+        base_norm = _iso9660_dir_ident(base)
+        ext_norm = _iso9660_dir_ident(ext)
+        return f"{base_norm}.{ext_norm};1"
+    base_norm = _iso9660_dir_ident(name)
+    return f"{base_norm}.;1"
+
+
+def _create_iso_pycdlib(stage_root: Path, iso_path: Path, *, joliet: bool, rock_ridge: bool) -> None:
+    import pycdlib  # type: ignore
+
+    iso = pycdlib.PyCdlib()
+    new_kwargs: dict[str, object] = {
+        "interchange_level": 3,
+        "vol_ident": "VIRTIOWIN_TEST",
+    }
+    if joliet:
+        # Joliet level 3 supports long mixed-case names (what virtio-win ISOs use).
+        new_kwargs["joliet"] = 3
+    if rock_ridge:
+        # Rock Ridge v1.09 is the most common setting and is accepted by pycdlib.
+        new_kwargs["rock_ridge"] = "1.09"
+
+    # Be slightly defensive across pycdlib versions; some accept boolean values.
+    try:
+        iso.new(**new_kwargs)  # type: ignore[arg-type]
+    except TypeError:
+        compat = dict(new_kwargs)
+        if "joliet" in compat:
+            compat["joliet"] = True
+        if "rock_ridge" in compat:
+            compat["rock_ridge"] = True
+        iso.new(**compat)  # type: ignore[arg-type]
+
+    try:
+        # Add directories first (parents before children).
+        dirs = sorted(
+            [p for p in stage_root.rglob("*") if p.is_dir()],
+            key=lambda p: (len(p.relative_to(stage_root).parts), str(p).casefold()),
+        )
+        for d in dirs:
+            rel_parts = d.relative_to(stage_root).parts
+            if not rel_parts:
+                continue
+            iso_parts = [_iso9660_dir_ident(p) for p in rel_parts]
+            iso_dir_path = "/" + "/".join(iso_parts)
+            kwargs: dict[str, object] = {"iso_path": iso_dir_path}
+            if joliet:
+                kwargs["joliet_path"] = "/" + "/".join(rel_parts)
+            if rock_ridge:
+                kwargs["rr_name"] = rel_parts[-1]
+            iso.add_directory(**kwargs)  # type: ignore[arg-type]
+
+        files = sorted(
+            [p for p in stage_root.rglob("*") if p.is_file()],
+            key=lambda p: (len(p.relative_to(stage_root).parts), str(p).casefold()),
+        )
+        for f in files:
+            rel_parts = f.relative_to(stage_root).parts
+            dir_parts = rel_parts[:-1]
+            file_name = rel_parts[-1]
+
+            iso_dir_parts = [_iso9660_dir_ident(p) for p in dir_parts]
+            iso_name = _iso9660_file_ident(file_name)
+            iso_file_path = "/" + "/".join([*iso_dir_parts, iso_name]) if iso_dir_parts else "/" + iso_name
+
+            kwargs = {"iso_path": iso_file_path}
+            if joliet:
+                kwargs["joliet_path"] = "/" + "/".join(rel_parts)
+            if rock_ridge:
+                kwargs["rr_name"] = file_name
+            iso.add_file(str(f), **kwargs)  # type: ignore[arg-type]
+
+        iso.write(str(iso_path))
+    finally:
+        iso.close()
+
+
+def _create_iso_external(
+    iso_tool: List[str],
+    stage_root: Path,
+    iso_path: Path,
+    *,
+    joliet: bool,
+    rock_ridge: bool,
+) -> None:
+    cmd = [
+        *iso_tool,
+        "-iso-level",
+        "3",
+    ]
+    if joliet:
+        cmd.append("-J")
+    if rock_ridge:
+        cmd.append("-R")
+    cmd += [
+        "-V",
+        "VIRTIOWIN_TEST",
+        "-o",
+        str(iso_path),
+        str(stage_root),
+    ]
+    subprocess.run(cmd, check=True)
+
+
 class VirtioWinExtractTest(unittest.TestCase):
     def _resolve_any_case_insensitive(self, root: Path, options: List[str]) -> Path:
         last_err: Optional[AssertionError] = None
@@ -142,14 +266,20 @@ class VirtioWinExtractTest(unittest.TestCase):
         self.assertIn("version", extracted_metadata)
 
     def test_extract_synthetic_iso(self) -> None:
-        iso_tool = _find_iso_tool()
-        if not iso_tool:
-            self.skipTest("no ISO authoring tool found (need xorriso/genisoimage/mkisofs)")
-
         have_7z = _find_7z() is not None
         have_pycdlib = _has_pycdlib()
         if not have_7z and not have_pycdlib:
             self.skipTest("neither 7z nor pycdlib are available; install p7zip or pycdlib to run this test")
+
+        # Prefer pure-Python ISO authoring when available; fall back to external
+        # tooling for local development environments without pycdlib installed.
+        iso_tool: Optional[List[str]] = None
+        if not have_pycdlib:
+            iso_tool = _find_iso_tool()
+            if not iso_tool:
+                self.skipTest(
+                    "no supported ISO authoring method found; install pycdlib or xorriso/genisoimage/mkisofs"
+                )
 
         repo_root = Path(__file__).resolve().parents[3]
         extract_script = repo_root / "tools/virtio-win/extract.py"
@@ -184,19 +314,11 @@ class VirtioWinExtractTest(unittest.TestCase):
             write("viostor/w10/amd64/should_not_extract.inf", "nope")
 
             iso_path = tmp_path / "virtio-win.iso"
-            cmd = [
-                *iso_tool,
-                "-iso-level",
-                "3",
-                "-J",
-                "-R",
-                "-V",
-                "VIRTIOWIN_TEST",
-                "-o",
-                str(iso_path),
-                str(stage_root),
-            ]
-            subprocess.run(cmd, check=True)
+            if have_pycdlib:
+                _create_iso_pycdlib(stage_root, iso_path, joliet=True, rock_ridge=True)
+            else:
+                assert iso_tool is not None
+                _create_iso_external(iso_tool, stage_root, iso_path, joliet=True, rock_ridge=True)
 
             if have_7z:
                 out_root = tmp_path / "out-7z"
@@ -240,18 +362,7 @@ class VirtioWinExtractTest(unittest.TestCase):
                 # Create an ISO without Joliet and ensure the extractor can fall back
                 # to Rock Ridge paths when using the pycdlib backend.
                 iso_rr_path = tmp_path / "virtio-win-rr.iso"
-                cmd_rr = [
-                    *iso_tool,
-                    "-iso-level",
-                    "3",
-                    "-R",
-                    "-V",
-                    "VIRTIOWIN_TEST",
-                    "-o",
-                    str(iso_rr_path),
-                    str(stage_root),
-                ]
-                subprocess.run(cmd_rr, check=True)
+                _create_iso_pycdlib(stage_root, iso_rr_path, joliet=False, rock_ridge=True)
 
                 out_rr_root = tmp_path / "out-pycdlib-rr"
                 subprocess.run(
@@ -278,17 +389,7 @@ class VirtioWinExtractTest(unittest.TestCase):
                 # fall back to ISO-9660 paths (and strips ISO version suffixes like `;1`
                 # from extracted filenames).
                 iso_iso_path = tmp_path / "virtio-win-iso9660.iso"
-                cmd_iso = [
-                    *iso_tool,
-                    "-iso-level",
-                    "3",
-                    "-V",
-                    "VIRTIOWIN_TEST",
-                    "-o",
-                    str(iso_iso_path),
-                    str(stage_root),
-                ]
-                subprocess.run(cmd_iso, check=True)
+                _create_iso_pycdlib(stage_root, iso_iso_path, joliet=False, rock_ridge=False)
 
                 out_iso_root = tmp_path / "out-pycdlib-iso"
                 subprocess.run(
