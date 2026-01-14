@@ -422,6 +422,7 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --qemu-system qemu-system-x86_64 \
   --disk-image ./win7-aero-tests.qcow2 \
   --snapshot \
+  --qemu-preflight-pci \
   --timeout-seconds 600
 ```
 

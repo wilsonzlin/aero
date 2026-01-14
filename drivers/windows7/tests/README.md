@@ -335,6 +335,16 @@ The harness also sets the PCI **Revision ID** (`x-pci-revision=0x01`) to match t
 [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-contract.md). Newer Aero drivers may refuse to bind
 if the Revision ID does not match.
 
+To catch QEMU/device-arg misconfiguration early (for example, if your QEMU build ignores `x-pci-revision=0x01` and still
+advertises `REV_00`), the harness includes an optional host-side QMP `query-pci` preflight:
+
+- PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -QemuPreflightPci` (alias: `-QmpPreflightPci`)
+- Python: `invoke_aero_virtio_win7_tests.py --qemu-preflight-pci` (alias: `--qmp-preflight-pci`)
+
+On success, the harness emits a CI-scrapable host marker:
+
+- `AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=...|vendor=1af4|devices=...`
+
 For Linux/CI environments, `host-harness/invoke_aero_virtio_win7_tests.py` provides the same behavior without requiring PowerShell.
 
 This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrapper around the Python harness:
