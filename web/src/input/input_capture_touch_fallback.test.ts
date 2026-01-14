@@ -8,6 +8,15 @@ function touch(identifier: number, clientX: number, clientY: number): Touch {
   return { identifier, clientX, clientY } as unknown as Touch;
 }
 
+type InputCaptureTouchHarness = {
+  handleTouchStart(event: TouchEvent): void;
+  handleTouchMove(event: TouchEvent): void;
+  handleTouchEnd(event: TouchEvent): void;
+  handleBlur(): void;
+  queue: { size: number };
+  mouseButtons: number;
+};
+
 describe("InputCapture touch fallback", () => {
   it("converts touchmove delta into relative MouseMove events using fractional accumulation", () => {
     withStubbedDocument(() => {
@@ -28,7 +37,7 @@ describe("InputCapture touch fallback", () => {
       });
 
       // Touch begins at (0,0).
-      (capture as any).handleTouchStart({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchStart({
         timeStamp: 0,
         touches: [touch(1, 0, 0)],
         changedTouches: [touch(1, 0, 0)],
@@ -37,24 +46,24 @@ describe("InputCapture touch fallback", () => {
       } as unknown as TouchEvent);
 
       // Move by +1px: with sensitivity 0.5 this should not emit yet.
-      (capture as any).handleTouchMove({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchMove({
         timeStamp: 1,
         touches: [touch(1, 1, 0)],
         changedTouches: [touch(1, 1, 0)],
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureTouchHarness).queue.size).toBe(0);
 
       // Move by another +1px: total 1px, should emit one MouseMove.
-      (capture as any).handleTouchMove({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchMove({
         timeStamp: 2,
         touches: [touch(1, 2, 0)],
         changedTouches: [touch(1, 2, 0)],
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
-      expect((capture as any).queue.size).toBe(1);
+      expect((capture as unknown as InputCaptureTouchHarness).queue.size).toBe(1);
 
       capture.flushNow();
 
@@ -85,16 +94,16 @@ describe("InputCapture touch fallback", () => {
         touchTapToClick: true,
       });
 
-      (capture as any).handleTouchStart({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchStart({
         timeStamp: 0,
         touches: [touch(1, 10, 10)],
         changedTouches: [touch(1, 10, 10)],
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureTouchHarness).queue.size).toBe(0);
 
-      (capture as any).handleTouchEnd({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchEnd({
         timeStamp: 1,
         // No remaining touches (finger lifted).
         touches: [],
@@ -102,7 +111,7 @@ describe("InputCapture touch fallback", () => {
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
-      expect((capture as any).queue.size).toBe(2);
+      expect((capture as unknown as InputCaptureTouchHarness).queue.size).toBe(2);
 
       capture.flushNow();
 
@@ -136,7 +145,7 @@ describe("InputCapture touch fallback", () => {
         touchTapToClick: true,
       });
 
-      (capture as any).handleTouchStart({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchStart({
         timeStamp: 0,
         touches: [touch(1, 0, 0)],
         changedTouches: [touch(1, 0, 0)],
@@ -145,11 +154,11 @@ describe("InputCapture touch fallback", () => {
       } as unknown as TouchEvent);
 
       // Blur should cancel the touch session and flush immediately (no-op since queue is empty).
-      (capture as any).handleBlur();
+      (capture as unknown as InputCaptureTouchHarness).handleBlur();
 
       // A subsequent touchend (common when the browser delivers the end event after blur) must not
       // produce a click.
-      (capture as any).handleTouchEnd({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchEnd({
         timeStamp: 1,
         touches: [],
         changedTouches: [touch(1, 0, 0)],
@@ -159,7 +168,7 @@ describe("InputCapture touch fallback", () => {
 
       capture.flushNow();
 
-      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureTouchHarness).mouseButtons).toBe(0);
       expect(posted).toHaveLength(0);
     });
   });
@@ -181,7 +190,7 @@ describe("InputCapture touch fallback", () => {
       });
 
       // Malformed start coordinates: ignore rather than tracking a "tap" session.
-      (capture as any).handleTouchStart({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchStart({
         timeStamp: 0,
         touches: [touch(1, Number.NaN, 0)],
         changedTouches: [touch(1, Number.NaN, 0)],
@@ -189,7 +198,7 @@ describe("InputCapture touch fallback", () => {
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
 
-      (capture as any).handleTouchEnd({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchEnd({
         timeStamp: 1,
         touches: [],
         changedTouches: [touch(1, Number.NaN, 0)],
@@ -199,7 +208,7 @@ describe("InputCapture touch fallback", () => {
 
       capture.flushNow();
 
-      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureTouchHarness).mouseButtons).toBe(0);
       expect(posted).toHaveLength(0);
     });
   });
@@ -222,18 +231,18 @@ describe("InputCapture touch fallback", () => {
 
       // Malformed identifier (NaN): ignore rather than tracking a session that can't be found via
       // `touchListFind` (NaN !== NaN).
-      (capture as any).handleTouchStart({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchStart({
         timeStamp: 0,
-        touches: [touch(Number.NaN as any, 0, 0)],
-        changedTouches: [touch(Number.NaN as any, 0, 0)],
+        touches: [touch(Number.NaN, 0, 0)],
+        changedTouches: [touch(Number.NaN, 0, 0)],
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
 
-      (capture as any).handleTouchEnd({
+      (capture as unknown as InputCaptureTouchHarness).handleTouchEnd({
         timeStamp: 1,
         touches: [],
-        changedTouches: [touch(Number.NaN as any, 0, 0)],
+        changedTouches: [touch(Number.NaN, 0, 0)],
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
@@ -241,7 +250,7 @@ describe("InputCapture touch fallback", () => {
       capture.flushNow();
 
       expect(posted).toHaveLength(0);
-      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureTouchHarness).mouseButtons).toBe(0);
     });
   });
 });
