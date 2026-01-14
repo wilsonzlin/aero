@@ -453,7 +453,7 @@ impl<B: StorageBackend> VhdDisk<B> {
 
                 let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
                 let cap_entries = cap_entries
-                    .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
+                    .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / SECTOR_SIZE)
                     .max(1);
                 let cap =
                     NonZeroUsize::new(cap_entries).ok_or(DiskError::InvalidConfig("vhd cache"))?;
@@ -688,7 +688,7 @@ impl<B: StorageBackend> VhdDisk<B> {
 
         let cap_entries = (VHD_BITMAP_CACHE_BUDGET_BYTES / bitmap_size).max(1) as usize;
         let cap_entries = cap_entries
-            .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / 512)
+            .min(VHD_BITMAP_CACHE_BUDGET_BYTES as usize / SECTOR_SIZE)
             .max(1);
         let cap = NonZeroUsize::new(cap_entries).ok_or(DiskError::InvalidConfig("vhd cache"))?;
 
