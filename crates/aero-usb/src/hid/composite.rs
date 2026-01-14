@@ -829,11 +829,11 @@ impl IoSnapshot for UsbCompositeHidInput {
                     ));
                 }
                 let report = d.bytes_vec(len)?;
-                self.keyboard
-                    .pending_reports
-                    .push_back(super::keyboard::sanitize_keyboard_report_bytes(
+                self.keyboard.pending_reports.push_back(
+                    super::keyboard::sanitize_keyboard_report_bytes(
                         report.try_into().expect("len checked"),
-                    ));
+                    ),
+                );
             }
             d.finish()?;
         }

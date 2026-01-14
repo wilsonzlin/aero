@@ -5778,8 +5778,9 @@ impl Machine {
         let Some(mmio) = &self.aerogpu_mmio else {
             return;
         };
-        mmio.borrow_mut()
-            .set_backend(Box::new(aero_devices_gpu::backend::NullAeroGpuBackend::new()));
+        mmio.borrow_mut().set_backend(Box::new(
+            aero_devices_gpu::backend::NullAeroGpuBackend::new(),
+        ));
     }
 
     /// Returns the PCI INTx router, if present.

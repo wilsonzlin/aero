@@ -1,7 +1,7 @@
 use super::*;
 
-use core::convert::TryInto;
 use crate::test_util::capture_panic_location;
+use core::convert::TryInto;
 
 #[derive(Clone)]
 struct TestMemory {

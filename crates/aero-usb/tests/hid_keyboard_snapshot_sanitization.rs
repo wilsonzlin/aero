@@ -32,10 +32,7 @@ fn hid_keyboard_snapshot_load_filters_out_of_range_pressed_keys() {
         },
         None,
     );
-    assert_eq!(
-        resp,
-        ControlResponse::Data(vec![0, 0, 0x04, 0, 0, 0, 0, 0])
-    );
+    assert_eq!(resp, ControlResponse::Data(vec![0, 0, 0x04, 0, 0, 0, 0, 0]));
 }
 
 #[test]
@@ -50,7 +47,10 @@ fn hid_keyboard_snapshot_load_sanitizes_pending_reports() {
         <UsbHidKeyboardHandle as IoSnapshot>::DEVICE_VERSION,
     );
     w.field_u8(TAG_CONFIGURATION, 1);
-    w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+    w.field_bytes(
+        TAG_PENDING_REPORTS,
+        Encoder::new().vec_bytes(&pending).finish(),
+    );
     let snap = w.finish();
 
     let mut kb = UsbHidKeyboardHandle::new();
@@ -76,7 +76,10 @@ fn hid_composite_keyboard_snapshot_load_filters_out_of_range_pressed_keys() {
         <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_VERSION,
     );
     w.field_u8(TAG_CONFIGURATION, 1);
-    w.field_bytes(TAG_KBD_PRESSED_KEYS, Encoder::new().vec_u8(&pressed).finish());
+    w.field_bytes(
+        TAG_KBD_PRESSED_KEYS,
+        Encoder::new().vec_u8(&pressed).finish(),
+    );
     let snap = w.finish();
 
     let mut hid = UsbCompositeHidInputHandle::new();
@@ -92,10 +95,7 @@ fn hid_composite_keyboard_snapshot_load_filters_out_of_range_pressed_keys() {
         },
         None,
     );
-    assert_eq!(
-        resp,
-        ControlResponse::Data(vec![0, 0, 0x04, 0, 0, 0, 0, 0])
-    );
+    assert_eq!(resp, ControlResponse::Data(vec![0, 0, 0x04, 0, 0, 0, 0, 0]));
 }
 
 #[test]
@@ -126,4 +126,3 @@ fn hid_composite_keyboard_snapshot_load_sanitizes_pending_reports() {
     assert_eq!(report, vec![0x00, 0x00, 0x04, 0, 0, 0, 0, 0]);
     assert!(matches!(hid.handle_in_transfer(0x81, 8), UsbInResult::Nak));
 }
-

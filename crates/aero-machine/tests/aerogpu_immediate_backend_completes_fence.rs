@@ -52,7 +52,8 @@ fn aerogpu_immediate_backend_completes_fence() {
 
     let entry_count = 1u32;
     let entry_stride_bytes = ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
-    let ring_size_bytes = ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
+    let ring_size_bytes =
+        ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Write the ring header (one pending entry: head=0, tail=1).
     m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
@@ -108,10 +109,7 @@ fn aerogpu_immediate_backend_completes_fence() {
     );
 
     // Doorbell: consume the ring entry and enqueue backend work.
-    m.write_physical_u32(
-        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL),
-        1,
-    );
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
 
     // Tick the device so backend fence completions are observed.
     m.process_aerogpu();
@@ -133,7 +131,10 @@ fn aerogpu_immediate_backend_completes_fence() {
 
     // Fence page is still written (to keep it initialized/coherent), but must report
     // `COMPLETED_FENCE=0` while the null backend is installed.
-    assert_eq!(m.read_physical_u32(fence_gpa), ring::AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(
+        m.read_physical_u32(fence_gpa),
+        ring::AEROGPU_FENCE_PAGE_MAGIC
+    );
     assert_eq!(m.read_physical_u64(fence_gpa + 8), 0);
 
     // Switch to the immediate backend and re-submit the same fence. This must complete.
@@ -157,6 +158,9 @@ fn aerogpu_immediate_backend_completes_fence() {
     let irq_status = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_ne!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
 
-    assert_eq!(m.read_physical_u32(fence_gpa), ring::AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(
+        m.read_physical_u32(fence_gpa),
+        ring::AEROGPU_FENCE_PAGE_MAGIC
+    );
     assert_eq!(m.read_physical_u64(fence_gpa + 8), fence_value);
 }

@@ -1034,8 +1034,7 @@ fn virtio_snd_pci_bridge_delivers_cached_speaker_jack_events_across_multiple_pol
     guest.read_into(buf1, &mut got1);
     assert_eq!(&got0, &expected_connected);
     assert_eq!(
-        &got1,
-        &[0xBBu8; 8],
+        &got1, &[0xBBu8; 8],
         "second cached buffer should remain untouched until a second event is queued"
     );
 
