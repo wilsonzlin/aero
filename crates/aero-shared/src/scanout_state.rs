@@ -21,6 +21,8 @@ use std::sync::atomic::AtomicU32;
 
 use std::sync::atomic::Ordering;
 
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+
 pub const SCANOUT_SOURCE_LEGACY_TEXT: u32 = 0;
 pub const SCANOUT_SOURCE_LEGACY_VBE_LFB: u32 = 1;
 pub const SCANOUT_SOURCE_WDDM: u32 = 2;
@@ -28,7 +30,7 @@ pub const SCANOUT_SOURCE_WDDM: u32 = 2;
 /// Scanout format values use the AeroGPU `AerogpuFormat` (`u32`) discriminants.
 ///
 /// This must stay in sync with `aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat`.
-pub const SCANOUT_FORMAT_B8G8R8X8: u32 = 2;
+pub const SCANOUT_FORMAT_B8G8R8X8: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
 
 /// Internal bit used to mark `generation` as "being updated".
 ///
@@ -233,8 +235,6 @@ fn test_yield() {}
 #[cfg(all(test, not(feature = "loom")))]
 mod tests {
     use super::*;
-
-    use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
