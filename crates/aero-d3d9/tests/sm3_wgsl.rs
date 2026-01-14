@@ -2943,6 +2943,77 @@ fn wgsl_nonuniform_if_loop_with_dsx_avoids_invalid_control_flow() {
 }
 
 #[test]
+fn wgsl_nonuniform_if_rep_with_dsx_avoids_invalid_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   defi i0, 1, 0, 0, 0
+    //   if v0.x
+    //     rep i0
+    //       dsx r0, v0
+    //     endrep
+    //   endif
+    //   mov oC0, r0
+    //   end
+    //
+    // Like `loop`, `rep` can contain derivatives. Ensure we don't emit `rep` under a potentially
+    // non-uniform `if`.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // defi i0, 1, 0, 0, 0  (repeat count = 1)
+        opcode_token(82, 5),
+        dst_token(7, 0, 0xF),
+        1u32,
+        0u32,
+        0u32,
+        0u32,
+        // if v0.x
+        opcode_token(40, 1),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        // rep i0
+        opcode_token(38, 1),
+        src_token(7, 0, 0xE4, 0), // i0
+        // dsx r0, v0
+        opcode_token(86, 2),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // endrep
+        opcode_token(39, 0),
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("dpdx("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    assert!(wgsl.contains("loop {"), "{wgsl}");
+    assert!(
+        !wgsl.contains("if ((v0.xxxx.x != 0.0))"),
+        "expected rep body to be predicated rather than guarded by an outer if; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_nonuniform_if_add_then_texld_avoids_invalid_control_flow() {
     // ps_3_0:
     //   dcl_texcoord0 v0
