@@ -1142,8 +1142,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   AEROVNET_TX_OFFLOAD_INTENT Intent;
   AEROVNET_OFFLOAD_PARSE_INFO Info;
   ULONG FrameLen;
-  UCHAR HeaderBytes[256];
-  UCHAR FullFrameBytes[2048];
+  UCHAR FrameBytes[2048];
   ULONG CopyLen;
   PVOID FramePtr;
   AEROVNET_OFFLOAD_RESULT OffRes;
@@ -1195,16 +1194,12 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   }
 
   FrameLen = NET_BUFFER_DATA_LENGTH(TxReq->Nb);
-  if (Intent.WantTso) {
-    CopyLen = (FrameLen < sizeof(HeaderBytes)) ? FrameLen : (ULONG)sizeof(HeaderBytes);
-    FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, HeaderBytes, 1, 0);
-  } else {
-    // For checksum-only offloads, the frames are small (<= 1522 bytes). Copy the
-    // entire frame so header parsing doesn't fail for large IPv6 extension
-    // header chains.
-    CopyLen = (FrameLen < sizeof(FullFrameBytes)) ? FrameLen : (ULONG)sizeof(FullFrameBytes);
-    FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, FullFrameBytes, 1, 0);
-  }
+  // Copy the start of the frame into a contiguous buffer so header parsing is
+  // robust even when the NET_BUFFER spans multiple MDLs. For checksum-only
+  // requests the full frame always fits (<= 1522 bytes). For TSO packets, only
+  // the headers are required; cap the copy to a small constant.
+  CopyLen = (FrameLen < sizeof(FrameBytes)) ? FrameLen : (ULONG)sizeof(FrameBytes);
+  FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, FrameBytes, 1, 0);
   if (!FramePtr) {
     return NDIS_STATUS_INVALID_PACKET;
   }
@@ -3572,7 +3567,8 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
   Offload->Checksum.IPv4Receive.IpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
 
   Offload->Checksum.IPv6Transmit.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
-  Offload->Checksum.IPv6Transmit.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.IpExtensionHeadersSupported =
+      (CsumV6 || UdpCsumV6) ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv6Transmit.TcpOptionsSupported = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv6Transmit.TcpChecksum = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv6Transmit.UdpChecksum = UdpCsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
@@ -3594,7 +3590,7 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
   Offload->LsoV2.IPv6.MaxOffLoadSize = TsoV6 ? Adapter->TxTsoMaxOffloadSize : 0;
   Offload->LsoV2.IPv6.MinSegmentCount = TsoV6 ? 2 : 0;
   Offload->LsoV2.IPv6.TcpOptionsSupported = TsoV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->LsoV2.IPv6.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->LsoV2.IPv6.IpExtensionHeadersSupported = TsoV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 }
 
 static NDIS_STATUS AerovNetSetOffloadAttributes(_Inout_ AEROVNET_ADAPTER* Adapter) {
