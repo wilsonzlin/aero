@@ -324,7 +324,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
 bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
 
 # WASM integration sanity (routes input through the same public WASM APIs used by the web runtime).
-bash ./scripts/safe-run.sh cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends --test machine_virtio_input
+bash ./scripts/safe-run.sh cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends --test machine_defaults_usb_hid --test machine_virtio_input
 
 # Web unit tests (full suite)
 npm -w web run test:unit

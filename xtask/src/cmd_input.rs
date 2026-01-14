@@ -94,6 +94,7 @@ const WASM_PACK_TESTS: &[&str] = &[
 const AERO_WASM_INPUT_TESTS: &[&str] = &[
     "machine_input_injection",
     "machine_input_backends",
+    "machine_defaults_usb_hid",
     "machine_virtio_input",
 ];
 
