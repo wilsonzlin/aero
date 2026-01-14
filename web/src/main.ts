@@ -3148,6 +3148,10 @@ function renderDisksPanel(): HTMLElement {
   const remoteUrlInput = el("input", { type: "url", placeholder: "https://example.com/win7.img" }) as HTMLInputElement;
   const remoteBlockKiB = el("input", { type: "number", min: "4", step: "4", value: "1024" }) as HTMLInputElement;
   const remoteCacheMiB = el("input", { type: "number", min: "0", step: "64", value: "512" }) as HTMLInputElement;
+  const remoteCacheUnbounded = el("input", { type: "checkbox" }) as HTMLInputElement;
+  remoteCacheUnbounded.addEventListener("change", () => {
+    remoteCacheMiB.disabled = remoteCacheUnbounded.checked;
+  });
 
   const addRemoteBtn = el("button", {
     text: "Add remote disk",
@@ -3160,8 +3164,27 @@ function renderDisksPanel(): HTMLElement {
         return;
       }
       const blockSizeBytes = Number(remoteBlockKiB.value) * 1024;
-      const cacheLimitMiB = Number(remoteCacheMiB.value);
-      const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+      let cacheLimitBytes: number | null | undefined;
+      if (remoteCacheUnbounded.checked) {
+        cacheLimitBytes = null;
+      } else {
+        const rawCacheMiB = remoteCacheMiB.value.trim();
+        if (rawCacheMiB) {
+          const cacheLimitMiB = Number(rawCacheMiB);
+          if (!Number.isFinite(cacheLimitMiB) || !Number.isInteger(cacheLimitMiB) || cacheLimitMiB < 0) {
+            status.textContent = "Invalid cache size.";
+            return;
+          }
+          const bytes = cacheLimitMiB * 1024 * 1024;
+          if (!Number.isSafeInteger(bytes) || bytes < 0) {
+            status.textContent = "Invalid cache size.";
+            return;
+          }
+          cacheLimitBytes = bytes;
+        } else {
+          cacheLimitBytes = undefined;
+        }
+      }
       try {
         await manager.addRemoteStreamingDisk({ url, blockSizeBytes, cacheLimitBytes, prefetchSequentialBlocks: 2 });
         await refresh();
@@ -3268,8 +3291,10 @@ function renderDisksPanel(): HTMLElement {
       remoteUrlInput,
       el("label", { text: "Block KiB:" }),
       remoteBlockKiB,
-      el("label", { text: "Cache MiB:" }),
+      el("label", { text: "Cache MiB (0=disabled):" }),
       remoteCacheMiB,
+      el("label", { text: "Unbounded:" }),
+      remoteCacheUnbounded,
       addRemoteBtn,
     ),
     status,
