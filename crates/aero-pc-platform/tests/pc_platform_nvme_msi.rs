@@ -289,7 +289,8 @@ fn pc_platform_nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
             msi_off + 0x0c,
             u16::from(vector),
         );
-        // Mask/pending registers for 64-bit MSI live at +0x10/+0x14.
+        // Mask register for 64-bit MSI lives at +0x10. (Pending bits are device-managed and
+        // read-only, so we don't attempt to clear them here.)
         write_cfg_u32(
             &mut pc,
             bdf.bus,
@@ -297,14 +298,6 @@ fn pc_platform_nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
             bdf.function,
             msi_off + 0x10,
             1,
-        );
-        write_cfg_u32(
-            &mut pc,
-            bdf.bus,
-            bdf.device,
-            bdf.function,
-            msi_off + 0x14,
-            0,
         );
     } else {
         write_cfg_u16(
@@ -315,7 +308,8 @@ fn pc_platform_nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
             msi_off + 0x08,
             u16::from(vector),
         );
-        // Mask/pending registers for 32-bit MSI live at +0x0c/+0x10.
+        // Mask register for 32-bit MSI lives at +0x0c. (Pending bits are device-managed and
+        // read-only, so we don't attempt to clear them here.)
         write_cfg_u32(
             &mut pc,
             bdf.bus,
@@ -323,14 +317,6 @@ fn pc_platform_nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
             bdf.function,
             msi_off + 0x0c,
             1,
-        );
-        write_cfg_u32(
-            &mut pc,
-            bdf.bus,
-            bdf.device,
-            bdf.function,
-            msi_off + 0x10,
-            0,
         );
     }
     write_cfg_u16(

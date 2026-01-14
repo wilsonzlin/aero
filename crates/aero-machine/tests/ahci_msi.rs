@@ -155,11 +155,9 @@ fn ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
         cfg_write(&mut m, bdf, base + 0x08, 4, 0);
         cfg_write(&mut m, bdf, base + 0x0c, 2, u32::from(vector));
         cfg_write(&mut m, bdf, base + 0x10, 4, 1); // mask
-        cfg_write(&mut m, bdf, base + 0x14, 4, 0); // clear pending
     } else {
         cfg_write(&mut m, bdf, base + 0x08, 2, u32::from(vector));
         cfg_write(&mut m, bdf, base + 0x0c, 4, 1); // mask
-        cfg_write(&mut m, bdf, base + 0x10, 4, 0); // clear pending
     }
     cfg_write(&mut m, bdf, base + 0x02, 2, u32::from(ctrl | 1)); // MSI enable
 

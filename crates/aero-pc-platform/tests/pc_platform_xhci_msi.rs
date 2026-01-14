@@ -113,7 +113,6 @@ fn pc_platform_xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
     pci_cfg_write_u32(&mut pc, bdf, base + 0x08, 0);
     pci_cfg_write_u16(&mut pc, bdf, base + 0x0c, u16::from(vector));
     pci_cfg_write_u32(&mut pc, bdf, base + 0x10, 1); // mask
-    pci_cfg_write_u32(&mut pc, bdf, base + 0x14, 0); // clear pending
 
     let ctrl = pci_cfg_read_u16(&mut pc, bdf, base + 0x02);
     pci_cfg_write_u16(&mut pc, bdf, base + 0x02, ctrl | 1); // MSI enable

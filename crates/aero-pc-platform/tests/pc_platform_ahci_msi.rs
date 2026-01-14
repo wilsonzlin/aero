@@ -220,11 +220,9 @@ fn pc_platform_ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
         pci_cfg_write_u32(&mut pc, bdf, cap + 0x08, 0); // addr high
         pci_cfg_write_u16(&mut pc, bdf, cap + 0x0C, u16::from(vector)); // data
         pci_cfg_write_u32(&mut pc, bdf, cap + 0x10, 1); // mask
-        pci_cfg_write_u32(&mut pc, bdf, cap + 0x14, 0); // clear pending
     } else {
         pci_cfg_write_u16(&mut pc, bdf, cap + 0x08, u16::from(vector)); // data
         pci_cfg_write_u32(&mut pc, bdf, cap + 0x0C, 1); // mask
-        pci_cfg_write_u32(&mut pc, bdf, cap + 0x10, 0); // clear pending
     }
     pci_cfg_write_u16(&mut pc, bdf, cap + 0x02, ctrl | 0x0001); // enable
 
