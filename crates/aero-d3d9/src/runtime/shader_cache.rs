@@ -7,9 +7,9 @@
 //! boots/runs.
 //!
 //! This module is a thin Rust wrapper around the browser-side persistent cache
-//! implementation (`web/gpu-cache/persistent_cache.ts`). It is currently only
-//! built for `wasm32` targets and is intended to be wired into higher-level D3D9
-//! shader translation code over time.
+//! implementation (`web/gpu-cache/persistent_cache.ts`). It is only built for
+//! `wasm32` targets and is wired into the D3D9 executor (`crates/aero-gpu`) so
+//! DXBC -> WGSL translation output can be persisted across runs.
 
 use std::collections::HashMap;
 
