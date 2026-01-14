@@ -250,7 +250,9 @@ testing enable the driver's ID_NAME compatibility mode:
 
 - `HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName` = `1` (REG_DWORD)
 
-The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) sets this automatically.
+The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can bake this in via:
+
+- `-EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`)
 
 - COM1 redirected to a host log file
 - Parses the serial log for `AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL` and requires per-test markers for

@@ -935,7 +935,9 @@ testing the guest must enable the driver's ID_NAME compatibility mode:
 
 - `HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName` = `1` (REG_DWORD)
 
-`New-AeroWin7TestImage.ps1` sets this automatically in the generated `provision.cmd`.
+`New-AeroWin7TestImage.ps1` can bake this into the generated `provision.cmd` via:
+
+- `-EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`)
 
 Install only one INF per HWID. If you keep multiple in-tree packages in the same drivers directory, disambiguate by
 passing a relative INF path via `-InfAllowList`.

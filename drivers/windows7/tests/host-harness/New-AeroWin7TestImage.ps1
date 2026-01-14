@@ -141,6 +141,8 @@ param(
   #
   # This is useful for the in-tree QEMU host harness, but should be left disabled when validating
   # strict Aero contract v1 device-model conformance.
+  #
+  # When this flag is NOT set, the generated guest provisioning script leaves CompatIdName unchanged (strict mode).
   [Parameter(Mandatory = $false)]
   [Alias("VirtioInputCompatIdName", "EnableVirtioInputCompat")]
   [switch]$EnableVirtioInputCompatIdName
@@ -500,6 +502,10 @@ if ($EnableVirtioInputCompatIdName) {
 REM Enable virtio-input CompatIdName mode (accept QEMU ID_NAME strings, relax ID_DEVIDS checks).
 echo [AERO] enabling virtio-input CompatIdName=1 >> "%LOG%"
 reg add "HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters" /v CompatIdName /t REG_DWORD /d 1 /f >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [AERO] ERROR: failed to set aero_virtio_input CompatIdName registry flag >> "%LOG%"
+  exit /b 1
+)
 "@
 }
 
@@ -526,14 +532,6 @@ echo [AERO] MEDIA=%MEDIA% >> "%LOG%"
 $installDriversCmd
 $enableVirtioInputCompatCmd
 
-REM Enable virtio-input compat mode for stock QEMU ID_NAME strings (e.g. "QEMU Virtio Keyboard").
-REM This is a no-op for Aero contract-compliant devices (they already use the strict Aero ID_NAME values).
-reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters /v CompatIdName /t REG_DWORD /d 1 /f >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo [AERO] ERROR: failed to set aero_virtio_input CompatIdName registry flag >> "%LOG%"
-  exit /b 1
-)
-
 REM Install selftest binary.
 mkdir C:\AeroTests >> "%LOG%" 2>&1
 copy /y "%MEDIA%\AERO\selftest\aero-virtio-selftest.exe" C:\AeroTests\ >> "%LOG%" 2>&1
@@ -550,6 +548,21 @@ exit /b 0
 "@
 
 Write-TextFileUtf8NoBom -Path (Join-Path $provisionDir "provision.cmd") -Content $provisionCmd
+
+$readmeVirtioInputCompatProvisionDesc = ""
+$readmeVirtioInputCompatNotes = ""
+if ($EnableVirtioInputCompatIdName) {
+  $readmeVirtioInputCompatProvisionDesc = @"
+- Enable virtio-input ID_NAME compatibility for stock QEMU virtio-input devices by setting:
+  HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName=1
+"@
+
+  $readmeVirtioInputCompatNotes = @"
+  - Stock QEMU virtio-input devices typically report non-Aero `ID_NAME` strings (for example `QEMU Virtio Keyboard`).
+    The Aero virtio-input driver defaults to strict contract mode and may refuse to start (Code 10) unless compatibility mode is enabled.
+    - This media enables QEMU compatibility mode via `-EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`).
+"@
+}
 
 $readme = @"
 Provisioning instructions (Windows 7 guest)
@@ -569,8 +582,7 @@ To provision an already-installed Windows 7 image:
 
 The script will:
 - $readmeDriverInstallDesc
-- Enable virtio-input ID_NAME compatibility for stock QEMU virtio-input devices by setting:
-  HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName=1
+$readmeVirtioInputCompatProvisionDesc
 - Copy the selftest to C:\AeroTests\
 - Create a scheduled task (SYSTEM, ONSTART) that runs the selftest each boot.
 
@@ -588,9 +600,7 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
     - To enable tablet (absolute pointer) injection (required when running the host harness with `-WithInputTabletEvents` / `-WithTabletEvents` /
       `--with-input-tablet-events` / `--with-tablet-events`), generate this media with `-TestInputTabletEvents` (alias: `-TestTabletEvents`)
       (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
-  - Stock QEMU virtio-input devices typically report non-Aero `ID_NAME` strings (for example `QEMU Virtio Keyboard`).
-    The Aero virtio-input driver defaults to strict contract mode and may refuse to start (Code 10) unless compatibility mode is enabled.
-    - To enable QEMU compatibility mode, generate this media with `-EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`).
+$readmeVirtioInputCompatNotes
   - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
     - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
       Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
