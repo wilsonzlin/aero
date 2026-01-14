@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use memory::MemoryBus;
 
 use crate::executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
@@ -36,25 +34,25 @@ impl Default for AeroGpuBar0MmioDeviceConfig {
 pub struct AeroGpuBar0MmioDevice {
     pub regs: AeroGpuRegs,
     executor: AeroGpuExecutor,
-    boot_time: Instant,
-    vblank_interval: Option<Duration>,
-    next_vblank: Option<Instant>,
+    boot_time_ns: Option<u64>,
+    vblank_period_ns: Option<u64>,
+    next_vblank_deadline_ns: Option<u64>,
 }
 
 impl AeroGpuBar0MmioDevice {
     pub fn new(cfg: AeroGpuBar0MmioDeviceConfig) -> Self {
-        let vblank_interval = cfg.vblank_hz.and_then(|hz| {
+        let vblank_period_ns = cfg.vblank_hz.and_then(|hz| {
             if hz == 0 {
                 return None;
             }
-            // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to 16_666_666).
-            let period_ns = 1_000_000_000u64.div_ceil(hz as u64);
-            Some(Duration::from_nanos(period_ns))
+            // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to
+            // 16_666_666).
+            Some(1_000_000_000u64.div_ceil(hz as u64))
         });
 
         let mut regs = AeroGpuRegs::default();
-        if let Some(interval) = vblank_interval {
-            regs.scanout0_vblank_period_ns = interval.as_nanos().min(u32::MAX as u128) as u32;
+        if let Some(period_ns) = vblank_period_ns {
+            regs.scanout0_vblank_period_ns = period_ns.min(u64::from(u32::MAX)) as u32;
         } else {
             // If vblank is disabled by configuration, also clear the advertised feature bit so
             // guests don't wait on a vblank that will never arrive.
@@ -64,9 +62,9 @@ impl AeroGpuBar0MmioDevice {
         Self {
             regs,
             executor: AeroGpuExecutor::new(cfg.executor),
-            boot_time: Instant::now(),
-            vblank_interval,
-            next_vblank: None,
+            boot_time_ns: None,
+            vblank_period_ns,
+            next_vblank_deadline_ns: None,
         }
     }
 
@@ -82,14 +80,17 @@ impl AeroGpuBar0MmioDevice {
     ///
     /// `dma_enabled` should reflect whether the platform is willing to allow this device to
     /// perform DMA (e.g. PCI COMMAND.BME in a PCI wrapper).
-    pub fn tick(&mut self, mem: &mut dyn MemoryBus, now: Instant, dma_enabled: bool) {
+    pub fn tick(&mut self, mem: &mut dyn MemoryBus, now_ns: u64, dma_enabled: bool) {
+        // Establish a monotonic boot time reference from the externally supplied `now_ns` timebase.
+        self.boot_time_ns.get_or_insert(now_ns);
+
         // Polling completions and flushing fences may write guest memory (fence page / writeback).
         // When DMA is disabled by the platform, the device must not perform DMA.
         if dma_enabled {
             self.executor.poll_backend_completions(&mut self.regs, mem);
         }
 
-        let Some(interval) = self.vblank_interval else {
+        let Some(period_ns) = self.vblank_period_ns else {
             return;
         };
 
@@ -100,23 +101,25 @@ impl AeroGpuBar0MmioDevice {
         // Vblank ticks are gated on scanout enable. When scanout is disabled, stop scheduling and
         // clear any pending vblank IRQ status bit.
         if !self.regs.scanout0.enable {
-            self.next_vblank = None;
+            self.next_vblank_deadline_ns = None;
             self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
             return;
         }
 
-        let mut next = self.next_vblank.unwrap_or(now + interval);
-        if now < next {
-            self.next_vblank = Some(next);
+        let mut next = self
+            .next_vblank_deadline_ns
+            .unwrap_or(now_ns.saturating_add(period_ns));
+        if now_ns < next {
+            self.next_vblank_deadline_ns = Some(next);
             return;
         }
 
+        let boot = self.boot_time_ns.unwrap_or(0);
         let mut ticks = 0u32;
-        while now >= next {
+        while now_ns >= next {
             // Counters advance even if vblank IRQ delivery is masked.
             self.regs.scanout0_vblank_seq = self.regs.scanout0_vblank_seq.wrapping_add(1);
-            let t_ns = next.saturating_duration_since(self.boot_time).as_nanos();
-            self.regs.scanout0_vblank_time_ns = t_ns.min(u64::MAX as u128) as u64;
+            self.regs.scanout0_vblank_time_ns = next.saturating_sub(boot);
 
             // Only latch the vblank IRQ status bit while the guest has it enabled.
             // This prevents an immediate "stale" interrupt on re-enable.
@@ -128,17 +131,17 @@ impl AeroGpuBar0MmioDevice {
                 self.executor.process_vblank_tick(&mut self.regs, mem);
             }
 
-            next += interval;
+            next = next.saturating_add(period_ns);
             ticks += 1;
 
             // Avoid unbounded catch-up work if the host stalls for a very long time.
             if ticks >= 1024 {
-                next = now + interval;
+                next = now_ns.saturating_add(period_ns);
                 break;
             }
         }
 
-        self.next_vblank = Some(next);
+        self.next_vblank_deadline_ns = Some(next);
     }
 
     pub fn mmio_read_dword(&self, offset: u64) -> u32 {
@@ -172,7 +175,7 @@ impl AeroGpuBar0MmioDevice {
     pub fn mmio_write_dword(
         &mut self,
         mem: &mut dyn MemoryBus,
-        now: Instant,
+        now_ns: u64,
         dma_enabled: bool,
         offset: u64,
         value: u32,
@@ -185,7 +188,7 @@ impl AeroGpuBar0MmioDevice {
                 let enabling_vblank = (value & irq_bits::SCANOUT_VBLANK) != 0
                     && (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) == 0;
                 if enabling_vblank {
-                    self.tick(mem, now, dma_enabled);
+                    self.tick(mem, now_ns, dma_enabled);
                 }
 
                 self.regs.irq_enable = value;
@@ -206,7 +209,7 @@ impl AeroGpuBar0MmioDevice {
                 let new_enable = value != 0;
                 if self.regs.scanout0.enable && !new_enable {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
-                    self.next_vblank = None;
+                    self.next_vblank_deadline_ns = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                     if dma_enabled {
                         self.executor.flush_pending_fences(&mut self.regs, mem);
@@ -228,7 +231,7 @@ impl AeroGpuBar0MmioDevice {
             }
 
             _ => {
-                let _ = (mem, now, dma_enabled);
+                let _ = (mem, now_ns, dma_enabled);
                 // Ignore writes to unimplemented registers; this BAR0 model is focused on vblank +
                 // scanout primitives.
             }

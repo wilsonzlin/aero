@@ -2144,7 +2144,6 @@ impl AeroGpuDevice {
         self.attr_index = 0;
         self.attr_regs.fill(0);
         self.attr_flip_flop = false;
-
         self.pel_mask = 0xFF;
         self.dac_write_index = 0;
         self.dac_write_subindex = 0;
