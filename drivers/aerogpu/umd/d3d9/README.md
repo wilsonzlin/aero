@@ -537,7 +537,10 @@ no-op to keep D3D9Ex composition paths alive.
 
 ### Cached legacy state (Set*/Get* round-trip)
 
-Several fixed-function/resource state paths are cached for deterministic `Get*` queries and state-block compatibility. Some of these are also consumed by the UMD’s fixed-function emulation, but are not currently emitted as explicit GPU state in the AeroGPU command stream. This includes:
+Several fixed-function/resource state paths are cached for deterministic `Get*` queries and state-block compatibility.
+Some cached values are also consumed by fixed-function emulation/pipeline selection (for example:
+stage 0 `D3DTSS_*` influences fixed-function pixel shader selection, and cached transforms feed fixed-function WVP paths),
+but most are still cached-only and are not forwarded 1:1 into the AeroGPU command stream. This includes:
 
 - texture stage state (D3DTSS_*)
 - transforms / clip planes / N-patch mode

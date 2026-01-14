@@ -203,6 +203,12 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `a2 = pack_u32_u32(data_size, flags)`
   - `a3 = pData`
 
+- `Device::ProcessVertices`
+  - `a0 = hDevice.pDrvPrivate`
+  - `a1 = hDestBuffer.pDrvPrivate`
+  - `a2 = pack_u32_u32(SrcStartIndex, DestIndex)`
+  - `a3 = pack_u32_u32(VertexCount, DestStride)` (`DestStride` may be 0 depending on header/runtime)
+
 - `Device::CreateStateBlock`
   - `a0 = hDevice.pDrvPrivate`
   - `a1 = state block type` (`D3DSBT_ALL=1`, `D3DSBT_PIXELSTATE=2`, `D3DSBT_VERTEXSTATE=3`)
