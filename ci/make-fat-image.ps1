@@ -45,6 +45,70 @@ function Test-IsWindowsPlatform {
 
 $isWindows = Test-IsWindowsPlatform
 
+function Test-IsReparsePoint {
+    param([Parameter(Mandatory = $true)] $Item)
+
+    # PowerShell Core / .NET 6+ exposes LinkTarget for symlink detection on all platforms.
+    # Windows PowerShell 5.1 relies on the ReparsePoint file attribute.
+    try {
+        if ($Item -and ($Item.PSObject.Properties.Match("LinkTarget").Count -gt 0)) {
+            $lt = "" + $Item.LinkTarget
+            if (-not [string]::IsNullOrWhiteSpace($lt)) {
+                return $true
+            }
+        }
+    } catch {
+        # ignore and fall back
+    }
+
+    try {
+        return (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+    } catch {
+        return $false
+    }
+}
+
+function Assert-NoReparsePointsInTree {
+    param(
+        [Parameter(Mandatory = $true)][string] $Root,
+        [string] $Context
+    )
+
+    $rootItem = Get-Item -LiteralPath $Root -ErrorAction SilentlyContinue
+    if (-not $rootItem) {
+        return
+    }
+    if (Test-IsReparsePoint -Item $rootItem) {
+        $msg = "Refusing to package reparse-point/symlink directory (nondeterministic/unsafe): $($rootItem.FullName)"
+        if (-not [string]::IsNullOrWhiteSpace($Context)) {
+            $msg = "$Context: $msg"
+        }
+        throw $msg
+    }
+
+    # Walk without `Get-ChildItem -Recurse` so we never traverse a reparse-point directory
+    # before detecting it.
+    $stack = New-Object "System.Collections.Generic.Stack[string]"
+    $stack.Push($rootItem.FullName)
+
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        $items = @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop)
+        foreach ($it in $items) {
+            if (Test-IsReparsePoint -Item $it) {
+                $msg = "Refusing to package reparse-point/symlink item (nondeterministic/unsafe): $($it.FullName)"
+                if (-not [string]::IsNullOrWhiteSpace($Context)) {
+                    $msg = "$Context: $msg"
+                }
+                throw $msg
+            }
+            if ($it.PSIsContainer) {
+                $stack.Push($it.FullName)
+            }
+        }
+    }
+}
+
 function Normalize-SigningPolicy {
     param([Parameter(Mandatory = $true)][string] $Policy)
 
@@ -123,6 +187,7 @@ $sourceDirPath = (Resolve-Path -LiteralPath $SourceDir).Path
 if (-not (Test-Path -LiteralPath $sourceDirPath -PathType Container)) {
     throw "SourceDir '$SourceDir' does not exist or is not a directory."
 }
+Assert-NoReparsePointsInTree -Root $sourceDirPath -Context "SourceDir"
 
 $SigningPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
 $includeCerts = $SigningPolicy -eq "test"
