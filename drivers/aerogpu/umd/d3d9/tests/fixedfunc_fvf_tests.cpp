@@ -62,7 +62,10 @@ constexpr uint32_t kD3dTopModulate = 4u;
 constexpr uint32_t kD3dTopModulate2x = 5u;
 constexpr uint32_t kD3dTopModulate4x = 6u;
 constexpr uint32_t kD3dTopAdd = 7u;
+constexpr uint32_t kD3dTopAddSigned = 8u;
 constexpr uint32_t kD3dTopSubtract = 10u;
+constexpr uint32_t kD3dTopBlendDiffuseAlpha = 12u;
+constexpr uint32_t kD3dTopBlendTextureAlpha = 13u;
 // Intentionally unsupported by the fixed-function stage0 subset (used to validate
 // draw-time guardrails).
 constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
@@ -5699,6 +5702,18 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       {"add", kD3dTopAdd, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
        /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/false},
+      {"addsigned", kD3dTopAddSigned, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/false},
+      {"blendtexturealpha", kD3dTopBlendTextureAlpha, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/true},
+      {"blenddiffusealpha_tex", kD3dTopBlendDiffuseAlpha, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
+       /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/true},
+      {"blenddiffusealpha_tfactor", kD3dTopBlendDiffuseAlpha, kD3dTaDiffuse, kD3dTaTFactor, kD3dTopSelectArg1, kD3dTaDiffuse, kD3dTaDiffuse,
+       /*set_tfactor=*/true, 0xFF3366CCu, /*uses_tfactor=*/true,
+       /*expect_texld=*/false, /*expect_add=*/true, /*expect_mul=*/true},
       {"subtract_tex_minus_diff", kD3dTopSubtract, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
        /*set_tfactor=*/false, 0u, /*uses_tfactor=*/false,
        /*expect_texld=*/true, /*expect_add=*/true, /*expect_mul=*/false},
