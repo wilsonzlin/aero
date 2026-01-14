@@ -1043,12 +1043,12 @@ impl AeroGpuMmioDevice {
         // pipeline (shared scanout state consumers) can render deterministically. Keep this
         // validation aligned with what we can publish in `ScanoutStateUpdate`, and with what the
         // machine can render via `AeroGpuScanout0State::read_rgba8888`.
-        let bytes_per_pixel =
-            match AeroGpuFormat::from_u32(self.scanout0_format).bytes_per_pixel() {
-                Some(2) => 2u64,
-                Some(4) => 4u64,
-                _ => return false,
-            };
+        let bytes_per_pixel = match AeroGpuFormat::from_u32(self.scanout0_format).bytes_per_pixel()
+        {
+            Some(2) => 2u64,
+            Some(4) => 4u64,
+            _ => return false,
+        };
 
         let Some(row_bytes) = u64::from(self.scanout0_width).checked_mul(bytes_per_pixel) else {
             return false;

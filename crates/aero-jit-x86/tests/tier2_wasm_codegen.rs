@@ -8,9 +8,9 @@ use tier1_common::{pick_invalid_opcode, SimpleBus};
 use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx;
 use aero_jit_x86::tier2::interp::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
-use aero_jit_x86::tier2::ir::FlagValues;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_jit_x86::tier2::ir::flag_to_set;
+use aero_jit_x86::tier2::ir::FlagValues;
 use aero_jit_x86::tier2::ir::{
     BinOp, Block, BlockId, Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId,
 };
