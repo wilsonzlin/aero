@@ -451,49 +451,114 @@ impl Ac97PciDevice {
 
 impl PciDevice for Ac97PciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
-        if size == 4 {
-            match offset {
-                0x10 => {
-                    return if self.bar0_probe {
-                        (!(u32::from(NAM_SIZE) - 1) & 0xffff_fffc) | 0x1
-                    } else {
-                        u32::from(self.bar_nam) | 0x1
-                    };
-                }
-                0x14 => {
-                    return if self.bar1_probe {
-                        (!(u32::from(NABM_SIZE) - 1) & 0xffff_fffc) | 0x1
-                    } else {
-                        u32::from(self.bar_nabm) | 0x1
-                    };
-                }
-                _ => {}
-            }
+        if !matches!(size, 1 | 2 | 4) {
+            return 0;
         }
+        let Some(end) = offset.checked_add(size as u16) else {
+            return 0;
+        };
+        if end as usize > 256 {
+            return 0;
+        }
+
+        let bar0_off = 0x10u16;
+        let bar0_end = bar0_off + 4;
+        let bar1_off = 0x14u16;
+        let bar1_end = bar1_off + 4;
+
+        let overlaps_bar0 = offset < bar0_end && end > bar0_off;
+        let overlaps_bar1 = offset < bar1_end && end > bar1_off;
+
+        if overlaps_bar0 || overlaps_bar1 {
+            let bar0_mask = (!(u32::from(NAM_SIZE) - 1) & 0xffff_fffc) | 0x1;
+            let bar0_val = if self.bar0_probe {
+                bar0_mask
+            } else {
+                u32::from(self.bar_nam) | 0x1
+            };
+
+            let bar1_mask = (!(u32::from(NABM_SIZE) - 1) & 0xffff_fffc) | 0x1;
+            let bar1_val = if self.bar1_probe {
+                bar1_mask
+            } else {
+                u32::from(self.bar_nabm) | 0x1
+            };
+
+            let mut out = 0u32;
+            for i in 0..size {
+                let byte_off = offset + i as u16;
+                let byte = if (bar0_off..bar0_end).contains(&byte_off) {
+                    let shift = u32::from(byte_off - bar0_off) * 8;
+                    (bar0_val >> shift) & 0xFF
+                } else if (bar1_off..bar1_end).contains(&byte_off) {
+                    let shift = u32::from(byte_off - bar1_off) * 8;
+                    (bar1_val >> shift) & 0xFF
+                } else {
+                    self.config.read(byte_off, 1) & 0xFF
+                };
+                out |= byte << (8 * i);
+            }
+            return out;
+        }
+
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
-        if offset == 0x10 && size == 4 {
-            if value == 0xffff_ffff {
-                self.bar0_probe = true;
-            } else {
-                self.bar0_probe = false;
-                let addr_mask = !(u32::from(NAM_SIZE) - 1) & 0xffff_fffc;
-                self.bar_nam = (value & addr_mask) as u16;
-                self.config.set_u32(0x10, u32::from(self.bar_nam) | 0x1);
-            }
+        if !matches!(size, 1 | 2 | 4) {
             return;
         }
-        if offset == 0x14 && size == 4 {
-            if value == 0xffff_ffff {
-                self.bar1_probe = true;
-            } else {
-                self.bar1_probe = false;
-                let addr_mask = !(u32::from(NABM_SIZE) - 1) & 0xffff_fffc;
-                self.bar_nabm = (value & addr_mask) as u16;
-                self.config.set_u32(0x14, u32::from(self.bar_nabm) | 0x1);
+        let Some(end) = offset.checked_add(size as u16) else {
+            return;
+        };
+        if end as usize > 256 {
+            return;
+        }
+
+        let bar0_off = 0x10u16;
+        let bar0_end = bar0_off + 4;
+        let bar1_off = 0x14u16;
+        let bar1_end = bar1_off + 4;
+
+        let overlaps_bar0 = offset < bar0_end && end > bar0_off;
+        let overlaps_bar1 = offset < bar1_end && end > bar1_off;
+
+        // PCI BAR probing uses an all-ones write to discover the size mask.
+        if offset == bar0_off && size == 4 && value == 0xffff_ffff {
+            self.bar0_probe = true;
+            return;
+        }
+        if offset == bar1_off && size == 4 && value == 0xffff_ffff {
+            self.bar1_probe = true;
+            return;
+        }
+
+        if overlaps_bar0 || overlaps_bar1 {
+            if overlaps_bar0 {
+                self.bar0_probe = false;
             }
+            if overlaps_bar1 {
+                self.bar1_probe = false;
+            }
+
+            self.config.write(offset, size, value);
+
+            if overlaps_bar0 {
+                let raw = self.config.read(bar0_off, 4);
+                let addr_mask = !(u32::from(NAM_SIZE) - 1) & 0xffff_fffc;
+                let base = raw & addr_mask;
+                self.bar_nam = u16::try_from(base).unwrap_or(u16::MAX);
+                self.config.set_u32(bar0_off as usize, u32::from(self.bar_nam) | 0x1);
+            }
+
+            if overlaps_bar1 {
+                let raw = self.config.read(bar1_off, 4);
+                let addr_mask = !(u32::from(NABM_SIZE) - 1) & 0xffff_fffc;
+                let base = raw & addr_mask;
+                self.bar_nabm = u16::try_from(base).unwrap_or(u16::MAX);
+                self.config.set_u32(bar1_off as usize, u32::from(self.bar_nabm) | 0x1);
+            }
+
             return;
         }
 
@@ -746,6 +811,38 @@ mod tests {
         let flags1 = mask1 & 0x3;
         assert_eq!(dev.config_read(0x14, 4), (0x5679 & addr_mask1) | flags1);
         assert_eq!(dev.bar_nabm, (0x5679 & addr_mask1) as u16);
+    }
+
+    #[test]
+    fn pci_bar_probe_subword_reads_return_mask_bytes() {
+        let mut dev = Ac97PciDevice::new(0x1234, 0x5678);
+
+        dev.config_write(0x10, 4, 0xffff_ffff);
+        let mask0 = dev.config_read(0x10, 4);
+        assert_eq!(mask0, (!(u32::from(NAM_SIZE) - 1) & 0xffff_fffc) | 0x1);
+        assert_eq!(dev.config_read(0x10, 1), mask0 & 0xFF);
+        assert_eq!(dev.config_read(0x11, 1), (mask0 >> 8) & 0xFF);
+        assert_eq!(dev.config_read(0x12, 2), (mask0 >> 16) & 0xFFFF);
+
+        dev.config_write(0x14, 4, 0xffff_ffff);
+        let mask1 = dev.config_read(0x14, 4);
+        assert_eq!(mask1, (!(u32::from(NABM_SIZE) - 1) & 0xffff_fffc) | 0x1);
+        assert_eq!(dev.config_read(0x14, 1), mask1 & 0xFF);
+        assert_eq!(dev.config_read(0x15, 1), (mask1 >> 8) & 0xFF);
+        assert_eq!(dev.config_read(0x16, 2), (mask1 >> 16) & 0xFFFF);
+    }
+
+    #[test]
+    fn pci_bar_subword_write_updates_io_bases() {
+        let mut dev = Ac97PciDevice::new(0, 0);
+
+        dev.config_write(0x10, 2, 0x1235);
+        assert_eq!(dev.bar_nam, 0x1200);
+        assert_eq!(dev.config_read(0x10, 4), 0x1201);
+
+        dev.config_write(0x14, 2, 0x5679);
+        assert_eq!(dev.bar_nabm, 0x5600);
+        assert_eq!(dev.config_read(0x14, 4), 0x5601);
     }
 
     #[test]

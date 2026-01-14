@@ -913,53 +913,119 @@ impl AeroGpuPciDevice {
 
 impl PciDevice for AeroGpuPciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
-        if offset == 0x10 && size == 4 {
-            return if self.bar0_probe {
-                (!(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1)) & 0xffff_fff0
-            } else {
-                self.bar0
-            };
+        if !matches!(size, 1 | 2 | 4) {
+            return 0;
         }
-        if offset == 0x14 && size == 4 {
-            let mask = (!(self.bar1_size_bytes - 1)) & 0xffff_fff0;
-            return if self.bar1_probe {
-                mask | (1 << 3)
+        let Some(end) = offset.checked_add(size as u16) else {
+            return 0;
+        };
+        if end as usize > 256 {
+            return 0;
+        }
+
+        let bar0_off = 0x10u16;
+        let bar0_end = bar0_off + 4;
+        let bar1_off = 0x14u16;
+        let bar1_end = bar1_off + 4;
+
+        let overlaps_bar0 = offset < bar0_end && end > bar0_off;
+        let overlaps_bar1 = offset < bar1_end && end > bar1_off;
+
+        if overlaps_bar0 || overlaps_bar1 {
+            let bar0_mask = (!(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1)) & 0xffff_fff0;
+            let bar0_val = if self.bar0_probe { bar0_mask } else { self.bar0 };
+
+            let bar1_mask = (!(self.bar1_size_bytes - 1)) & 0xffff_fff0;
+            let bar1_val = if self.bar1_probe {
+                bar1_mask | (1 << 3)
             } else {
                 self.bar1 | (1 << 3)
             };
+
+            let mut out = 0u32;
+            for i in 0..size {
+                let byte_off = offset + i as u16;
+                let byte = if (bar0_off..bar0_end).contains(&byte_off) {
+                    let shift = u32::from(byte_off - bar0_off) * 8;
+                    (bar0_val >> shift) & 0xFF
+                } else if (bar1_off..bar1_end).contains(&byte_off) {
+                    let shift = u32::from(byte_off - bar1_off) * 8;
+                    (bar1_val >> shift) & 0xFF
+                } else {
+                    self.config.read(byte_off, 1) & 0xFF
+                };
+                out |= byte << (8 * i);
+            }
+            return out;
         }
+
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
-        if offset == 0x10 && size == 4 {
-            let addr_mask = !(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1) & 0xffff_fff0;
-            if value == 0xffff_ffff {
-                self.bar0_probe = true;
-                self.bar0 = 0;
-                self.config.write(offset, size, 0);
-            } else {
-                self.bar0_probe = false;
-                self.bar0 = value & addr_mask;
-                self.config.write(offset, size, self.bar0);
-            }
+        if !matches!(size, 1 | 2 | 4) {
             return;
         }
-        if offset == 0x14 && size == 4 {
-            let addr_mask = (!(self.bar1_size_bytes - 1)) & 0xffff_fff0;
-            if value == 0xffff_ffff {
-                self.bar1_probe = true;
-                self.bar1 = 0;
-                self.config.write(offset, size, 0);
-            } else {
+        let Some(end) = offset.checked_add(size as u16) else {
+            return;
+        };
+        if end as usize > 256 {
+            return;
+        }
+
+        let bar0_off = 0x10u16;
+        let bar0_end = bar0_off + 4;
+        let bar1_off = 0x14u16;
+        let bar1_end = bar1_off + 4;
+
+        let overlaps_bar0 = offset < bar0_end && end > bar0_off;
+        let overlaps_bar1 = offset < bar1_end && end > bar1_off;
+
+        // PCI BAR probing uses an all-ones write to discover the size mask.
+        if offset == bar0_off && size == 4 && value == 0xffff_ffff {
+            self.bar0_probe = true;
+            self.bar0 = 0;
+            self.config.write(bar0_off, 4, 0);
+            return;
+        }
+        if offset == bar1_off && size == 4 && value == 0xffff_ffff {
+            self.bar1_probe = true;
+            self.bar1 = 0;
+            self.config.write(bar1_off, 4, 0);
+            return;
+        }
+
+        if overlaps_bar0 || overlaps_bar1 {
+            if overlaps_bar0 {
+                self.bar0_probe = false;
+            }
+            if overlaps_bar1 {
                 self.bar1_probe = false;
-                self.bar1 = value & addr_mask;
-                self.config.write(offset, size, self.bar1 | (1 << 3));
+            }
+
+            self.config.write(offset, size, value);
+
+            if overlaps_bar0 {
+                let raw = self.config.read(bar0_off, 4);
+                let addr_mask = !(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1) & 0xffff_fff0;
+                let base = raw & addr_mask;
+                self.bar0 = base;
+                self.config.write(bar0_off, 4, base);
+            }
+
+            if overlaps_bar1 {
+                let raw = self.config.read(bar1_off, 4);
+                let addr_mask = (!(self.bar1_size_bytes - 1)) & 0xffff_fff0;
+                let base = raw & addr_mask;
+                self.bar1 = base;
+                self.config.write(bar1_off, 4, base | (1 << 3));
                 self.vga.set_vram_bar_base(self.bar1);
                 self.update_scanout_state_from_vga();
             }
+
             return;
         }
+
         self.config.write(offset, size, value);
     }
 }
@@ -992,6 +1058,44 @@ mod tests {
     use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
     use memory::bus::PhysicalMemoryBus;
     use memory::phys::DenseMemory;
+
+    #[test]
+    fn pci_bar_probe_subword_reads_return_mask_bytes() {
+        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0x1000, 0x2000_0000);
+
+        dev.config_write(0x10, 4, 0xffff_ffff);
+        let mask0 = dev.config_read(0x10, 4);
+        assert_eq!(
+            mask0,
+            (!(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1)) & 0xffff_fff0
+        );
+        assert_eq!(dev.config_read(0x10, 1), mask0 & 0xFF);
+        assert_eq!(dev.config_read(0x11, 1), (mask0 >> 8) & 0xFF);
+        assert_eq!(dev.config_read(0x12, 2), (mask0 >> 16) & 0xFFFF);
+
+        dev.config_write(0x14, 4, 0xffff_ffff);
+        let mask1 = dev.config_read(0x14, 4);
+        let expected_mask1 = (!(dev.bar1_size_bytes - 1)) & 0xffff_fff0 | (1 << 3);
+        assert_eq!(mask1, expected_mask1);
+        assert_eq!(dev.config_read(0x14, 1), mask1 & 0xFF);
+        assert_eq!(dev.config_read(0x15, 1), (mask1 >> 8) & 0xFF);
+        assert_eq!(dev.config_read(0x16, 2), (mask1 >> 16) & 0xFFFF);
+    }
+
+    #[test]
+    fn pci_bar_subword_write_updates_bar_bases() {
+        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0, 0);
+
+        dev.config_write(0x10, 2, 0x1235);
+        let expected_bar0 = 0x0000_1235 & !(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1) & 0xffff_fff0;
+        assert_eq!(dev.bar0, expected_bar0);
+        assert_eq!(dev.config_read(0x10, 4), expected_bar0);
+
+        dev.config_write(0x16, 2, 0xdead);
+        let expected_bar1 = 0xdead_0000 & !(dev.bar1_size_bytes - 1) & 0xffff_fff0;
+        assert_eq!(dev.bar1, expected_bar1);
+        assert_eq!(dev.config_read(0x14, 4), expected_bar1 | (1 << 3));
+    }
 
     #[derive(Debug, Default)]
     struct FailOnceBackend {
