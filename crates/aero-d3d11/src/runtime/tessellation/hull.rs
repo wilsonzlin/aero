@@ -82,7 +82,7 @@ impl<P: reflection_bindings::BindGroupResourceProvider>
     fn dummy_storage_texture_view(
         &self,
         format: crate::StorageTextureFormat,
-    ) -> &wgpu::TextureView {
+    ) -> Option<&wgpu::TextureView> {
         self.base.dummy_storage_texture_view(format)
     }
 

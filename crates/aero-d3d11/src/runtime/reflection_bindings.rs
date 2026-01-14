@@ -679,8 +679,10 @@ pub(super) trait BindGroupResourceProvider {
 
     fn dummy_uniform(&self) -> &wgpu::Buffer;
     fn dummy_storage(&self) -> &wgpu::Buffer;
-    fn dummy_storage_texture_view(&self, format: crate::StorageTextureFormat)
-        -> &wgpu::TextureView;
+    fn dummy_storage_texture_view(
+        &self,
+        format: crate::StorageTextureFormat,
+    ) -> Option<&wgpu::TextureView>;
     fn dummy_texture_view_2d(&self) -> &wgpu::TextureView;
     fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView;
     fn default_sampler(&self) -> &CachedSampler;
@@ -874,10 +876,16 @@ pub(super) fn build_bind_group(
                 let (id, view) = provider
                     .uav_texture2d(*slot)
                     .or_else(|| provider.texture2d(*slot))
-                    .unwrap_or((
-                        TextureViewId(0),
-                        provider.dummy_storage_texture_view(*format),
-                    ));
+                    .or_else(|| {
+                        provider
+                            .dummy_storage_texture_view(*format)
+                            .map(|view| (TextureViewId(0), view))
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unbound UAV texture slot {slot} requires storage texture format {format:?}, but no dummy storage texture view is available on this device/backend"
+                        )
+                    })?;
 
                 entries.push(BindGroupCacheEntry {
                     binding: binding.binding,
@@ -2120,8 +2128,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     _format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
-                    self.dummy_texture_view_2d
+                ) -> Option<&wgpu::TextureView> {
+                    Some(self.dummy_texture_view_2d)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -2514,8 +2522,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     _format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
-                    self.dummy_texture_view_2d
+                ) -> Option<&wgpu::TextureView> {
+                    Some(self.dummy_texture_view_2d)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -2706,8 +2714,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     _format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
-                    self.dummy_texture_view_2d
+                ) -> Option<&wgpu::TextureView> {
+                    Some(self.dummy_texture_view_2d)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -2894,8 +2902,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     _format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
-                    self.dummy_texture_view_2d
+                ) -> Option<&wgpu::TextureView> {
+                    Some(self.dummy_texture_view_2d)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -3105,8 +3113,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     _format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
-                    self.dummy_texture_view_2d
+                ) -> Option<&wgpu::TextureView> {
+                    Some(self.dummy_texture_view_2d)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -3580,8 +3588,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     _format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
-                    self.dummy_texture_view_2d
+                ) -> Option<&wgpu::TextureView> {
+                    Some(self.dummy_texture_view_2d)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -3742,13 +3750,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
+                ) -> Option<&wgpu::TextureView> {
                     assert_eq!(
                         format,
                         crate::StorageTextureFormat::Rgba8Unorm,
                         "unexpected format for test"
                     );
-                    self.dummy_storage_view
+                    Some(self.dummy_storage_view)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -3957,8 +3965,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 fn dummy_storage_texture_view(
                     &self,
                     _format: crate::StorageTextureFormat,
-                ) -> &wgpu::TextureView {
-                    self.dummy_texture_view_2d
+                ) -> Option<&wgpu::TextureView> {
+                    Some(self.dummy_texture_view_2d)
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {

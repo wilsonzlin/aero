@@ -347,6 +347,14 @@ impl AerogpuCmdRuntime {
             }
 
             for format in formats {
+                let features = adapter.get_texture_format_features(format.wgpu_format());
+                if !features
+                    .allowed_usages
+                    .contains(wgpu::TextureUsages::STORAGE_BINDING)
+                {
+                    continue;
+                }
+
                 #[cfg(not(target_arch = "wasm32"))]
                 device.push_error_scope(wgpu::ErrorFilter::Validation);
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -3451,10 +3459,8 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
     fn dummy_storage_texture_view(
         &self,
         format: crate::StorageTextureFormat,
-    ) -> &wgpu::TextureView {
-        self.dummy_storage_texture_views
-            .get(&format)
-            .unwrap_or(self.dummy_texture_view_2d)
+    ) -> Option<&wgpu::TextureView> {
+        self.dummy_storage_texture_views.get(&format)
     }
 
     fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {

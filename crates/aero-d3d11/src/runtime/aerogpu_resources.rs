@@ -1825,10 +1825,7 @@ mod tests {
         assert!(bu.contains(wgpu::BufferUsages::VERTEX));
         assert!(!bu.contains(wgpu::BufferUsages::STORAGE));
 
-        let storage = map_buffer_usage_flags(
-            aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_RESOURCE_USAGE_STORAGE,
-            false,
-        );
+        let storage = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_STORAGE, false);
         assert!(!storage.contains(wgpu::BufferUsages::STORAGE));
 
         let bu_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, true);

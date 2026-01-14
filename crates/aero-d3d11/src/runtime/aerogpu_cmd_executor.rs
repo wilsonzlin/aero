@@ -1725,8 +1725,19 @@ impl AerogpuD3d11Executor {
         device: wgpu::Device,
         queue: wgpu::Queue,
         backend: wgpu::Backend,
+        caps: GpuCapabilities,
+        supports_indirect: bool,
+    ) -> Self {
+        Self::new_with_caps_impl(device, queue, backend, caps, supports_indirect, None)
+    }
+
+    fn new_with_caps_impl(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        backend: wgpu::Backend,
         mut caps: GpuCapabilities,
         supports_indirect: bool,
+        adapter: Option<&wgpu::Adapter>,
     ) -> Self {
         caps.supports_indirect_execution = supports_indirect;
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1773,16 +1784,14 @@ impl AerogpuD3d11Executor {
         let mut dummy_storage_texture_views = HashMap::new();
         // Only create dummy storage textures when the device reports storage-texture support.
         // Downlevel backends like WebGL2 report `max_storage_textures_per_shader_stage=0` and will
-        // reject `STORAGE_BINDING` usage. Some downlevel/native backends also only expose a subset
-        // of storage texture formats, so we probe format support via a validation error scope.
+        // reject `STORAGE_BINDING` usage.
+        //
+        // Additionally, some backends expose storage textures but only for a subset of formats.
+        // When an adapter is available, use its format features to filter out unsupported formats.
+        // Otherwise (native builds), probe support via a validation error scope to avoid triggering
+        // wgpu validation panics during executor creation.
         if device.limits().max_storage_textures_per_shader_stage > 0 {
-            // Some backends/devices expose storage textures but only for a subset of formats. wgpu
-            // validates `create_texture` immediately and panics on invalid usage/format combos, so
-            // probe each format individually and keep only the ones that are actually supported.
-            //
-            // Note: `new_with_caps` does not have access to the originating `wgpu::Adapter`, so we
-            // cannot query `adapter.get_texture_format_features` here.
-            //
+            let needs_probe = adapter.is_none();
             // Avoid formats that are not part of the core WebGPU storage texture format set unless
             // the device explicitly enables adapter-specific format features. This prevents wgpu
             // validation errors on downlevel backends that only expose the core set.
@@ -1814,8 +1823,22 @@ impl AerogpuD3d11Executor {
             }
 
             for format in formats {
+                if needs_probe && cfg!(target_arch = "wasm32") {
+                    continue;
+                }
+                if let Some(adapter) = adapter {
+                    let features = adapter.get_texture_format_features(format.wgpu_format());
+                    if !features
+                        .allowed_usages
+                        .contains(wgpu::TextureUsages::STORAGE_BINDING)
+                    {
+                        continue;
+                    }
+                }
                 #[cfg(not(target_arch = "wasm32"))]
-                device.push_error_scope(wgpu::ErrorFilter::Validation);
+                if needs_probe {
+                    device.push_error_scope(wgpu::ErrorFilter::Validation);
+                }
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("aerogpu_cmd dummy storage texture"),
                     size: wgpu::Extent3d {
@@ -1831,7 +1854,7 @@ impl AerogpuD3d11Executor {
                     view_formats: &[],
                 });
                 #[cfg(not(target_arch = "wasm32"))]
-                {
+                if needs_probe {
                     device.poll(wgpu::Maintain::Poll);
                     if pollster::block_on(device.pop_error_scope()).is_some() {
                         continue;
@@ -2128,12 +2151,13 @@ impl AerogpuD3d11Executor {
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
         let caps = GpuCapabilities::from_device(&device).with_downlevel_flags(downlevel_flags);
-        Ok(Self::new_with_caps(
+        Ok(Self::new_with_caps_impl(
             device,
             queue,
             backend,
             caps,
             supports_indirect,
+            Some(&adapter),
         ))
     }
 
@@ -22603,10 +22627,8 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
     fn dummy_storage_texture_view(
         &self,
         format: crate::StorageTextureFormat,
-    ) -> &wgpu::TextureView {
-        self.dummy_storage_texture_views
-            .get(&format)
-            .unwrap_or(self.dummy_texture_view_2d)
+    ) -> Option<&wgpu::TextureView> {
+        self.dummy_storage_texture_views.get(&format)
     }
 
     fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
