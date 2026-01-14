@@ -3390,6 +3390,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
+              // Guard against corrupt descriptors that would otherwise trigger huge loops even if the
+              // total byte count is still under the MAX_SCREENSHOT_BYTES cap (e.g. width=1, height=64M).
+              const MAX_SCANOUT_DIM = 16384;
+              if (width > MAX_SCANOUT_DIM || height > MAX_SCANOUT_DIM) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
 
               const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
               if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
@@ -3415,6 +3422,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
+              const basePaddrNum = Number(basePaddr);
 
               // Ensure the final row address still fits the JS safe-integer subset so
               // the scanout readback helper (and any fallback read) can safely index
@@ -3427,6 +3435,32 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
                 const endPaddr = lastRowPaddr + BigInt(rowBytes);
                 if (endPaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+              }
+
+              // Validate that the descriptor rows are actually backed by guest RAM before using
+              // the cached last-presented scanout buffer. Without this, a corrupt `base_paddr`
+              // could cause us to return stale cached pixels instead of falling back to the stub.
+              const ramBytes = guest.byteLength;
+              for (let y = 0; y < height; y += 1) {
+                const rowPaddr = basePaddrNum + y * pitchBytes;
+                if (!Number.isSafeInteger(rowPaddr)) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+                try {
+                  if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
+                    postStub(typeof seq === "number" ? seq : undefined);
+                    return true;
+                  }
+                } catch {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+                const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
+                if (rowOff === null || rowOff + rowBytes > guest.byteLength) {
                   postStub(typeof seq === "number" ? seq : undefined);
                   return true;
                 }
