@@ -41,6 +41,9 @@ ROOT = repo_root()
 DBGCTL_SRC = ROOT / "drivers" / "aerogpu" / "tools" / "win7_dbgctl" / "src" / "aerogpu_dbgctl.cpp"
 DBGCTL_README = ROOT / "drivers" / "aerogpu" / "tools" / "win7_dbgctl" / "README.md"
 WIN7_VALIDATION_DOC = ROOT / "docs" / "graphics" / "win7-aerogpu-validation.md"
+WIN7_TEST_RUNNER_SRC = (
+    ROOT / "drivers" / "aerogpu" / "tests" / "win7" / "test_runner" / "main.cpp"
+)
 
 # Extract flags from the actual argument parsing logic, not from the usage text,
 # so we catch cases where someone updates the help/README but forgets to plumb
@@ -55,6 +58,12 @@ MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
 # helpful error than the generic "unknown flag" result (since `MD_FLAG_RE` would
 # otherwise extract a truncated prefix).
 MD_FLAG_WILDCARD_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*\*")
+
+# Extract dbgctl flags from C++ code that composes an argv list for dbgctl. We intentionally keep
+# this narrow to avoid treating unrelated `--...` strings as dbgctl flags.
+CPP_DBGCTL_ATTEMPTS_PUSH_RE = re.compile(
+    r'attempts\.back\(\)\.push_back\(\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)"\s*\)'
+)
 
 # We primarily scan markdown docs in these dirs for dbgctl invocations. Additionally, we include a
 # small allowlist of Guest Tools scripts that invoke dbgctl directly (so the shipped installer
@@ -88,6 +97,12 @@ SCAN_DBGCTL_SCRIPT_FILES = [
 # rely on the conservative `iter_dbgctl_*` heuristics to avoid false positives.
 SCAN_DBGCTL_TEXT_FILES = [
     ROOT / "scripts" / "parse_win7_dxgi_swapchain_trace.py",
+]
+
+# Source files that *invoke* dbgctl by composing argv arrays. Keep these in sync too so test tooling
+# doesn't drift ahead of dbgctl's real flag surface area.
+SCAN_DBGCTL_INVOKER_FILES = [
+    WIN7_TEST_RUNNER_SRC,
 ]
 
 
@@ -293,6 +308,20 @@ def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def iter_dbgctl_invoker_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
+    """
+    Extract dbgctl flags from code that explicitly builds a dbgctl argv list.
+
+    Today we key off `attempts.back().push_back(L"--flag")` patterns used by the Win7 test runner.
+    """
+    text = read_text(path)
+    out: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        for flag in CPP_DBGCTL_ATTEMPTS_PUSH_RE.findall(line):
+            out.append((line_no, flag))
+    return out
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -493,7 +522,30 @@ def main() -> int:
             print(f"  - {e}", file=sys.stderr)
         return 1
 
-    print("OK: Win7 dbgctl docs/scripts flags match parsed implementation.")
+    # Check actual dbgctl invocations in code (argv arrays) so test tooling can't drift ahead of
+    # the implemented dbgctl CLI surface area.
+    invoker_errors: list[str] = []
+    for path in SCAN_DBGCTL_INVOKER_FILES:
+        if not path.exists():
+            continue
+        refs = iter_dbgctl_invoker_flag_refs(path)
+        if not refs:
+            continue
+        rel = path.relative_to(ROOT)
+        for line_no, flag in refs:
+            if flag not in allowed_flags:
+                invoker_errors.append(f"{rel}:{line_no}: {flag}")
+
+    if invoker_errors:
+        print("ERROR: dbgctl invoker code references unknown aerogpu_dbgctl flags:", file=sys.stderr)
+        for e in sorted(invoker_errors):
+            print(f"  - {e}", file=sys.stderr)
+        print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
+        for f in sorted(allowed_flags):
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+
+    print("OK: Win7 dbgctl docs/scripts/invocations flags match parsed implementation.")
     return 0
 
 
