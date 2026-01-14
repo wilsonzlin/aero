@@ -207,6 +207,7 @@ hidtest.exe --keyboard --counters
 ```
 
 If `--reset-counters` fails, rerun elevated; it requires opening the HID interface with write access.
+Note: `--reset-counters` clears monotonic counters and max-depths, but current-state depth gauges may remain non-zero if the driver still has queued work.
 
 Watch `StatusQFull` and (when enabled) `VirtioStatusDrops` / `LedWritesDropped`.
 
