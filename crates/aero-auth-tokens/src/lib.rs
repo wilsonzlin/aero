@@ -44,12 +44,45 @@ fn is_base64url(raw: &str, max_len: usize) -> bool {
     if raw.len() % 4 == 1 {
         return false;
     }
-    raw.as_bytes().iter().all(|b| {
-        matches!(
-            b,
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'
-        )
-    })
+    fn val(b: u8) -> Option<u8> {
+        match b {
+            b'A'..=b'Z' => Some(b - b'A'),
+            b'a'..=b'z' => Some(b - b'a' + 26),
+            b'0'..=b'9' => Some(b - b'0' + 52),
+            b'-' => Some(62),
+            b'_' => Some(63),
+            _ => None,
+        }
+    }
+
+    let bytes = raw.as_bytes();
+    if !bytes.iter().all(|&b| val(b).is_some()) {
+        return false;
+    }
+
+    // Tighten validation to canonical base64url-no-pad. Even when the length is syntactically
+    // valid (mod 4 != 1), the unused bits in the final base64 quantum must be zero.
+    //
+    // - len % 4 == 2 => 4 unused bits (must be zero)
+    // - len % 4 == 3 => 2 unused bits (must be zero)
+    match bytes.len() % 4 {
+        0 => {}
+        2 => {
+            let last = val(bytes[bytes.len() - 1]).unwrap();
+            if (last & 0x0f) != 0 {
+                return false;
+            }
+        }
+        3 => {
+            let last = val(bytes[bytes.len() - 1]).unwrap();
+            if (last & 0x03) != 0 {
+                return false;
+            }
+        }
+        _ => unreachable!("len%4==1 rejected above"),
+    }
+
+    true
 }
 
 fn decode_base64url_unchecked(raw: &str) -> Option<Vec<u8>> {

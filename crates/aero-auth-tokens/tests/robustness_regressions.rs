@@ -2,6 +2,52 @@ use aero_auth_tokens::{verify_gateway_session_token, verify_hs256_jwt};
 use base64::{engine::general_purpose, Engine as _};
 use sha2::{Digest, Sha256};
 
+fn b64url_value(b: u8) -> Option<u8> {
+    match b {
+        b'A'..=b'Z' => Some(b - b'A'),
+        b'a'..=b'z' => Some(b - b'a' + 26),
+        b'0'..=b'9' => Some(b - b'0' + 52),
+        b'-' => Some(62),
+        b'_' => Some(63),
+        _ => None,
+    }
+}
+
+fn b64url_char(v: u8) -> u8 {
+    match v {
+        0..=25 => b'A' + v,
+        26..=51 => b'a' + (v - 26),
+        52..=61 => b'0' + (v - 52),
+        62 => b'-',
+        63 => b'_',
+        _ => unreachable!("invalid base64url value {v}"),
+    }
+}
+
+fn make_noncanonical_base64url(b64: String) -> String {
+    let rem = b64.len() % 4;
+    assert!(
+        rem == 2 || rem == 3,
+        "need mod4==2 or 3 to have unused bits, got {rem}"
+    );
+    let mut bytes = b64.into_bytes();
+    let last = bytes.len() - 1;
+    let v = b64url_value(bytes[last]).expect("base64url char");
+    let v2 = match rem {
+        2 => {
+            assert_eq!(v & 0x0f, 0, "expected canonical last char for mod4==2");
+            v | 1
+        }
+        3 => {
+            assert_eq!(v & 0x03, 0, "expected canonical last char for mod4==3");
+            v | 1
+        }
+        _ => unreachable!(),
+    };
+    bytes[last] = b64url_char(v2);
+    String::from_utf8(bytes).expect("utf8")
+}
+
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     // HMAC-SHA256 as defined in RFC 2104 (duplicated here to mint test vectors without depending
     // on internal `aero-auth-tokens` helpers).
@@ -349,6 +395,62 @@ fn jwt_rejects_header_base64url_length_mod4_eq_1_even_if_signature_matches() {
     let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
     let token = format!("{signing_input}.{sig_b64}");
 
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
+
+#[test]
+fn session_token_rejects_noncanonical_base64url_payload_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    // Choose a payload length that produces a base64 string with unused bits (mod4==3).
+    let payload = br#"{"v":1,"sid":"a","exp":12345}"#;
+    let mut payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    assert_eq!(payload_b64.len() % 4, 3, "expected mod4==3");
+    payload_b64 = make_noncanonical_base64url(payload_b64);
+
+    let sig = hmac_sha256(secret, payload_b64.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{payload_b64}.{sig_b64}");
+    assert!(verify_gateway_session_token(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_noncanonical_base64url_payload_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    let header = br#"{"alg":"HS256"}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+
+    // Trailing whitespace keeps the JSON valid and ensures mod4==2 for the base64 string.
+    let payload = br#"{"sid":"abc","exp":12345,"iat":0} "#;
+    let mut payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    assert_eq!(payload_b64.len() % 4, 2, "expected mod4==2");
+    payload_b64 = make_noncanonical_base64url(payload_b64);
+
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_noncanonical_base64url_header_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    // Trailing whitespace keeps the JSON valid and ensures mod4==2 for the base64 string.
+    let header = br#"{"alg":"HS256"} "#;
+    let mut header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    assert_eq!(header_b64.len() % 4, 2, "expected mod4==2");
+    header_b64 = make_noncanonical_base64url(header_b64);
+
+    let payload = br#"{"sid":"abc","exp":12345,"iat":0}"#;
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
     assert!(verify_hs256_jwt(&token, secret, 0).is_none());
 }
 
