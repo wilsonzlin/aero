@@ -67,7 +67,10 @@
  * IOCTL_VIOINPUT_RESET_COUNTERS:
  *   - METHOD_BUFFERED
  *   - FILE_WRITE_ACCESS
- *   - Resets all VIOINPUT_COUNTERS fields except Size/Version.
+ *   - Resets monotonic VIOINPUT_COUNTERS fields except Size/Version.
+ *     Current-state depth gauges (e.g. ReadReportQueueDepth) are preserved so
+ *     they continue to reflect the true driver state after reset.
+ *     The corresponding *MaxDepth fields are reset to the current depth baseline.
  *
  * IOCTL_VIOINPUT_QUERY_STATE:
  *   - METHOD_BUFFERED

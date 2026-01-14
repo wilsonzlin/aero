@@ -197,6 +197,8 @@ hidtest.exe --reset-counters
 
 Note: `--reset-counters` requires opening the HID interface with write access (the tool prefers read/write but may fall back to read-only). If it fails with a “GENERIC_WRITE” message, rerun elevated and/or ensure no other process is holding the device exclusively.
 
+Note: depth gauge counters (e.g. `ReadReportQueueDepth`, `ReportRingDepth`, `PendingRingDepth`) reflect the driver's *current* state and may remain non-zero after a reset if the driver still has queued work.
+
 Tip: combine with `--counters` / `--counters-json` to verify reset immediately (the tool's own enumeration traffic is cleared by the reset):
 
 ```bat
@@ -389,6 +391,8 @@ Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS):
 ```bat
 hidtest.exe --reset-counters
 ```
+
+Note: `--reset-counters` clears monotonic counters and max-depths, but current-state depth gauges (e.g. `ReadReportQueueDepth`) may remain non-zero if the driver still has queued work.
 
 `--counters` / `--reset-counters` operate on the selected HID interface, so use `--keyboard` / `--mouse` if you want to
 inspect/reset the counters for a specific virtio-input device instance.
