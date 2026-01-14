@@ -21,6 +21,21 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
     const atomics = typeof Atomics !== "undefined";
     const worker = typeof Worker !== "undefined";
     const wasm = typeof WebAssembly !== "undefined" && typeof WebAssembly.Memory === "function";
+    const webgpu = typeof (globalThis as any).navigator?.gpu !== "undefined";
+    // Match `web/src/platform/features.ts`: treat WebGL2 as available only if OffscreenCanvas can
+    // create a WebGL2 context (the worker-driven renderer relies on this).
+    let webgl2 = false;
+    try {
+      if (typeof OffscreenCanvas !== "undefined") {
+        const canvas = new OffscreenCanvas(1, 1);
+        webgl2 = !!canvas.getContext("webgl2");
+      } else {
+        const canvas = document.createElement("canvas");
+        webgl2 = !!canvas.getContext("webgl2");
+      }
+    } catch {
+      webgl2 = false;
+    }
     let wasmThreads = false;
     if (wasm) {
       try {
@@ -31,7 +46,7 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
         wasmThreads = false;
       }
     }
-    return { crossOriginIsolated, sharedArrayBuffer, atomics, worker, wasm, wasmThreads };
+    return { crossOriginIsolated, sharedArrayBuffer, atomics, worker, wasm, wasmThreads, webgl2, webgpu };
   });
 
   test.skip(!support.crossOriginIsolated || !support.sharedArrayBuffer, "SharedArrayBuffer requires COOP/COEP headers.");
@@ -39,6 +54,7 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
   test.skip(!support.worker, "Web Workers are unavailable in this environment.");
   test.skip(!support.wasm, "WebAssembly.Memory is unavailable in this environment.");
   test.skip(!support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
+  test.skip(!support.webgl2 && !support.webgpu, "Workers panel demo requires WebGL2 or WebGPU.");
 
   await page.locator("#workers-start").click();
 
