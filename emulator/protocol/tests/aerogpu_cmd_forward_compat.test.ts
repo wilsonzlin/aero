@@ -186,7 +186,7 @@ test("SET_BLEND_STATE decoder accepts legacy 28-byte packets", () => {
   assert.equal(decoded.sampleMask >>> 0, 0xffff_ffff);
 });
 
-function buildBindShadersStream(extended: boolean): Uint8Array {
+function buildBindShadersStream(extended: boolean, withExtraTrailing: boolean): Uint8Array {
   const bytes: number[] = [];
   pushU32(bytes, AEROGPU_CMD_STREAM_MAGIC);
   pushU32(bytes, AEROGPU_ABI_VERSION_U32);
@@ -207,6 +207,10 @@ function buildBindShadersStream(extended: boolean): Uint8Array {
     pushU32(bytes, 5); // hs
     pushU32(bytes, 6); // ds
   }
+  if (withExtraTrailing) {
+    // Forward-compatible extension beyond known fields (ignored by current decoders).
+    pushU32(bytes, 0xdead_beef);
+  }
 
   const out = new Uint8Array(bytes);
   const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
@@ -218,21 +222,27 @@ function buildBindShadersStream(extended: boolean): Uint8Array {
 }
 
 test("BIND_SHADERS decoders accept append-only extensions for additional stages", () => {
-  const base = buildBindShadersStream(false);
-  const extended = buildBindShadersStream(true);
+  const base = buildBindShadersStream(false, false);
+  const extended = buildBindShadersStream(true, false);
+  const extendedWithTrailing = buildBindShadersStream(true, true);
 
   const packetsBase = decodeCmdStreamView(base).packets;
   const packetsExt = decodeCmdStreamView(extended).packets;
+  const packetsExtTrailing = decodeCmdStreamView(extendedWithTrailing).packets;
   assert.equal(packetsBase.length, 1);
   assert.equal(packetsExt.length, 1);
+  assert.equal(packetsExtTrailing.length, 1);
 
   assert.equal(packetsBase[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
   assert.equal(packetsExt[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
+  assert.equal(packetsExtTrailing[0]!.hdr.opcode, AerogpuCmdOpcode.BindShaders);
   assert.equal(packetsBase[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE);
   assert.equal(packetsExt[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
+  assert.equal(packetsExtTrailing[0]!.hdr.sizeBytes, AEROGPU_CMD_BIND_SHADERS_SIZE + 12 + 4);
 
   const decodedBase = decodeCmdBindShadersPayload(base, packetsBase[0]!.offsetBytes);
   const decodedExt = decodeCmdBindShadersPayload(extended, packetsExt[0]!.offsetBytes);
+  const decodedExtTrailing = decodeCmdBindShadersPayload(extendedWithTrailing, packetsExtTrailing[0]!.offsetBytes);
 
   // Legacy decode: original VS/PS/CS fields remain stable even when newer guests append fields.
   assert.deepEqual(
@@ -247,4 +257,5 @@ test("BIND_SHADERS decoders accept append-only extensions for additional stages"
 
   // Extended decode: appended GS/HS/DS handles are available to decoders that understand them.
   assert.deepEqual(decodedExt.ex, { gs: 4, hs: 5, ds: 6 });
+  assert.deepEqual(decodedExtTrailing.ex, { gs: 4, hs: 5, ds: 6 });
 });
