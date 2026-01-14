@@ -114,6 +114,10 @@ contributors.
   - Local dev can use `net-proxy` which implements the same DoH paths; see [`net-proxy/README.md`](../net-proxy/README.md).
 - UDP egress is implemented via `proxy/webrtc-udp-relay` (WebRTC DataChannel `udp`, with `/udp`
   WebSocket fallback; see `proxy/webrtc-udp-relay/PROTOCOL.md`).
+  - Inbound UDP filtering: by default, the relay only forwards inbound UDP from remote address+port
+    tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). This is
+    safer for public deployments. You can switch to full-cone behavior with
+    `UDP_INBOUND_FILTER_MODE=any` (**less safe**; accepts inbound UDP from any remote endpoint).
 
 ### Phase 1: introduce `L2TunnelBackend` (frame pipe) and keep slirp as fallback
 
