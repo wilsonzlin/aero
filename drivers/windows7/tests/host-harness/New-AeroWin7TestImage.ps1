@@ -229,6 +229,7 @@ $defaultInfAllowList = @(
   "aero_virtio_blk.inf",
   "aero_virtio_net.inf",
   "aero_virtio_input.inf",
+  "aero_virtio_tablet.inf",
   "aero_virtio_snd.inf"
 )
 
@@ -316,6 +317,7 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
         "aero_virtio_blk.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1042&REV_01" }
         "aero_virtio_net.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1041&REV_01" }
         "aero_virtio_input.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1052&REV_01" }
+        "aero_virtio_tablet.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01" }
         "aero_virtio_snd.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1059&REV_01" }
         "aero-virtio-snd-legacy.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1018" }
       }

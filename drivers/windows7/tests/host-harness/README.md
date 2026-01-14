@@ -44,7 +44,8 @@ For the in-tree clean-room Aero virtio driver stack, the canonical INF names are
 
 - `aero_virtio_blk.inf`
 - `aero_virtio_net.inf`
-- `aero_virtio_input.inf` (optional)
+- `aero_virtio_input.inf` (optional; keyboard + relative mouse)
+- `aero_virtio_tablet.inf` (optional; tablet / absolute pointer)
 - `aero_virtio_snd.inf` (optional)
 
 ## Running tests
@@ -326,9 +327,8 @@ To enable end-to-end testing:
    - Note: This requires that the guest has a virtio-input **tablet** driver installed and bound (so the tablet exposes a
      HID interface). For the in-tree Aero driver stack this is `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`
      (it installs the shared `aero_virtio_input.sys` binary but matches the tablet HWID). When provisioning via
-     `New-AeroWin7TestImage.ps1`:
-     - if you use the default INF allowlist, `aero_virtio_tablet.inf` is installed automatically when `-TestInputTabletEvents` is set
-     - if you pass an explicit `-InfAllowList`, ensure it includes `aero_virtio_tablet.inf`
+     `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass an explicit
+     `-InfAllowList`, ensure it includes `aero_virtio_tablet.inf`.
 2. Run the host harness with `-WithInputTabletEvents` (alias: `-WithTabletEvents`) /
    `--with-input-tablet-events` (alias: `--with-tablet-events`) so it:
       - attaches `virtio-tablet-pci`
@@ -744,7 +744,8 @@ Canonical in-tree driver packages:
 
 - virtio-blk: `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` (binds `DEV_1042&REV_01`)
 - virtio-net: `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` (binds `DEV_1041&REV_01`)
-- virtio-input: `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds `DEV_1052&REV_01`)
+- virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds `DEV_1052&REV_01`)
+- virtio-input (tablet): `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (binds `DEV_1052&SUBSYS_00121AF4&REV_01`)
 - virtio-snd: `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (binds `DEV_1059&REV_01`)
 
 If QEMU cannot expose modern-only virtio-snd (no `disable-legacy` property on the device), virtio-snd may enumerate as
@@ -769,6 +770,7 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
     "aero_virtio_blk.inf",
     "aero_virtio_net.inf",
     "aero_virtio_input.inf",
+    "aero_virtio_tablet.inf",
     "aero_virtio_snd.inf"
   ) `
   -BlkRoot "D:\aero-virtio-selftest\"
@@ -793,6 +795,7 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
     "aero_virtio_blk.inf",
     "aero_virtio_net.inf",
     "aero_virtio_input.inf",
+    "aero_virtio_tablet.inf",
     "aero_virtio_snd.inf"
   ) `
   -DisableSnd
@@ -809,6 +812,7 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
     "aero_virtio_blk.inf",
     "aero_virtio_net.inf",
     "aero_virtio_input.inf",
+    "aero_virtio_tablet.inf",
     "aero_virtio_snd.inf"
   ) `
   -DisableSndCapture
@@ -850,6 +854,7 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
     "aero_virtio_blk.inf",
     "aero_virtio_net.inf",
     "aero_virtio_input.inf",
+    "aero_virtio_tablet.inf",
     "aero_virtio_snd.inf"
   ) `
   -EnableTestSigning `
