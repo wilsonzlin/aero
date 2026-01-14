@@ -86,7 +86,7 @@ struct Options {
   bool disable_snd_capture = false;
   // If set, missing virtio-snd device causes the overall selftest to fail (instead of SKIP).
   bool require_snd = false;
-  // If set, require the virtio-snd driver to be using MSI-X (message-signaled interrupts).
+  // If set, require virtio-snd to be present and to be using MSI-X (message-signaled interrupts).
   // Without this flag the selftest still emits an informational virtio-snd-msix marker.
   bool require_snd_msix = false;
   // If set, missing virtio-snd capture endpoint causes the overall selftest to fail (instead of SKIP).
@@ -11122,7 +11122,7 @@ static void PrintUsage() {
       "  --disable-snd-capture     Skip virtio-snd capture test (emit SKIP)\n"
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --test-snd                Alias for --require-snd\n"
-      "  --require-snd-msix        Fail if virtio-snd is not using MSI-X interrupts\n"
+      "  --require-snd-msix        Fail if virtio-snd is missing or not using MSI-X interrupts\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_REQUIRE_SND_MSIX=1)\n"
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
