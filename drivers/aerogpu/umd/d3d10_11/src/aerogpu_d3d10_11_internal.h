@@ -2821,6 +2821,85 @@ inline bool EmitSetUnorderedAccessBuffersCmdLocked(DeviceT* dev,
       dev, shader_stage, start_slot, uav_count, uavs, EmitSetUnorderedAccessBuffersNoopSetError{});
 }
 
+// -------------------------------------------------------------------------------------------------
+// Pipeline state helpers (SET_RASTERIZER_STATE / SET_BLEND_STATE / SET_DEPTH_STENCIL_STATE)
+// -------------------------------------------------------------------------------------------------
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetRasterizerStateCmdLocked(DeviceT* dev, const aerogpu_rasterizer_state& state, SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->state = state;
+  return true;
+}
+
+struct EmitSetRasterizerStateNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetRasterizerStateCmdLocked(DeviceT* dev, const aerogpu_rasterizer_state& state) {
+  return EmitSetRasterizerStateCmdLocked(dev, state, EmitSetRasterizerStateNoopSetError{});
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetBlendStateCmdLocked(DeviceT* dev, const aerogpu_blend_state& state, SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->state = state;
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+  cmd->state.reserved0[2] = 0;
+  return true;
+}
+
+struct EmitSetBlendStateNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetBlendStateCmdLocked(DeviceT* dev, const aerogpu_blend_state& state) {
+  return EmitSetBlendStateCmdLocked(dev, state, EmitSetBlendStateNoopSetError{});
+}
+
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetDepthStencilStateCmdLocked(DeviceT* dev,
+                                              const aerogpu_depth_stencil_state& state,
+                                              SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->state = state;
+  cmd->state.reserved0[0] = 0;
+  cmd->state.reserved0[1] = 0;
+  return true;
+}
+
+struct EmitSetDepthStencilStateNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetDepthStencilStateCmdLocked(DeviceT* dev, const aerogpu_depth_stencil_state& state) {
+  return EmitSetDepthStencilStateCmdLocked(dev, state, EmitSetDepthStencilStateNoopSetError{});
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
@@ -2932,21 +3011,15 @@ inline bool EmitDepthStencilStateCmdLocked(Device* dev, const DepthStencilState*
     stencil_write_mask = dss->stencil_write_mask;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
-  if (!cmd) {
-    return false;
-  }
-
-  cmd->state.depth_enable = depth_enable ? 1u : 0u;
+  aerogpu_depth_stencil_state state{};
+  state.depth_enable = depth_enable ? 1u : 0u;
   // D3D11 semantics: DepthWriteMask is ignored when depth testing is disabled.
-  cmd->state.depth_write_enable = (depth_enable && depth_write_mask) ? 1u : 0u;
-  cmd->state.depth_func = D3D11CompareFuncToAerogpu(depth_func);
-  cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
-  cmd->state.stencil_read_mask = stencil_read_mask;
-  cmd->state.stencil_write_mask = stencil_write_mask;
-  cmd->state.reserved0[0] = 0;
-  cmd->state.reserved0[1] = 0;
-  return true;
+  state.depth_write_enable = (depth_enable && depth_write_mask) ? 1u : 0u;
+  state.depth_func = D3D11CompareFuncToAerogpu(depth_func);
+  state.stencil_enable = stencil_enable ? 1u : 0u;
+  state.stencil_read_mask = stencil_read_mask;
+  state.stencil_write_mask = stencil_write_mask;
+  return EmitSetDepthStencilStateCmdLocked(dev, state);
 }
 
 struct TrackStagingWriteNoopSetError {

@@ -7289,13 +7289,8 @@ static bool EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
     depth_clip_enable = rs->depth_clip_enable;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
-    return false;
-  }
-
-  cmd->state.fill_mode = D3DFillModeToAerogpu(fill_mode);
+  aerogpu_rasterizer_state state{};
+  state.fill_mode = D3DFillModeToAerogpu(fill_mode);
   if (fill_mode != static_cast<uint32_t>(D3D11_FILL_SOLID) &&
       fill_mode != static_cast<uint32_t>(D3D11_FILL_WIREFRAME)) {
     static std::once_flag once;
@@ -7304,13 +7299,13 @@ static bool EmitRasterizerStateLocked(Device* dev, const RasterizerState* rs) {
                            (unsigned)fill_mode);
     });
   }
-  cmd->state.cull_mode = D3DCullModeToAerogpu(cull_mode);
-  cmd->state.front_ccw = front_ccw ? 1u : 0u;
-  cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
-  cmd->state.depth_bias = depth_bias;
-  cmd->state.flags = depth_clip_enable ? AEROGPU_RASTERIZER_FLAG_NONE
-                                       : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
-  return true;
+  state.cull_mode = D3DCullModeToAerogpu(cull_mode);
+  state.front_ccw = front_ccw ? 1u : 0u;
+  state.scissor_enable = scissor_enable ? 1u : 0u;
+  state.depth_bias = depth_bias;
+  state.flags = depth_clip_enable ? AEROGPU_RASTERIZER_FLAG_NONE
+                                  : AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
+  return aerogpu::d3d10_11::EmitSetRasterizerStateCmdLocked(dev, state, [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 static bool EmitBlendStateLocked(Device* dev, const BlendState* bs, const float blend_factor[4], uint32_t sample_mask) {
@@ -7360,32 +7355,25 @@ static bool EmitBlendStateLocked(Device* dev, const BlendState* bs, const float 
     }
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
-    return false;
-  }
-
-  cmd->state.enable = blend_enable ? 1u : 0u;
-  cmd->state.src_factor = D3dBlendFactorToAerogpuOr(src_blend, AEROGPU_BLEND_ONE);
-  cmd->state.dst_factor = D3dBlendFactorToAerogpuOr(dst_blend, AEROGPU_BLEND_ZERO);
-  cmd->state.blend_op = D3dBlendOpToAerogpuOr(blend_op, AEROGPU_BLEND_OP_ADD);
-  cmd->state.color_write_mask = static_cast<uint8_t>(write_mask & kD3DColorWriteMaskAll);
-  cmd->state.reserved0[0] = 0;
-  cmd->state.reserved0[1] = 0;
-  cmd->state.reserved0[2] = 0;
-
-  cmd->state.src_factor_alpha = D3dBlendFactorToAerogpuOr(src_blend_alpha, cmd->state.src_factor);
-  cmd->state.dst_factor_alpha = D3dBlendFactorToAerogpuOr(dst_blend_alpha, cmd->state.dst_factor);
-  cmd->state.blend_op_alpha = D3dBlendOpToAerogpuOr(blend_op_alpha, cmd->state.blend_op);
-
+  aerogpu_blend_state state{};
+  state.enable = blend_enable ? 1u : 0u;
+  state.src_factor = D3dBlendFactorToAerogpuOr(src_blend, AEROGPU_BLEND_ONE);
+  state.dst_factor = D3dBlendFactorToAerogpuOr(dst_blend, AEROGPU_BLEND_ZERO);
+  state.blend_op = D3dBlendOpToAerogpuOr(blend_op, AEROGPU_BLEND_OP_ADD);
+  state.color_write_mask = static_cast<uint8_t>(write_mask & kD3DColorWriteMaskAll);
+  state.reserved0[0] = 0;
+  state.reserved0[1] = 0;
+  state.reserved0[2] = 0;
+  state.src_factor_alpha = D3dBlendFactorToAerogpuOr(src_blend_alpha, state.src_factor);
+  state.dst_factor_alpha = D3dBlendFactorToAerogpuOr(dst_blend_alpha, state.dst_factor);
+  state.blend_op_alpha = D3dBlendOpToAerogpuOr(blend_op_alpha, state.blend_op);
   const float* bf = blend_factor ? blend_factor : dev->current_blend_factor;
-  cmd->state.blend_constant_rgba_f32[0] = f32_bits(bf[0]);
-  cmd->state.blend_constant_rgba_f32[1] = f32_bits(bf[1]);
-  cmd->state.blend_constant_rgba_f32[2] = f32_bits(bf[2]);
-  cmd->state.blend_constant_rgba_f32[3] = f32_bits(bf[3]);
-  cmd->state.sample_mask = sample_mask;
-  return true;
+  state.blend_constant_rgba_f32[0] = f32_bits(bf[0]);
+  state.blend_constant_rgba_f32[1] = f32_bits(bf[1]);
+  state.blend_constant_rgba_f32[2] = f32_bits(bf[2]);
+  state.blend_constant_rgba_f32[3] = f32_bits(bf[3]);
+  state.sample_mask = sample_mask;
+  return aerogpu::d3d10_11::EmitSetBlendStateCmdLocked(dev, state, [&](HRESULT hr) { SetError(dev, hr); });
 }
 
 static bool EmitDepthStencilStateLocked(Device* dev, const DepthStencilState* dss) {

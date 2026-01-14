@@ -5170,13 +5170,8 @@ static bool EmitRasterizerStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevi
     state = rs->state;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return false;
-  }
-  cmd->state = state;
-  return true;
+  return aerogpu::d3d10_11::EmitSetRasterizerStateCmdLocked(
+      dev, state, [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
 }
 
 static bool EmitBlendStateLocked(AeroGpuDevice* dev,
@@ -5204,11 +5199,6 @@ static bool EmitBlendStateLocked(AeroGpuDevice* dev,
     state = bs->state;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_blend_state>(AEROGPU_CMD_SET_BLEND_STATE);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return false;
-  }
   state.reserved0[0] = 0;
   state.reserved0[1] = 0;
   state.reserved0[2] = 0;
@@ -5217,8 +5207,8 @@ static bool EmitBlendStateLocked(AeroGpuDevice* dev,
   state.blend_constant_rgba_f32[2] = blend_factor ? f32_bits(blend_factor[2]) : f32_bits(1.0f);
   state.blend_constant_rgba_f32[3] = blend_factor ? f32_bits(blend_factor[3]) : f32_bits(1.0f);
   state.sample_mask = sample_mask;
-  cmd->state = state;
-  return true;
+  return aerogpu::d3d10_11::EmitSetBlendStateCmdLocked(
+      dev, state, [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
 }
 
 static bool EmitDepthStencilStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuDepthStencilState* dss) {
@@ -5239,13 +5229,8 @@ static bool EmitDepthStencilStateLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDe
     state = dss->state;
   }
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return false;
-  }
-  cmd->state = state;
-  return true;
+  return aerogpu::d3d10_11::EmitSetDepthStencilStateCmdLocked(
+      dev, state, [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
 }
 
 void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,

@@ -1304,6 +1304,299 @@ bool TestSetUnorderedAccessBuffersHelperEncodesPacket() {
   return true;
 }
 
+bool TestSetRasterizerStateHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetRasterizerStateCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+  aerogpu_rasterizer_state state{};
+  state.fill_mode = AEROGPU_FILL_WIREFRAME;
+  state.cull_mode = AEROGPU_CULL_FRONT;
+  state.front_ccw = 1;
+  state.scissor_enable = 1;
+  state.depth_bias = -123;
+  state.flags = AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE;
+
+  const bool ok =
+      EmitSetRasterizerStateCmdLocked(&dev, state, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetRasterizerStateCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetRasterizerStateCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_rasterizer_state),
+             "SET_RASTERIZER_STATE packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_rasterizer_state*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_RASTERIZER_STATE, "SET_RASTERIZER_STATE opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "SET_RASTERIZER_STATE hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->state.fill_mode == state.fill_mode, "SET_RASTERIZER_STATE fill_mode")) {
+    return false;
+  }
+  if (!Check(pkt->state.cull_mode == state.cull_mode, "SET_RASTERIZER_STATE cull_mode")) {
+    return false;
+  }
+  if (!Check(pkt->state.front_ccw == state.front_ccw, "SET_RASTERIZER_STATE front_ccw")) {
+    return false;
+  }
+  if (!Check(pkt->state.scissor_enable == state.scissor_enable, "SET_RASTERIZER_STATE scissor_enable")) {
+    return false;
+  }
+  if (!Check(pkt->state.depth_bias == state.depth_bias, "SET_RASTERIZER_STATE depth_bias")) {
+    return false;
+  }
+  if (!Check(pkt->state.flags == state.flags, "SET_RASTERIZER_STATE flags")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetRasterizerStateCmdLocked(&tiny, state, [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetRasterizerStateCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestSetBlendStateHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetBlendStateCmdLocked;
+  using aerogpu::d3d10_11::f32_bits;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+  aerogpu_blend_state state{};
+  state.enable = 1;
+  state.src_factor = AEROGPU_BLEND_SRC_ALPHA;
+  state.dst_factor = AEROGPU_BLEND_INV_SRC_ALPHA;
+  state.blend_op = AEROGPU_BLEND_OP_SUBTRACT;
+  state.color_write_mask = 0xD;
+  state.reserved0[0] = 0xAA;
+  state.reserved0[1] = 0xBB;
+  state.reserved0[2] = 0xCC;
+  state.src_factor_alpha = AEROGPU_BLEND_ONE;
+  state.dst_factor_alpha = AEROGPU_BLEND_ZERO;
+  state.blend_op_alpha = AEROGPU_BLEND_OP_MAX;
+  state.blend_constant_rgba_f32[0] = f32_bits(0.25f);
+  state.blend_constant_rgba_f32[1] = f32_bits(0.5f);
+  state.blend_constant_rgba_f32[2] = f32_bits(0.75f);
+  state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
+  state.sample_mask = 0x12345678u;
+
+  const bool ok = EmitSetBlendStateCmdLocked(&dev, state, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetBlendStateCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetBlendStateCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_blend_state),
+             "SET_BLEND_STATE packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_blend_state*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_BLEND_STATE, "SET_BLEND_STATE opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "SET_BLEND_STATE hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->state.enable == state.enable, "SET_BLEND_STATE enable")) {
+    return false;
+  }
+  if (!Check(pkt->state.src_factor == state.src_factor, "SET_BLEND_STATE src_factor")) {
+    return false;
+  }
+  if (!Check(pkt->state.dst_factor == state.dst_factor, "SET_BLEND_STATE dst_factor")) {
+    return false;
+  }
+  if (!Check(pkt->state.blend_op == state.blend_op, "SET_BLEND_STATE blend_op")) {
+    return false;
+  }
+  if (!Check(pkt->state.color_write_mask == state.color_write_mask, "SET_BLEND_STATE color_write_mask")) {
+    return false;
+  }
+  if (!Check(pkt->state.reserved0[0] == 0 && pkt->state.reserved0[1] == 0 && pkt->state.reserved0[2] == 0,
+             "SET_BLEND_STATE reserved0 cleared")) {
+    return false;
+  }
+  if (!Check(pkt->state.src_factor_alpha == state.src_factor_alpha, "SET_BLEND_STATE src_factor_alpha")) {
+    return false;
+  }
+  if (!Check(pkt->state.dst_factor_alpha == state.dst_factor_alpha, "SET_BLEND_STATE dst_factor_alpha")) {
+    return false;
+  }
+  if (!Check(pkt->state.blend_op_alpha == state.blend_op_alpha, "SET_BLEND_STATE blend_op_alpha")) {
+    return false;
+  }
+  if (!Check(pkt->state.blend_constant_rgba_f32[0] == state.blend_constant_rgba_f32[0],
+             "SET_BLEND_STATE blend_constant[0]")) {
+    return false;
+  }
+  if (!Check(pkt->state.blend_constant_rgba_f32[1] == state.blend_constant_rgba_f32[1],
+             "SET_BLEND_STATE blend_constant[1]")) {
+    return false;
+  }
+  if (!Check(pkt->state.blend_constant_rgba_f32[2] == state.blend_constant_rgba_f32[2],
+             "SET_BLEND_STATE blend_constant[2]")) {
+    return false;
+  }
+  if (!Check(pkt->state.blend_constant_rgba_f32[3] == state.blend_constant_rgba_f32[3],
+             "SET_BLEND_STATE blend_constant[3]")) {
+    return false;
+  }
+  if (!Check(pkt->state.sample_mask == state.sample_mask, "SET_BLEND_STATE sample_mask")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetBlendStateCmdLocked(&tiny, state, [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetBlendStateCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestSetDepthStencilStateHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetDepthStencilStateCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+  DummyDevice dev{};
+  aerogpu_depth_stencil_state state{};
+  state.depth_enable = 0;
+  state.depth_write_enable = 1;
+  state.depth_func = AEROGPU_COMPARE_GREATER_EQUAL;
+  state.stencil_enable = 1;
+  state.stencil_read_mask = 0x12;
+  state.stencil_write_mask = 0x34;
+  state.reserved0[0] = 0xAA;
+  state.reserved0[1] = 0xBB;
+
+  const bool ok = EmitSetDepthStencilStateCmdLocked(&dev, state, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetDepthStencilStateCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetDepthStencilStateCmdLocked should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_depth_stencil_state),
+             "SET_DEPTH_STENCIL_STATE packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_depth_stencil_state*>(
+      dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_DEPTH_STENCIL_STATE, "SET_DEPTH_STENCIL_STATE opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == sizeof(*pkt), "SET_DEPTH_STENCIL_STATE hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->state.depth_enable == state.depth_enable, "SET_DEPTH_STENCIL_STATE depth_enable")) {
+    return false;
+  }
+  if (!Check(pkt->state.depth_write_enable == state.depth_write_enable, "SET_DEPTH_STENCIL_STATE depth_write_enable")) {
+    return false;
+  }
+  if (!Check(pkt->state.depth_func == state.depth_func, "SET_DEPTH_STENCIL_STATE depth_func")) {
+    return false;
+  }
+  if (!Check(pkt->state.stencil_enable == state.stencil_enable, "SET_DEPTH_STENCIL_STATE stencil_enable")) {
+    return false;
+  }
+  if (!Check(pkt->state.stencil_read_mask == state.stencil_read_mask, "SET_DEPTH_STENCIL_STATE stencil_read_mask")) {
+    return false;
+  }
+  if (!Check(pkt->state.stencil_write_mask == state.stencil_write_mask, "SET_DEPTH_STENCIL_STATE stencil_write_mask")) {
+    return false;
+  }
+  if (!Check(pkt->state.reserved0[0] == 0 && pkt->state.reserved0[1] == 0, "SET_DEPTH_STENCIL_STATE reserved0 cleared")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetDepthStencilStateCmdLocked(&tiny, state, [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetDepthStencilStateCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -10563,6 +10856,9 @@ int main() {
   ok &= TestSetIndexBufferHelperEncodesPacket();
   ok &= TestSetShaderResourceBuffersHelperEncodesPacket();
   ok &= TestSetUnorderedAccessBuffersHelperEncodesPacket();
+  ok &= TestSetRasterizerStateHelperEncodesPacket();
+  ok &= TestSetBlendStateHelperEncodesPacket();
+  ok &= TestSetDepthStencilStateHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
