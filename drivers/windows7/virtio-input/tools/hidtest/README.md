@@ -164,6 +164,9 @@ The JSON output is an object with:
 - `keyboard`, `mouse`, `tablet` (object or null; `tablet` is null unless `--tablet` is used)
 - `failures` (array)
 
+Each device object includes the selected HID interface metadata (index/path, VID/PID/Version, strings when available, report
+byte sizes/descriptor lengths, and desired access) plus the optional collection descriptor fields below.
+
 The JSON output includes additional fields for the optional collection descriptor check:
   - `collectionDescLen`, `collectionDescIoctl`, `collectionDescErr`
 

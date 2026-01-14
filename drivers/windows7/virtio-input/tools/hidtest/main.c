@@ -3443,6 +3443,7 @@ static int list_hid_devices_json(void)
 typedef struct SELFTEST_DEVICE_INFO {
     int found;
     DWORD index;
+    DWORD desired_access;
     WCHAR *path;
     HIDD_ATTRIBUTES attr;
     int attr_valid;
@@ -3456,6 +3457,12 @@ typedef struct SELFTEST_DEVICE_INFO {
     int collection_desc_valid;
     DWORD collection_desc_ioctl;
     DWORD collection_desc_err;
+    WCHAR manufacturer[256];
+    WCHAR product[256];
+    WCHAR serial[256];
+    int manufacturer_valid;
+    int product_valid;
+    int serial_valid;
 } SELFTEST_DEVICE_INFO;
 
 typedef struct SELFTEST_FAILURE {
@@ -3506,6 +3513,8 @@ static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info)
     }
 
     wprintf(L"{\"index\":%lu,", info->index);
+    wprintf(L"\"desiredAccess\":%lu,", (unsigned long)info->desired_access);
+    wprintf(L"\"writeAccess\":%ls,", ((info->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
     wprintf(L"\"path\":");
     json_print_string_w(info->path);
     wprintf(L",\"vid\":");
@@ -3517,6 +3526,30 @@ static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info)
     wprintf(L",\"pid\":");
     if (info->attr_valid) {
         wprintf(L"%u", (unsigned)info->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"ver\":");
+    if (info->attr_valid) {
+        wprintf(L"%u", (unsigned)info->attr.VersionNumber);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"manufacturer\":");
+    if (info->manufacturer_valid) {
+        json_print_string_w(info->manufacturer);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"product\":");
+    if (info->product_valid) {
+        json_print_string_w(info->product);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"serial\":");
+    if (info->serial_valid) {
+        json_print_string_w(info->serial);
     } else {
         wprintf(L"null");
     }
@@ -3636,6 +3669,7 @@ static int run_selftest_json(const OPTIONS *opt)
         DWORD required = 0;
         PSP_DEVICE_INTERFACE_DETAIL_DATA_W detail = NULL;
         HANDLE handle = INVALID_HANDLE_VALUE;
+        DWORD desired_access = 0;
         HIDD_ATTRIBUTES attr;
         HIDP_CAPS caps;
         int attr_valid = 0;
@@ -3652,6 +3686,12 @@ static int run_selftest_json(const OPTIONS *opt)
         int is_keyboard = 0;
         int is_mouse = 0;
         int is_tablet = 0;
+        WCHAR manufacturer[256];
+        WCHAR product[256];
+        WCHAR serial[256];
+        int manufacturer_valid = 0;
+        int product_valid = 0;
+        int serial_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -3678,7 +3718,7 @@ static int run_selftest_json(const OPTIONS *opt)
             continue;
         }
 
-        handle = open_hid_path(detail->DevicePath, NULL);
+        handle = open_hid_path(detail->DevicePath, &desired_access);
         if (handle == INVALID_HANDLE_VALUE) {
             // We cannot determine whether this is a virtio-input device without HidD_GetAttributes.
             free(detail);
@@ -3699,6 +3739,19 @@ static int run_selftest_json(const OPTIONS *opt)
         report_desc_valid = query_report_descriptor_length(handle, &report_desc_len);
         hid_report_desc_valid = query_hid_descriptor_report_length(handle, &hid_report_desc_len);
         collection_desc_valid = query_collection_descriptor_length(handle, &collection_desc_len, &collection_desc_err, &collection_desc_ioctl);
+
+        if (HidD_GetManufacturerString(handle, manufacturer, sizeof(manufacturer))) {
+            manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+            manufacturer_valid = 1;
+        }
+        if (HidD_GetProductString(handle, product, sizeof(product))) {
+            product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+            product_valid = 1;
+        }
+        if (HidD_GetSerialNumberString(handle, serial, sizeof(serial))) {
+            serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+            serial_valid = 1;
+        }
 
         CloseHandle(handle);
 
@@ -3734,6 +3787,7 @@ static int run_selftest_json(const OPTIONS *opt)
         if (is_virtio && is_keyboard && need_keyboard && !kbd.found) {
             kbd.found = 1;
             kbd.index = iface_index;
+            kbd.desired_access = desired_access;
             kbd.path = wcsdup_heap(detail->DevicePath);
             kbd.attr = attr;
             kbd.attr_valid = attr_valid;
@@ -3747,9 +3801,22 @@ static int run_selftest_json(const OPTIONS *opt)
             kbd.collection_desc_valid = collection_desc_valid;
             kbd.collection_desc_ioctl = collection_desc_ioctl;
             kbd.collection_desc_err = collection_desc_err;
+            if (manufacturer_valid) {
+                memcpy(kbd.manufacturer, manufacturer, sizeof(manufacturer));
+                kbd.manufacturer_valid = 1;
+            }
+            if (product_valid) {
+                memcpy(kbd.product, product, sizeof(product));
+                kbd.product_valid = 1;
+            }
+            if (serial_valid) {
+                memcpy(kbd.serial, serial, sizeof(serial));
+                kbd.serial_valid = 1;
+            }
         } else if (is_virtio && is_mouse && need_mouse && !mouse.found) {
             mouse.found = 1;
             mouse.index = iface_index;
+            mouse.desired_access = desired_access;
             mouse.path = wcsdup_heap(detail->DevicePath);
             mouse.attr = attr;
             mouse.attr_valid = attr_valid;
@@ -3763,9 +3830,22 @@ static int run_selftest_json(const OPTIONS *opt)
             mouse.collection_desc_valid = collection_desc_valid;
             mouse.collection_desc_ioctl = collection_desc_ioctl;
             mouse.collection_desc_err = collection_desc_err;
+            if (manufacturer_valid) {
+                memcpy(mouse.manufacturer, manufacturer, sizeof(manufacturer));
+                mouse.manufacturer_valid = 1;
+            }
+            if (product_valid) {
+                memcpy(mouse.product, product, sizeof(product));
+                mouse.product_valid = 1;
+            }
+            if (serial_valid) {
+                memcpy(mouse.serial, serial, sizeof(serial));
+                mouse.serial_valid = 1;
+            }
         } else if (is_virtio && is_tablet && need_tablet && !tablet.found) {
             tablet.found = 1;
             tablet.index = iface_index;
+            tablet.desired_access = desired_access;
             tablet.path = wcsdup_heap(detail->DevicePath);
             tablet.attr = attr;
             tablet.attr_valid = attr_valid;
@@ -3779,6 +3859,18 @@ static int run_selftest_json(const OPTIONS *opt)
             tablet.collection_desc_valid = collection_desc_valid;
             tablet.collection_desc_ioctl = collection_desc_ioctl;
             tablet.collection_desc_err = collection_desc_err;
+            if (manufacturer_valid) {
+                memcpy(tablet.manufacturer, manufacturer, sizeof(manufacturer));
+                tablet.manufacturer_valid = 1;
+            }
+            if (product_valid) {
+                memcpy(tablet.product, product, sizeof(product));
+                tablet.product_valid = 1;
+            }
+            if (serial_valid) {
+                memcpy(tablet.serial, serial, sizeof(serial));
+                tablet.serial_valid = 1;
+            }
         }
 
         free(detail);
