@@ -779,8 +779,16 @@ function Get-FileSha256Hex([string]$path) {
     }
 }
 
-function Read-TextFileWithEncodingDetection([string]$path) {
+function Read-TextFileWithEncodingDetectionEx([string]$path) {
     # PowerShell 2.0-compatible text reader with BOM + UTF-16 heuristic detection.
+    #
+    # Returns:
+    #   @{ text = <string>; encoding = <string> }
+    #
+    # encoding values:
+    # - utf-8-bom / utf-8
+    # - utf-16le-bom / utf-16le
+    # - utf-16be-bom / utf-16be
     #
     # Why: Some driver INFs ship as UTF-16LE/BE without BOM. Get-Content treats BOM-less
     # files as ANSI, which makes INF parsing miss AddService/HWIDs (and breaks media
@@ -799,23 +807,27 @@ function Read-TextFileWithEncodingDetection([string]$path) {
         throw
     }
 
-    if (-not $bytes) { return "" }
+    if (-not $bytes) { return @{ text = ""; encoding = "unknown" } }
 
     $enc = $null
     $offset = 0
+    $encName = "unknown"
 
     # BOM detection.
     if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
         $enc = [System.Text.Encoding]::UTF8
         $offset = 3
+        $encName = "utf-8-bom"
     } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
         # UTF-16LE
         $enc = [System.Text.Encoding]::Unicode
         $offset = 2
+        $encName = "utf-16le-bom"
     } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
         # UTF-16BE
         $enc = [System.Text.Encoding]::BigEndianUnicode
         $offset = 2
+        $encName = "utf-16be-bom"
     } else {
         # BOM-less heuristic for UTF-16.
         if (($bytes.Length % 2) -eq 0 -and $bytes.Length -ge 2) {
@@ -847,8 +859,10 @@ function Read-TextFileWithEncodingDetection([string]$path) {
                     # Otherwise default to LE.
                     if ($evenFrac -gt ($oddFrac + 0.15) -and $evenFrac -gt 0.40) {
                         $enc = [System.Text.Encoding]::BigEndianUnicode
+                        $encName = "utf-16be"
                     } else {
                         $enc = [System.Text.Encoding]::Unicode
+                        $encName = "utf-16le"
                     }
                 }
             }
@@ -859,6 +873,7 @@ function Read-TextFileWithEncodingDetection([string]$path) {
             # (ASCII is a subset of UTF-8; for legacy ANSI INFs this still preserves all ASCII tokens
             # like [Version]/AddService/HWIDs which are what we parse.)
             $enc = [System.Text.Encoding]::UTF8
+            $encName = "utf-8"
         }
     }
 
@@ -876,7 +891,12 @@ function Read-TextFileWithEncodingDetection([string]$path) {
         }
     } catch { }
 
-    return $text
+    return @{ text = $text; encoding = $encName }
+}
+
+function Read-TextFileWithEncodingDetection([string]$path) {
+    $r = Read-TextFileWithEncodingDetectionEx $path
+    return $r.text
 }
 
 function Strip-InfComment([string]$line) {
@@ -917,6 +937,7 @@ function Parse-InfMetadata([string]$path) {
     $out = @{
         inf_path = $path
         inf_file = $null
+        inf_encoding = $null
         provider = $null
         provider_raw = $null
         class = $null
@@ -932,7 +953,9 @@ function Parse-InfMetadata([string]$path) {
 
     $lines = $null
     try {
-        $raw = Read-TextFileWithEncodingDetection $path
+        $read = Read-TextFileWithEncodingDetectionEx $path
+        $raw = $read.text
+        $out.inf_encoding = $read.encoding
         # Split like Get-Content would (support CRLF/LF/CR).
         $lines = $raw -split "\r\n|\n|\r"
     } catch {
@@ -1203,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.8"
+         version = "2.5.9"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
