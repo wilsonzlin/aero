@@ -458,11 +458,11 @@ if ($VerifyVirtioSndWav) {
 }
 
 if ($RequireVirtioSndMsix -and (-not $WithVirtioSnd)) {
-  throw "-RequireVirtioSndMsix requires -WithVirtioSnd/-RequireVirtioSnd."
+  throw "-RequireVirtioSndMsix/-RequireSndMsix requires -WithVirtioSnd/-RequireVirtioSnd."
 }
 
 if ($WithSndBufferLimits -and (-not $WithVirtioSnd)) {
-  throw "-WithSndBufferLimits requires -WithVirtioSnd/-RequireVirtioSnd (the buffer limits stress test only runs when a virtio-snd device is attached)."
+  throw "-WithSndBufferLimits/-WithVirtioSndBufferLimits/-RequireVirtioSndBufferLimits/-EnableSndBufferLimits/-EnableVirtioSndBufferLimits requires -WithVirtioSnd/-RequireVirtioSnd (the buffer limits stress test only runs when a virtio-snd device is attached)."
 }
 
 if ($VirtioTransitional -and $WithVirtioSnd) {
@@ -493,7 +493,7 @@ if ($VirtioDisableMsix -and (($VirtioMsixVectors -gt 0) -or ($VirtioNetVectors -
   throw "-VirtioDisableMsix is mutually exclusive with -VirtioMsixVectors/-Virtio*Vectors (INTx-only mode disables MSI-X by forcing vectors=0)."
 }
 if ($VirtioDisableMsix -and ($RequireVirtioNetMsix -or $RequireVirtioBlkMsix -or $RequireVirtioSndMsix -or $RequireVirtioInputMsix)) {
-  throw "-VirtioDisableMsix is incompatible with -RequireVirtio*Msix (MSI-X is disabled)."
+  throw "-VirtioDisableMsix is incompatible with -RequireVirtio*Msix (aliases: -RequireNetMsix/-RequireBlkMsix/-RequireSndMsix/-RequireInputMsix) (MSI-X is disabled)."
 }
 
 if ($VirtioSndVectors -gt 0 -and (-not $WithVirtioSnd)) {
@@ -6688,10 +6688,10 @@ if ($DryRun) {
 
   if ($needBlkResize) {
     if ($VirtioTransitional) {
-      throw "-WithBlkResize is incompatible with -VirtioTransitional (blk resize uses the contract-v1 drive layout with id=drive0)"
+      throw "-WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize is incompatible with -VirtioTransitional (blk resize uses the contract-v1 drive layout with id=drive0)"
     }
     if ($BlkResizeDeltaMiB -le 0) {
-      throw "-BlkResizeDeltaMiB must be a positive integer when -WithBlkResize is enabled"
+      throw "-BlkResizeDeltaMiB must be a positive integer when -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize is enabled"
     }
   }
 
@@ -6711,8 +6711,8 @@ if ($DryRun) {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or [bool]$QemuPreflightPci) {
-        throw "Failed to allocate QMP port required for QMP-dependent flags (input injection / net link flap / blk resize / QemuPreflightPci): $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci) {
+        throw "Failed to allocate QMP port required for QMP-dependent flags (input injection / net link flap / blk resize / msix check / QemuPreflightPci): $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -6925,10 +6925,10 @@ try {
 
   if ($needBlkResize) {
     if ($VirtioTransitional) {
-      throw "-WithBlkResize is incompatible with -VirtioTransitional (blk resize uses the contract-v1 drive layout with id=drive0)"
+      throw "-WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize is incompatible with -VirtioTransitional (blk resize uses the contract-v1 drive layout with id=drive0)"
     }
     if ($BlkResizeDeltaMiB -le 0) {
-      throw "-BlkResizeDeltaMiB must be a positive integer when -WithBlkResize is enabled"
+      throw "-BlkResizeDeltaMiB must be a positive integer when -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize is enabled"
     }
   }
   $requestedVirtioNetVectors = $(if ($VirtioNetVectors -gt 0) { $VirtioNetVectors } else { $VirtioMsixVectors })
@@ -6965,8 +6965,8 @@ try {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or [bool]$QemuPreflightPci) {
-        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents, -WithNetLinkFlap, -WithBlkResize) or -QemuPreflightPci/-QmpPreflightPci: $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci) {
+        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-RequireVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents, -WithNetLinkFlap, -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize, -RequireNetMsix/-RequireVirtioNetMsix, -RequireBlkMsix/-RequireVirtioBlkMsix, -RequireSndMsix/-RequireVirtioSndMsix) or -QemuPreflightPci/-QmpPreflightPci: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -7903,7 +7903,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_BLK_RESIZE" {
-      Write-Host "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize marker (READY/SKIP/PASS/FAIL) after virtio-blk completed while -WithBlkResize was enabled (guest selftest too old or missing --test-blk-resize)"
+      Write-Host "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize marker (READY/SKIP/PASS/FAIL) after virtio-blk completed while -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize was enabled (guest selftest too old or missing --test-blk-resize)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -7911,7 +7911,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_BLK_RESIZE_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but -WithBlkResize was enabled (provision the guest with --test-blk-resize)"
+      Write-Host "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize was enabled (provision the guest with --test-blk-resize)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -7941,7 +7941,7 @@ try {
       if (-not [string]::IsNullOrEmpty($oldBytes)) { $details += " old_bytes=$oldBytes" }
       if (-not [string]::IsNullOrEmpty($lastBytes)) { $details += " last_bytes=$lastBytes" }
       $details += ")"
-      Write-Host "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while -WithBlkResize was enabled $details"
+      Write-Host "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -7957,7 +7957,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_BLK_RESET" {
-      Write-Host "FAIL: MISSING_VIRTIO_BLK_RESET: did not observe virtio-blk-reset PASS marker while -WithBlkReset was enabled (guest selftest too old or missing --test-blk-reset)"
+      Write-Host "FAIL: MISSING_VIRTIO_BLK_RESET: did not observe virtio-blk-reset PASS marker while -WithBlkReset/-WithVirtioBlkReset/-RequireVirtioBlkReset/-EnableVirtioBlkReset was enabled (guest selftest too old or missing --test-blk-reset)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -7975,9 +7975,9 @@ try {
         elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
       }
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped (flag_not_set) but -WithBlkReset was enabled (provision the guest with --test-blk-reset)"
+        Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped (flag_not_set) but -WithBlkReset/-WithVirtioBlkReset/-RequireVirtioBlkReset/-EnableVirtioBlkReset was enabled (provision the guest with --test-blk-reset)"
       } else {
-        Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ($reason) but -WithBlkReset was enabled"
+        Write-Host "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ($reason) but -WithBlkReset/-WithVirtioBlkReset/-RequireVirtioBlkReset/-EnableVirtioBlkReset was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
@@ -7997,7 +7997,7 @@ try {
         elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
         if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
       }
-      Write-Host "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while -WithBlkReset was enabled (reason=$reason err=$err)"
+      Write-Host "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while -WithBlkReset/-WithVirtioBlkReset/-RequireVirtioBlkReset/-EnableVirtioBlkReset was enabled (reason=$reason err=$err)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8060,7 +8060,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_MSIX" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while -RequireVirtioInputMsix was enabled (guest selftest too old?)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while -RequireVirtioInputMsix/-RequireInputMsix was enabled (guest selftest too old?)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8125,7 +8125,7 @@ try {
     "VIRTIO_INPUT_MSIX_REQUIRED" {
       $reason = ""
       try { $reason = [string]$result.MsixReason } catch { }
-      if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-input-msix marker did not report mode=msix while -RequireVirtioInputMsix was enabled" }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-input-msix marker did not report mode=msix while -RequireVirtioInputMsix/-RequireInputMsix was enabled" }
       Write-Host "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: $reason"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
@@ -8679,7 +8679,7 @@ try {
       if (-not [string]::IsNullOrEmpty($hr)) { $detailsParts += "hr=$hr" }
       $details = ""
       if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
-      Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: selftest RESULT=PASS but virtio-snd-buffer-limits test reported FAIL$details"
+      Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: selftest RESULT=PASS but virtio-snd-buffer-limits test reported FAIL$details while -WithSndBufferLimits/-WithVirtioSndBufferLimits/-RequireVirtioSndBufferLimits/-EnableSndBufferLimits/-EnableVirtioSndBufferLimits was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8687,7 +8687,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_SND_BUFFER_LIMITS" {
-      Write-Host "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: selftest RESULT=PASS but did not emit virtio-snd-buffer-limits test marker (provision the guest with --test-snd-buffer-limits or set env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
+      Write-Host "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: selftest RESULT=PASS but did not emit virtio-snd-buffer-limits test marker while -WithSndBufferLimits/-WithVirtioSndBufferLimits/-RequireVirtioSndBufferLimits/-EnableSndBufferLimits/-EnableVirtioSndBufferLimits was enabled (provision the guest with --test-snd-buffer-limits or set env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9094,9 +9094,9 @@ try {
       }
 
       if ($reason -eq "flag_not_set") {
-        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but -WithSndBufferLimits was enabled (provision the guest with --test-snd-buffer-limits or set env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
+        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but -WithSndBufferLimits/-WithVirtioSndBufferLimits/-RequireVirtioSndBufferLimits/-EnableSndBufferLimits/-EnableVirtioSndBufferLimits was enabled (provision the guest with --test-snd-buffer-limits or set env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
       } else {
-        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ($reason) but -WithSndBufferLimits was enabled"
+        Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ($reason) but -WithSndBufferLimits/-WithVirtioSndBufferLimits/-RequireVirtioSndBufferLimits/-EnableSndBufferLimits/-EnableVirtioSndBufferLimits was enabled"
       }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"

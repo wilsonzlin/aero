@@ -2339,7 +2339,7 @@ def _virtio_snd_buffer_limits_fail_failure_message(tail: bytes, *, marker_line: 
 
     return (
         "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: virtio-snd-buffer-limits test reported FAIL while "
-        "--with-snd-buffer-limits was enabled"
+        "--with-snd-buffer-limits/--with-virtio-snd-buffer-limits/--require-virtio-snd-buffer-limits/--enable-snd-buffer-limits/--enable-virtio-snd-buffer-limits was enabled"
         + details
     )
 
@@ -2508,16 +2508,16 @@ def _virtio_snd_buffer_limits_skip_failure_message(tail: bytes, *, marker_line: 
     if reason == "flag_not_set":
         return (
             "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but "
-            "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
+            "--with-snd-buffer-limits/--with-virtio-snd-buffer-limits/--require-virtio-snd-buffer-limits/--enable-snd-buffer-limits/--enable-virtio-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
             "AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
         )
 
     if reason:
         return (
             f"FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ({reason}) "
-            "but --with-snd-buffer-limits was enabled"
+            "but --with-snd-buffer-limits/--with-virtio-snd-buffer-limits/--require-virtio-snd-buffer-limits/--enable-snd-buffer-limits/--enable-virtio-snd-buffer-limits was enabled"
         )
-    return "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped but --with-snd-buffer-limits was enabled"
+    return "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped but --with-snd-buffer-limits/--with-virtio-snd-buffer-limits/--require-virtio-snd-buffer-limits/--enable-snd-buffer-limits/--enable-virtio-snd-buffer-limits was enabled"
 
 
 def _virtio_snd_buffer_limits_required_failure_message(
@@ -2544,7 +2544,7 @@ def _virtio_snd_buffer_limits_required_failure_message(
         return _virtio_snd_buffer_limits_skip_failure_message(tail, marker_line=marker_line)
     return (
         "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: did not observe virtio-snd-buffer-limits PASS marker while "
-        "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
+        "--with-snd-buffer-limits/--with-virtio-snd-buffer-limits/--require-virtio-snd-buffer-limits/--enable-snd-buffer-limits/--enable-virtio-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
         "AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
     )
 
@@ -2755,13 +2755,13 @@ def _virtio_blk_reset_skip_failure_message(tail: bytes, *, marker_line: Optional
             if reason == "flag_not_set":
                 return (
                     "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped (flag_not_set) but "
-                    "--with-blk-reset was enabled (provision the guest with --test-blk-reset)"
+                    "--with-blk-reset/--with-virtio-blk-reset/--require-virtio-blk-reset/--enable-virtio-blk-reset was enabled (provision the guest with --test-blk-reset)"
                 )
             return (
                 f"FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped ({reason}) "
-                "but --with-blk-reset was enabled"
+                "but --with-blk-reset/--with-virtio-blk-reset/--require-virtio-blk-reset/--enable-virtio-blk-reset was enabled"
             )
-    return "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped but --with-blk-reset was enabled"
+    return "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped but --with-blk-reset/--with-virtio-blk-reset/--require-virtio-blk-reset/--enable-virtio-blk-reset was enabled"
 
 
 def _virtio_blk_reset_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
@@ -2798,17 +2798,17 @@ def _virtio_blk_reset_fail_failure_message(tail: bytes, *, marker_line: Optional
             details = " (" + " ".join(parts) + ")"
         return (
             "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while "
-            f"--with-blk-reset was enabled{details}"
+            f"--with-blk-reset/--with-virtio-blk-reset/--require-virtio-blk-reset/--enable-virtio-blk-reset was enabled{details}"
         )
     return (
         "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while "
-        "--with-blk-reset was enabled"
+        "--with-blk-reset/--with-virtio-blk-reset/--require-virtio-blk-reset/--enable-virtio-blk-reset was enabled"
     )
 
 
 def _virtio_blk_reset_missing_failure_message() -> str:
     return (
-        "FAIL: MISSING_VIRTIO_BLK_RESET: did not observe virtio-blk-reset PASS marker while --with-blk-reset was enabled "
+        "FAIL: MISSING_VIRTIO_BLK_RESET: did not observe virtio-blk-reset PASS marker while --with-blk-reset/--with-virtio-blk-reset/--require-virtio-blk-reset/--enable-virtio-blk-reset was enabled "
         "(guest selftest too old or missing --test-blk-reset)"
     )
 
@@ -3441,13 +3441,13 @@ def _virtio_blk_resize_skip_failure_message(tail: bytes, *, marker_line: Optiona
             if reason == "flag_not_set":
                 return (
                     "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
-                    "--with-blk-resize was enabled (provision the guest with --test-blk-resize)"
+                    "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled (provision the guest with --test-blk-resize)"
                 )
             return (
                 f"FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped ({reason}) but "
-                "--with-blk-resize was enabled"
+                "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled"
             )
-    return "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped but --with-blk-resize was enabled"
+    return "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped but --with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled"
 
 
 def _virtio_blk_resize_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
@@ -3487,11 +3487,11 @@ def _virtio_blk_resize_fail_failure_message(tail: bytes, *, marker_line: Optiona
             details = " (" + " ".join(parts) + ")"
         return (
             "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while "
-            f"--with-blk-resize was enabled{details}"
+            f"--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled{details}"
         )
     return (
         "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while "
-        "--with-blk-resize was enabled"
+        "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled"
     )
 
 
@@ -4773,7 +4773,8 @@ def main() -> int:
     if not args.enable_virtio_snd:
         if args.with_snd_buffer_limits:
             parser.error(
-                "--with-snd-buffer-limits requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+                "--with-snd-buffer-limits requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd "
+                "(aliases: --with-virtio-snd-buffer-limits/--require-virtio-snd-buffer-limits/--enable-snd-buffer-limits/--enable-virtio-snd-buffer-limits)"
             )
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
             parser.error(
@@ -4823,11 +4824,14 @@ def main() -> int:
     if need_blk_resize:
         if args.virtio_transitional:
             parser.error(
-                "--with-blk-resize is incompatible with --virtio-transitional "
+                "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize is incompatible with --virtio-transitional "
                 "(blk resize uses the contract-v1 drive layout with id=drive0)"
             )
         if int(args.blk_resize_delta_mib) <= 0:
-            parser.error("--blk-resize-delta-mib must be > 0 when --with-blk-resize is enabled")
+            parser.error(
+                "--blk-resize-delta-mib must be > 0 when "
+                "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize is enabled"
+            )
 
     if need_input_events and not args.dry_run:
         # In default (contract-v1) mode we already validate virtio-keyboard-pci/virtio-mouse-pci via
@@ -5113,7 +5117,9 @@ def main() -> int:
                     if need_net_link_flap:
                         req_flags.append("--with-net-link-flap")
                     if need_blk_resize:
-                        req_flags.append("--with-blk-resize")
+                        req_flags.append(
+                            "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize"
+                        )
                     if need_msix_check:
                         req_flags.append("--require-virtio-*-msix")
                     if bool(args.qemu_preflight_pci):
@@ -5155,7 +5161,9 @@ def main() -> int:
         if need_net_link_flap:
             req_flags.append("--with-net-link-flap")
         if need_blk_resize:
-            req_flags.append("--with-blk-resize")
+            req_flags.append(
+                "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize"
+            )
         if need_msix_check:
             req_flags.append("--require-virtio-*-msix")
         if bool(args.qemu_preflight_pci):
@@ -7002,7 +7010,7 @@ def main() -> int:
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_BLK_RESIZE: selftest RESULT=PASS but did not emit virtio-blk-resize test marker "
-                                            "while --with-blk-resize was enabled",
+                                            "while --with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -7638,7 +7646,7 @@ def main() -> int:
                                     )
                                 else:
                                     print(
-                                        "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize was enabled",
+                                        "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -8122,7 +8130,7 @@ def main() -> int:
                 ):
                     print(
                         "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize marker after virtio-blk completed while "
-                        "--with-blk-resize was enabled (guest selftest too old or missing --test-blk-resize)",
+                        "--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled (guest selftest too old or missing --test-blk-resize)",
                         file=sys.stderr,
                     )
                     _print_tail(serial_log)
@@ -9315,7 +9323,7 @@ def main() -> int:
                                         else:
                                             print(
                                                 "FAIL: MISSING_VIRTIO_BLK_RESIZE: selftest RESULT=PASS but did not emit virtio-blk-resize test marker "
-                                                "while --with-blk-resize was enabled",
+                                                "while --with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled",
                                                 file=sys.stderr,
                                             )
                                         _print_tail(serial_log)
@@ -9761,7 +9769,7 @@ def main() -> int:
                                         )
                                     else:
                                         print(
-                                            "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize was enabled",
+                                            "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
