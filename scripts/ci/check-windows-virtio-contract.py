@@ -458,25 +458,138 @@ def _parse_pci_device_profile(
     )
 
 
-def _parse_rust_u8_array(text: str, const_name: str) -> list[int]:
-    # Matches:
-    #   pub const VIRTIO_CAP_COMMON: [u8; 14] = [
-    #       16, 1, ...
-    #   ];
-    pattern = re.compile(
-        rf"pub const {re.escape(const_name)}:\s*\[u8;\s*\d+\]\s*=\s*\[(?P<body>.*?)\];",
+def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int]) -> list[int]:
+    """
+    Parse a `pub const NAME: [u8; N] = ...;` array initializer from profile.rs.
+
+    Supports two forms used in `crates/devices/src/pci/profile.rs`:
+
+    1) Direct array literal:
+
+        pub const VIRTIO_CAP_COMMON: [u8; 14] = [
+            16, 1, ...
+        ];
+
+    2) Const block with `to_le_bytes()` helpers:
+
+        pub const VIRTIO_CAP_COMMON: [u8; 14] = {
+            let off = VIRTIO_COMMON_CFG_BAR0_OFFSET.to_le_bytes();
+            [
+                16, 1, off[0], ...
+            ]
+        };
+
+    This is intentionally a small, constrained parser for CI guardrails (not a general Rust parser).
+    """
+
+    # ---------------------------------------------------------------------
+    # 1) Direct array literal form.
+    # ---------------------------------------------------------------------
+    direct_re = re.compile(
+        rf"pub const {re.escape(const_name)}:\s*\[u8;\s*\d+\]\s*=\s*\[(?P<body>.*?)\]\s*;",
         re.DOTALL,
     )
-    m = pattern.search(text)
-    if not m:
+    m = direct_re.search(text)
+    if m:
+        body = m.group("body")
+        values: list[int] = []
+        for token in body.replace("\n", " ").split(","):
+            tok = token.strip()
+            if not tok:
+                continue
+            if tok in constants:
+                val = constants[tok]
+            else:
+                val = int(tok.replace("_", ""), 0)
+            if not (0 <= val <= 0xFF):
+                raise ValueError(
+                    f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: u8 value out of range: {tok!r}"
+                )
+            values.append(val)
+        return values
+
+    # ---------------------------------------------------------------------
+    # 2) Const block form.
+    # ---------------------------------------------------------------------
+    try:
+        block = _extract_rust_block(
+            text, needle=f"pub const {const_name}:", ctx=DEFAULT_PROFILE_RS_PATH.as_posix()
+        )
+    except ValueError:
         raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: missing u8 array const {const_name}")
-    body = m.group("body")
+
+    # Parse `let <var> = <CONST>.to_le_bytes();` helpers.
+    locals_bytes: dict[str, list[int]] = {}
+    let_re = re.compile(
+        r"^\s*let\s+(?P<var>[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?P<expr>[A-Z0-9_]+)\.to_le_bytes\(\)\s*;\s*$",
+        re.M,
+    )
+    for m in let_re.finditer(block):
+        var = m.group("var")
+        expr = m.group("expr")
+        val = _parse_rust_int(expr, constants, ctx=f"{const_name}.{var}")
+        try:
+            locals_bytes[var] = list(int(val).to_bytes(4, byteorder="little", signed=False))
+        except OverflowError:
+            raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: {expr} does not fit in u32")
+
+    # Find the array literal at the end of the const block.
+    m_arr = re.search(r"(?m)^\s*\[", block)
+    if not m_arr:
+        raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: missing array literal inside const block")
+    start = block.find("[", m_arr.start(), m_arr.end())
+    if start < 0:
+        raise ValueError(
+            f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: unable to locate '[' for array literal inside const block"
+        )
+
+    # Extract the outer `[...]`, allowing nested `off[0]` indexing.
+    depth = 0
+    end: Optional[int] = None
+    for i in range(start, len(block)):
+        ch = block[i]
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end is None:
+        raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: unterminated array literal in const block")
+
+    body = block[start + 1 : end]
     values: list[int] = []
+
+    def eval_u8(expr: str) -> int:
+        e = expr.strip()
+        if not e:
+            raise ValueError("empty")
+        m_idx = re.fullmatch(r"(?P<var>[a-zA-Z_][a-zA-Z0-9_]*)\[(?P<idx>\d+)\]", e)
+        if m_idx:
+            var = m_idx.group("var")
+            idx = int(m_idx.group("idx"), 10)
+            if var not in locals_bytes:
+                raise ValueError(f"unknown byte-array var {var!r}")
+            arr = locals_bytes[var]
+            if idx < 0 or idx >= len(arr):
+                raise ValueError(f"{var}[{idx}] out of range")
+            return arr[idx]
+        if e in constants:
+            return constants[e]
+        return int(e.replace("_", ""), 0)
+
     for token in body.replace("\n", " ").split(","):
         tok = token.strip()
         if not tok:
             continue
-        values.append(int(tok, 0))
+        try:
+            val = eval_u8(tok)
+        except Exception as e:
+            raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: unsupported u8 expr {tok!r}: {e}")
+        if not (0 <= val <= 0xFF):
+            raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: u8 value out of range: {tok!r}")
+        values.append(val)
     return values
 
 
@@ -531,15 +644,15 @@ def _check_profiles_against_contract(
 
     # Validate the shared virtio BAR + caps match the contract v1 fixed layout.
     virtio_bars_re = re.compile(
-        r"pub const VIRTIO_BARS:\s*\[PciBarProfile;\s*\d+\]\s*=\s*\[\s*PciBarProfile::mem(?P<bits>32|64)\(\s*(?P<index>\d+)\s*,\s*(?P<size>0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<pref>true|false)\s*\)\s*\];"
+        r"pub const VIRTIO_BARS:\s*\[PciBarProfile;\s*\d+\]\s*=\s*\[\s*PciBarProfile::mem(?P<bits>32|64)\(\s*(?P<index>[A-Z0-9_]+|0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<size>[A-Z0-9_]+|0x[0-9a-fA-F_]+|\d+)\s*,\s*(?P<pref>true|false)\s*\)\s*\]\s*;"
     )
     m = virtio_bars_re.search(text)
     if not m:
         errors.append(f"profile.rs: missing/unsupported VIRTIO_BARS definition in {profile_path.as_posix()}")
     else:
         bar_bits = int(m.group("bits"))
-        bar_index = int(m.group("index"))
-        bar_size = int(m.group("size").replace("_", ""), 0)
+        bar_index = _parse_rust_int(m.group("index"), constants, ctx="VIRTIO_BARS.index")
+        bar_size = _parse_rust_int(m.group("size"), constants, ctx="VIRTIO_BARS.size")
         prefetch = m.group("pref") == "true"
         if bar_bits != 64:
             errors.append(
@@ -552,10 +665,18 @@ def _check_profiles_against_contract(
 
     try:
         caps = {
-            "COMMON": _decode_virtio_vendor_cap(_parse_rust_u8_array(text, "VIRTIO_CAP_COMMON"), "VIRTIO_CAP_COMMON"),
-            "NOTIFY": _decode_virtio_vendor_cap(_parse_rust_u8_array(text, "VIRTIO_CAP_NOTIFY"), "VIRTIO_CAP_NOTIFY"),
-            "ISR": _decode_virtio_vendor_cap(_parse_rust_u8_array(text, "VIRTIO_CAP_ISR"), "VIRTIO_CAP_ISR"),
-            "DEVICE": _decode_virtio_vendor_cap(_parse_rust_u8_array(text, "VIRTIO_CAP_DEVICE"), "VIRTIO_CAP_DEVICE"),
+            "COMMON": _decode_virtio_vendor_cap(
+                _parse_rust_u8_array(text, "VIRTIO_CAP_COMMON", constants=constants), "VIRTIO_CAP_COMMON"
+            ),
+            "NOTIFY": _decode_virtio_vendor_cap(
+                _parse_rust_u8_array(text, "VIRTIO_CAP_NOTIFY", constants=constants), "VIRTIO_CAP_NOTIFY"
+            ),
+            "ISR": _decode_virtio_vendor_cap(
+                _parse_rust_u8_array(text, "VIRTIO_CAP_ISR", constants=constants), "VIRTIO_CAP_ISR"
+            ),
+            "DEVICE": _decode_virtio_vendor_cap(
+                _parse_rust_u8_array(text, "VIRTIO_CAP_DEVICE", constants=constants), "VIRTIO_CAP_DEVICE"
+            ),
         }
     except ValueError as e:
         errors.append(f"profile.rs: {e}")
