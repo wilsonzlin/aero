@@ -1238,7 +1238,11 @@ describe("hid/WebHidBroker", () => {
 
       first.resolve(undefined);
       await new Promise((r) => setTimeout(r, 0));
-      expect(device.sendReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+      expect(device.sendReport.mock.calls.length).toBe(limit + 1);
+      // Drop policy is deterministic: drop newest when the queue is full, so the
+      // earliest queued reports should be the ones delivered after the in-flight
+      // send completes.
+      expect(device.sendReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
 
       broker.destroy();
     } finally {
@@ -1273,7 +1277,8 @@ describe("hid/WebHidBroker", () => {
 
       first.resolve(undefined);
       await new Promise((r) => setTimeout(r, 0));
-      expect(device.sendFeatureReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+      expect(device.sendFeatureReport.mock.calls.length).toBe(limit + 1);
+      expect(device.sendFeatureReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
 
       broker.destroy();
     } finally {
@@ -1315,7 +1320,8 @@ describe("hid/WebHidBroker", () => {
 
       first.resolve(undefined);
       await new Promise((r) => setTimeout(r, 20));
-      expect(device.sendReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+      expect(device.sendReport.mock.calls.length).toBe(limit + 1);
+      expect(device.sendReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
 
       broker.destroy();
     } finally {
@@ -1357,7 +1363,8 @@ describe("hid/WebHidBroker", () => {
 
       first.resolve(undefined);
       await new Promise((r) => setTimeout(r, 20));
-      expect(device.sendFeatureReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+      expect(device.sendFeatureReport.mock.calls.length).toBe(limit + 1);
+      expect(device.sendFeatureReport.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4]);
 
       broker.destroy();
     } finally {
