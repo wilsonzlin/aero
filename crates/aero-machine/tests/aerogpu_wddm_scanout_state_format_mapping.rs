@@ -1,3 +1,5 @@
+#![cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+
 use std::sync::Arc;
 
 use aero_devices::pci::profile::AEROGPU_BAR0_INDEX;
