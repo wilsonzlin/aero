@@ -149,7 +149,7 @@ The executor currently uses **two distinct** compute prepass implementations for
     - expanded vertices (`out_vertices`),
     - packed indirect+counter state (`out_state`, sized by `GEOMETRY_PREPASS_PACKED_STATE_SIZE_BYTES`), and
     - small uniform parameters.
-  - `@group(3)` provides the GS stage resource table (`cb#/t#/s#`) and (optionally) internal IA vertex pulling
+  - `@group(3)` provides the GS stage resource table (`cb#/t#/s#/u#`) and (optionally) internal IA vertex pulling
     bindings.
 - **Used for:**
   - adjacency/patchlist scaffolding (when no translated-GS prepass is selected),
@@ -164,9 +164,9 @@ The executor currently uses **two distinct** compute prepass implementations for
 - **When it runs:** for draws using one of the supported IA input topologies (`PointList`, `LineList`,
   `TriangleList`, `LineListAdj`, `TriangleListAdj`) where the bound GS DXBC successfully translated at
   `CREATE_SHADER_DXBC` time and its declared input primitive matches the IA topology.
-- **Pass sequence (translated-GS prepass paths today):**
-  1. **Input fill:** a compute pass populates the packed `gs_inputs` payload from **VS outputs**, using
-     vertex pulling to load IA data and a small VS-as-compute translator (**currently `mov`/`add` only**)
+ - **Pass sequence (translated-GS prepass paths today):**
+   1. **Input fill:** a compute pass populates the packed `gs_inputs` payload from **VS outputs**, using
+      vertex pulling to load IA data and a small VS-as-compute translator (**currently `mov`/`add` only**)
       to execute the guest VS instruction stream for the subset needed by GS tests.
       - If VS-as-compute translation fails, the executor only falls back to filling `gs_inputs` from the
         IA stream when the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
@@ -190,7 +190,7 @@ The executor currently uses **two distinct** compute prepass implementations for
 - **Bindings (translated GS prepass WGSL):**
   - `@group(0)` contains prepass IO (expanded vertices/indices, counters+indirect args, params, and
     `gs_inputs`).
-  - `@group(3)` contains referenced GS stage resources (`cb#`, `t#`, `s#`) following the shared binding
+  - `@group(3)` contains referenced GS stage resources (`cb#`, `t#`, `s#`, `u#`) following the shared binding
     model in `binding_model.rs`.
   - The IA vertex pulling bindings (`@group(3) @binding >= BINDING_BASE_INTERNAL`) are only required by
     the **input fill** pass, not by the translated GS itself.
