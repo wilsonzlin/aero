@@ -134,6 +134,7 @@ fn to_shift_binop(op: ShiftOp) -> BinOp {
 }
 
 #[must_use]
+#[track_caller]
 pub fn translate_block(block: &BasicBlock) -> IrBlock {
     let mut b = IrBuilder::new(block.entry_rip);
     let stack_width = match block.bitness {
@@ -403,4 +404,28 @@ pub fn translate_block(block: &BasicBlock) -> IrBlock {
         panic!("invalid IR generated: {e}\n{}", block.to_text());
     }
     block
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    #[test]
+    fn translate_block_panics_at_call_site_on_invalid_bitness() {
+        let bb = BasicBlock {
+            entry_rip: 0,
+            bitness: 0,
+            insts: Vec::new(),
+            end_kind: BlockEndKind::Limit { next_rip: 0 },
+        };
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = translate_block(&bb);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
 }
