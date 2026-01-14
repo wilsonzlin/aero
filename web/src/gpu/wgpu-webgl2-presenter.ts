@@ -130,7 +130,24 @@ export class WgpuWebGl2Presenter implements Presenter {
       if (before !== null && after !== null) return after > before;
       return true;
     } catch (err) {
-      throw new PresenterError('wgpu_present_failed', 'Failed to present frame via wgpu WebGL2 presenter', err);
+      const message = err instanceof Error ? err.message : err != null ? String(err) : '';
+      const suffix = message ? `: ${message}` : '';
+      const cause =
+        err instanceof Error
+          ? { name: err.name, message: err.message, stack: err.stack }
+          : err && typeof (err as any).message === 'string'
+            ? {
+                name:
+                  typeof (err as any).name === 'string'
+                    ? (err as any).name
+                    : typeof (err as any).constructor?.name === 'string'
+                      ? (err as any).constructor.name
+                      : 'Error',
+                message: (err as any).message,
+                stack: typeof (err as any).stack === 'string' ? (err as any).stack : undefined,
+              }
+            : err;
+      throw new PresenterError('wgpu_present_failed', `Failed to present frame via wgpu WebGL2 presenter${suffix}`, cause);
     }
   }
 
@@ -189,7 +206,28 @@ export class WgpuWebGl2Presenter implements Presenter {
       if (before !== null && after !== null) return after > before;
       return true;
     } catch (err) {
-      throw new PresenterError('wgpu_present_failed', 'Failed to present dirty rects via wgpu WebGL2 presenter', err);
+      const message = err instanceof Error ? err.message : err != null ? String(err) : '';
+      const suffix = message ? `: ${message}` : '';
+      const cause =
+        err instanceof Error
+          ? { name: err.name, message: err.message, stack: err.stack }
+          : err && typeof (err as any).message === 'string'
+            ? {
+                name:
+                  typeof (err as any).name === 'string'
+                    ? (err as any).name
+                    : typeof (err as any).constructor?.name === 'string'
+                      ? (err as any).constructor.name
+                      : 'Error',
+                message: (err as any).message,
+                stack: typeof (err as any).stack === 'string' ? (err as any).stack : undefined,
+              }
+            : err;
+      throw new PresenterError(
+        'wgpu_present_failed',
+        `Failed to present dirty rects via wgpu WebGL2 presenter${suffix}`,
+        cause,
+      );
     }
   }
 

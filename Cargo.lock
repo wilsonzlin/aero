@@ -290,6 +290,7 @@ dependencies = [
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-test",
+ "web-time",
  "wgpu",
  "xxhash-rust",
 ]

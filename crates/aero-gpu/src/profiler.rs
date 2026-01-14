@@ -1,6 +1,13 @@
 use crate::upload::GpuCapabilities;
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant` is not supported on `wasm32-unknown-unknown` and will panic when called.
+// Use `web_time::Instant` for wasm builds so the wgpu-WebGL2 presenter can run in workers.
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 const QUERIES_PER_FRAME: u64 = 5;
 const QUERY_SIZE_BYTES: u64 = 8;

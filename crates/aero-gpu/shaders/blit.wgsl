@@ -23,7 +23,11 @@ struct VsOut {
 
 struct BlitParams {
     // Bitmask of FLAG_* values below.
-    flags: u32,
+    //
+    // Uniform buffers are aligned/validated in 16-byte units on downlevel backends
+    // (e.g. wgpu's WebGL2 backend). Store flags in the first lane of a 16B vector
+    // to satisfy those layout rules while keeping the host-side struct as 4x u32.
+    flags: vec4<u32>,
 }
 
 const FLAG_APPLY_SRGB_ENCODE: u32 = 1u;
@@ -88,26 +92,26 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
 
 @fragment
 fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let flags = params.flags.x;
     var uv = input.uv;
-    if ((params.flags & FLAG_FLIP_Y) != 0u) {
+    if ((flags & FLAG_FLIP_Y) != 0u) {
         uv.y = 1.0 - uv.y;
     }
 
     var color = textureSample(input_tex, input_sampler, uv);
 
     // Alpha policy.
-    if ((params.flags & FLAG_PREMULTIPLY_ALPHA) != 0u) {
+    if ((flags & FLAG_PREMULTIPLY_ALPHA) != 0u) {
         color = vec4<f32>(color.rgb * color.a, color.a);
     }
-    if ((params.flags & FLAG_FORCE_OPAQUE_ALPHA) != 0u) {
+    if ((flags & FLAG_FORCE_OPAQUE_ALPHA) != 0u) {
         color.a = 1.0;
     }
 
     // Color policy: apply sRGB encoding only when the output view is *not* already sRGB.
-    if ((params.flags & FLAG_APPLY_SRGB_ENCODE) != 0u) {
+    if ((flags & FLAG_APPLY_SRGB_ENCODE) != 0u) {
         color = vec4<f32>(srgb_encode(color.rgb), color.a);
     }
 
     return color;
 }
-

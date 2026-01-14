@@ -30,7 +30,12 @@ function $(id: string): HTMLElement | null {
 
 function renderError(message: string) {
   const status = $("status");
-  if (status) status.textContent = message;
+  if (status) {
+    // Keep any GPU worker diagnostics already printed (events/errors) and append the final
+    // top-level error message. This is a test/debug page; retaining the full context makes
+    // Playwright failure snapshots much more actionable.
+    status.textContent += status.textContent ? `\n${message}` : message;
+  }
   window.__aeroTest = { ready: true, error: message };
 }
 
@@ -101,7 +106,13 @@ async function main() {
       onEvents: (msg) => {
         if (!status) return;
         for (const ev of msg.events) {
-          status.textContent += `gpu_event ${ev.severity} ${ev.category}: ${ev.message}\n`;
+          let details = "";
+          try {
+            if (ev.details != null) details = ` details=${JSON.stringify(ev.details)}`;
+          } catch {
+            // Ignore: best-effort formatting only.
+          }
+          status.textContent += `gpu_event ${ev.severity} ${ev.category}: ${ev.message}${details}\n`;
         }
       },
     });

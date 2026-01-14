@@ -1056,10 +1056,25 @@ function sanitizeForPostMessage(value: unknown): unknown {
   // Errors are not consistently structured-cloneable across browsers. Convert them to plain objects so
   // telemetry/event reporting cannot crash the worker with a DataCloneError.
   if (value instanceof PresenterError) {
-    return { name: value.name, code: value.code, message: value.message, stack: value.stack };
+    return {
+      name: value.name,
+      code: value.code,
+      message: value.message,
+      stack: value.stack,
+      // Preserve the underlying error cause when present. This is extremely useful for debugging
+      // (e.g. WebAssembly traps, WebGPU validation errors) and is safe because we sanitize it
+      // recursively into a structured-cloneable shape.
+      ...(value.cause === undefined ? {} : { cause: sanitizeForPostMessage(value.cause) }),
+    };
   }
   if (value instanceof Error) {
-    return { name: value.name, message: value.message, stack: value.stack };
+    const err = value as any;
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+      ...(err?.cause === undefined ? {} : { cause: sanitizeForPostMessage(err.cause) }),
+    };
   }
 
   // Try the platform structured-clone implementation first (handles ArrayBuffer, Map, Set, etc).
