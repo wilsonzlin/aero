@@ -3047,18 +3047,6 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        // Tessellation draws require both HS and DS to be bound. Until we support a fallback path
-        // (e.g. forwarding the control mesh when DS is missing), validate this up front so the
-        // emulation prepass doesn't run with an incomplete pipeline.
-        if self.state.hs.is_some() || self.state.ds.is_some() {
-            if self.state.hs.is_none() {
-                bail!("tessellation draw requires a hull shader (HS) to be bound");
-            }
-            if self.state.ds.is_none() {
-                bail!("tessellation draw requires a domain shader (DS) to be bound");
-            }
-        }
-
         let Some(next) = stream.iter.peek() else {
             return Ok(());
         };
@@ -10252,9 +10240,19 @@ impl AerogpuD3d11Executor {
                 )
             },
         )?;
-        if stage != ShaderStage::Compute {
+        // D3D11 exposes UAVs primarily via the compute stage, but Aero's GS/HS/DS emulation also
+        // needs UAV-like bindings in the extended-stage buckets so state can be tracked without
+        // clobbering CS bindings.
+        //
+        // Accept UAV bindings for:
+        // - Compute: legacy behavior.
+        // - Geometry/Hull/Domain: stage_ex buckets for GS/HS/DS compute emulation.
+        if !matches!(
+            stage,
+            ShaderStage::Compute | ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain
+        ) {
             bail!(
-                "SET_UNORDERED_ACCESS_BUFFERS: only compute stage is supported right now (stage={stage:?})"
+                "SET_UNORDERED_ACCESS_BUFFERS: unsupported stage {stage:?} (only CS/GS/HS/DS are supported)"
             );
         }
         let start_slot: u32 = start_slot_u32;
