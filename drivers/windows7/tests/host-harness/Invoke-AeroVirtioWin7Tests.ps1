@@ -7626,7 +7626,36 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_NET_LINK_FLAP_FAILED" {
-      Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while -WithNetLinkFlap was enabled"
+      $reason = ""
+      $downSec = ""
+      $upSec = ""
+      $cfgDownDelta = ""
+      $cfgUpDelta = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|
+]+)") { $reason = $Matches[1] }
+        if ($line -match "down_sec=([^|
+]+)") { $downSec = $Matches[1] }
+        if ($line -match "up_sec=([^|
+]+)") { $upSec = $Matches[1] }
+        if ($line -match "cfg_intr_down_delta=([^|
+]+)") { $cfgDownDelta = $Matches[1] }
+        if ($line -match "cfg_intr_up_delta=([^|
+]+)") { $cfgUpDelta = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($downSec)) { $detailsParts += "down_sec=$downSec" }
+      if (-not [string]::IsNullOrEmpty($upSec)) { $detailsParts += "up_sec=$upSec" }
+      if (-not [string]::IsNullOrEmpty($cfgDownDelta)) { $detailsParts += "cfg_intr_down_delta=$cfgDownDelta" }
+      if (-not [string]::IsNullOrEmpty($cfgUpDelta)) { $detailsParts += "cfg_intr_up_delta=$cfgUpDelta" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while -WithNetLinkFlap was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
