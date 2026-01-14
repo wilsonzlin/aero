@@ -156,12 +156,12 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
     foreach ($p in $fallback) { $searched += $p }
 
     foreach ($p in $preferred) {
-        if (Test-Path $p) {
+        if (Test-Path -LiteralPath $p -PathType Leaf -ErrorAction SilentlyContinue) {
             return @{ found = $true; path = $p; searched = $searched }
         }
     }
     foreach ($p in $fallback) {
-        if (Test-Path $p) {
+        if (Test-Path -LiteralPath $p -PathType Leaf -ErrorAction SilentlyContinue) {
             return @{ found = $true; path = $p; searched = $searched }
         }
     }
@@ -1255,13 +1255,13 @@ $outDir = "C:\AeroGuestTools"
 $jsonPath = Join-Path $outDir "report.json"
 $txtPath = Join-Path $outDir "report.txt"
 $storagePreseedSkipMarker = Join-Path $outDir "storage-preseed.skipped.txt"
-$storagePreseedSkipped = (Test-Path $storagePreseedSkipMarker)
+$storagePreseedSkipped = (Test-Path -LiteralPath $storagePreseedSkipMarker -PathType Leaf -ErrorAction SilentlyContinue)
 
 $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.25"
+         version = "2.5.26"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -2058,7 +2058,7 @@ try {
     $data = @{
         signing_policy = $policy
         cert_dir = $certDir
-        cert_dir_exists = (Test-Path $certDir)
+        cert_dir_exists = (Test-Path -LiteralPath $certDir -PathType Container -ErrorAction SilentlyContinue)
         cert_files = @($certFiles | ForEach-Object { $_.FullName })
     }
     Add-Check "certs_on_media_policy_mismatch" "Guest Tools Media Sanity (certs vs signing_policy)" $st $sum $data $det
@@ -3185,7 +3185,7 @@ try {
     $boundDevicesForCorrelation = $devices
 
     $devcon = $null
-    if (Test-Path $devconPath) {
+    if (Test-Path -LiteralPath $devconPath -PathType Leaf -ErrorAction SilentlyContinue) {
         $devcon = Invoke-Capture $devconPath @("findall","*")
     }
 
@@ -3228,8 +3228,8 @@ try {
 
     $devData = @{
         devices = $devices
-        used_devcon = (Test-Path $devconPath)
-        devcon_path = (if (Test-Path $devconPath) { $devconPath } else { $null })
+        used_devcon = (Test-Path -LiteralPath $devconPath -PathType Leaf -ErrorAction SilentlyContinue)
+        devcon_path = (if (Test-Path -LiteralPath $devconPath -PathType Leaf -ErrorAction SilentlyContinue) { $devconPath } else { $null })
         devcon_exit_code = (if ($devcon) { $devcon.exit_code } else { $null })
         devcon_raw = (if ($devcon) { $devcon.output } else { $null })
     }
@@ -4820,7 +4820,7 @@ try {
     }
 
     # Prefer the canonical packaged location, then fall back to a broader search.
-    if (Test-Path $expectedPath) {
+    if (Test-Path -LiteralPath $expectedPath -PathType Leaf -ErrorAction SilentlyContinue) {
         $data.found = $true
         $data.path = $expectedPath
         $data.searched = @($expectedPath)
