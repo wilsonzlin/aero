@@ -17,6 +17,24 @@ const MAX_DECLARATIONS: usize = 512;
 const MAX_INSTRUCTIONS: usize = 2048;
 const SYNTH_MAX_INSTRUCTIONS: usize = 16;
 
+const OPCODE_COMMENT: u32 = 0xFFFE;
+const OPCODE_END: u32 = 0xFFFF;
+const OPCODE_DCL: u32 = 31;
+
+const OPCODE_IF: u32 = 40;
+const OPCODE_ELSE: u32 = 42;
+const OPCODE_ENDIF: u32 = 43;
+const OPCODE_BREAKC: u32 = 45;
+const OPCODE_RET: u32 = 28;
+const OPCODE_TEXKILL: u32 = 65;
+const OPCODE_TEXLD: u32 = 66;
+const OPCODE_DP2ADD: u32 = 89;
+const OPCODE_SETP: u32 = 94;
+
+const PREDICATED_BIT: u32 = 0x1000_0000;
+const COISSUE_BIT: u32 = 0x4000_0000;
+const ADDR_MODE_RELATIVE_BIT: u32 = 0x0000_2000;
+
 fn wrap_dxbc(shader_bytes: &[u8], chunk_fourcc: [u8; 4]) -> Vec<u8> {
     dxbc_test_utils::build_container(&[(FourCC(chunk_fourcc), shader_bytes)])
 }
@@ -79,6 +97,133 @@ fn encode_src_token(ty_raw: u8, reg_num: u16, swizzle: u8, modifier: u8) -> u32 
         | (u32::from(modifier & 0xF) << 24)
 }
 
+fn synth_opcode_token(opcode_raw: u32, len: usize) -> u32 {
+    // D3D9 encodes the total instruction length (in u32 tokens) in bits 24..27. Values outside the
+    // nibble are not representable; keep synthesis bounded so we never exceed 15.
+    let len = (len & 0xF) as u32;
+    opcode_raw | (len << 24)
+}
+
+fn synth_predicate_token(next_u8: &mut impl FnMut() -> u8) -> u32 {
+    // Predicate register token: p0..p3, no relative addressing.
+    let reg = u16::from(next_u8() % 4);
+    let swz = next_u8();
+    encode_src_token(19, reg, swz, 0)
+}
+
+fn synth_push_src_tokens(
+    next_u8: &mut impl FnMut() -> u8,
+    operands: &mut Vec<u32>,
+    allow_relative: bool,
+) {
+    // For relative addressing, prefer constant registers so the disassembly prints in the common
+    // `c[a0.x+N]` style.
+    let make_relative = allow_relative && (next_u8() & 7) == 0;
+    let ty = if make_relative { 2u8 } else { next_u8() % 20 };
+    let reg = u16::from(next_u8());
+    let swz = next_u8();
+    let mod_raw = next_u8() & 0xF;
+    let mut token = encode_src_token(ty, reg, swz, mod_raw);
+    if make_relative {
+        token |= ADDR_MODE_RELATIVE_BIT;
+        operands.push(token);
+
+        let rel_reg = u16::from(next_u8() % 2); // a0/a1
+        let rel_swz = next_u8();
+        operands.push(encode_src_token(3, rel_reg, rel_swz, 0));
+    } else {
+        operands.push(token);
+    }
+}
+
+fn synth_push_dst_src_op(
+    next_u8: &mut impl FnMut() -> u8,
+    tokens: &mut Vec<u32>,
+    opcode_raw: u32,
+    specific: u8,
+) {
+    let predicated = (next_u8() & 3) == 0;
+    let coissue = (next_u8() & 3) == 0;
+    let src_count = 1 + (next_u8() % 3) as usize;
+
+    let mut operands: Vec<u32> = Vec::new();
+    let dst_reg = u16::from(next_u8());
+    let write_mask = (next_u8() & 0xF).max(1);
+    operands.push(encode_dst_token(0, dst_reg, write_mask));
+    for _ in 0..src_count {
+        synth_push_src_tokens(next_u8, &mut operands, true);
+    }
+    if predicated {
+        operands.push(synth_predicate_token(next_u8));
+    }
+
+    let len = 1 + operands.len();
+    debug_assert!(len <= 15);
+    let mut opcode_token = synth_opcode_token(opcode_raw, len) | (u32::from(specific) << 16);
+    if predicated {
+        opcode_token |= PREDICATED_BIT;
+    }
+    if coissue {
+        opcode_token |= COISSUE_BIT;
+    }
+    tokens.push(opcode_token);
+    tokens.extend_from_slice(&operands);
+}
+
+fn synth_push_src_op(next_u8: &mut impl FnMut() -> u8, tokens: &mut Vec<u32>, opcode_raw: u32) {
+    let predicated = (next_u8() & 3) == 0;
+    let coissue = (next_u8() & 3) == 0;
+
+    let src_count = 1 + (next_u8() % 3) as usize;
+    let mut operands: Vec<u32> = Vec::new();
+    for _ in 0..src_count {
+        synth_push_src_tokens(next_u8, &mut operands, true);
+    }
+    if predicated {
+        operands.push(synth_predicate_token(next_u8));
+    }
+
+    let len = 1 + operands.len();
+    debug_assert!(len <= 15);
+    let mut opcode_token = synth_opcode_token(opcode_raw, len);
+    if predicated {
+        opcode_token |= PREDICATED_BIT;
+    }
+    if coissue {
+        opcode_token |= COISSUE_BIT;
+    }
+    tokens.push(opcode_token);
+    tokens.extend_from_slice(&operands);
+}
+
+fn synth_push_control_op(
+    next_u8: &mut impl FnMut() -> u8,
+    tokens: &mut Vec<u32>,
+    opcode_raw: u32,
+) {
+    // Control-flow ops (else/endif/ret) don't require operands, but allow optional predication so we
+    // exercise that decode path.
+    let predicated = (next_u8() & 7) == 0;
+    let coissue = (next_u8() & 7) == 0;
+
+    let mut operands: Vec<u32> = Vec::new();
+    if predicated {
+        operands.push(synth_predicate_token(next_u8));
+    }
+
+    let len = 1 + operands.len();
+    debug_assert!(len <= 15);
+    let mut opcode_token = synth_opcode_token(opcode_raw, len);
+    if predicated {
+        opcode_token |= PREDICATED_BIT;
+    }
+    if coissue {
+        opcode_token |= COISSUE_BIT;
+    }
+    tokens.push(opcode_token);
+    tokens.extend_from_slice(&operands);
+}
+
 /// Build a small, mostly-valid token stream that parses successfully and exercises the disassembler
 /// more reliably than fully-random streams.
 fn synth_token_stream(data: &[u8]) -> Vec<u8> {
@@ -105,100 +250,61 @@ fn synth_token_stream(data: &[u8]) -> Vec<u8> {
     let inst_count = (next_u8() as usize) % (SYNTH_MAX_INSTRUCTIONS + 1);
 
     for _ in 0..inst_count {
-        match next_u8() % 9 {
-            // NOP: may still carry some src operands (not semantically meaningful, but valid).
+        match next_u8() % 12 {
+            // NOP: may still carry src operands (not semantically meaningful, but valid).
             0 => {
+                let predicated = (next_u8() & 3) == 0;
+                let coissue = (next_u8() & 3) == 0;
                 let src_count = (next_u8() % 3) as usize;
-                let len = 1 + src_count;
-                tokens.push(0u32 | ((len as u32) << 24));
+                let mut operands: Vec<u32> = Vec::new();
                 for _ in 0..src_count {
-                    let ty = next_u8() % 20;
-                    let reg = u16::from(next_u8());
-                    let swz = next_u8();
-                    let mod_raw = next_u8() & 0xF;
-                    tokens.push(encode_src_token(ty, reg, swz, mod_raw));
+                    synth_push_src_tokens(&mut next_u8, &mut operands, true);
                 }
-            }
-            // MOV: dst + 1..3 src
-            1 => {
-                let src_count = 1 + (next_u8() % 3) as usize;
-                let len = 2 + src_count;
-                tokens.push(1u32 | ((len as u32) << 24));
-                let dst_reg = u16::from(next_u8());
-                let write_mask = (next_u8() & 0xF).max(1);
-                tokens.push(encode_dst_token(0, dst_reg, write_mask));
-                for _ in 0..src_count {
-                    let ty = next_u8() % 20;
-                    let reg = u16::from(next_u8());
-                    let swz = next_u8();
-                    let mod_raw = next_u8() & 0xF;
-                    tokens.push(encode_src_token(ty, reg, swz, mod_raw));
+                if predicated {
+                    operands.push(synth_predicate_token(&mut next_u8));
                 }
-            }
-            // ADD: dst + 1..3 src
-            2 => {
-                let src_count = 1 + (next_u8() % 3) as usize;
-                let len = 2 + src_count;
-                tokens.push(2u32 | ((len as u32) << 24));
-                let dst_reg = u16::from(next_u8());
-                let write_mask = (next_u8() & 0xF).max(1);
-                tokens.push(encode_dst_token(0, dst_reg, write_mask));
-                for _ in 0..src_count {
-                    let ty = next_u8() % 20;
-                    let reg = u16::from(next_u8());
-                    let swz = next_u8();
-                    let mod_raw = next_u8() & 0xF;
-                    tokens.push(encode_src_token(ty, reg, swz, mod_raw));
+                let len = 1 + operands.len();
+                debug_assert!(len <= 15);
+                let mut opcode_token = synth_opcode_token(0, len);
+                if predicated {
+                    opcode_token |= PREDICATED_BIT;
                 }
-            }
-            // MAD: dst + 1..3 src
-            3 => {
-                let src_count = 1 + (next_u8() % 3) as usize;
-                let len = 2 + src_count;
-                tokens.push(4u32 | ((len as u32) << 24));
-                let dst_reg = u16::from(next_u8());
-                let write_mask = (next_u8() & 0xF).max(1);
-                tokens.push(encode_dst_token(0, dst_reg, write_mask));
-                for _ in 0..src_count {
-                    let ty = next_u8() % 20;
-                    let reg = u16::from(next_u8());
-                    let swz = next_u8();
-                    let mod_raw = next_u8() & 0xF;
-                    tokens.push(encode_src_token(ty, reg, swz, mod_raw));
+                if coissue {
+                    opcode_token |= COISSUE_BIT;
                 }
+                tokens.push(opcode_token);
+                tokens.extend_from_slice(&operands);
             }
-            // IF: one src operand.
-            4 => {
-                tokens.push(40u32 | (2u32 << 24));
-                let ty = next_u8() % 20;
-                let reg = u16::from(next_u8());
-                let swz = next_u8();
-                let mod_raw = next_u8() & 0xF;
-                tokens.push(encode_src_token(ty, reg, swz, mod_raw));
-            }
-            // TEXKILL: one src operand.
-            5 => {
-                tokens.push(65u32 | (2u32 << 24));
-                let ty = next_u8() % 20;
-                let reg = u16::from(next_u8());
-                let swz = next_u8();
-                let mod_raw = next_u8() & 0xF;
-                tokens.push(encode_src_token(ty, reg, swz, mod_raw));
-            }
-            // DCL (sampler or semantic declaration).
+            // dst + src ops
+            1 => synth_push_dst_src_op(&mut next_u8, &mut tokens, 1, 0),   // mov
+            2 => synth_push_dst_src_op(&mut next_u8, &mut tokens, 2, 0),   // add
+            3 => synth_push_dst_src_op(&mut next_u8, &mut tokens, 4, 0),   // mad
+            4 => synth_push_dst_src_op(&mut next_u8, &mut tokens, OPCODE_DP2ADD, 0),
+            5 => synth_push_dst_src_op(&mut next_u8, &mut tokens, OPCODE_SETP, 0),
             6 => {
+                // TEXLD / TEXLDP / TEXLDB are distinguished by `specific`.
+                let specific = next_u8() % 3;
+                synth_push_dst_src_op(&mut next_u8, &mut tokens, OPCODE_TEXLD, specific);
+            }
+            // src-only ops
+            7 => synth_push_src_op(&mut next_u8, &mut tokens, OPCODE_IF),
+            8 => synth_push_src_op(&mut next_u8, &mut tokens, OPCODE_TEXKILL),
+            // control-flow-ish ops (not strictly validated, but include src operands for coverage)
+            9 => synth_push_src_op(&mut next_u8, &mut tokens, OPCODE_BREAKC),
+            // DCL (sampler or semantic declaration).
+            10 => {
                 let sampler = (next_u8() & 1) == 0;
                 if sampler {
                     let texture_type = u32::from(next_u8() & 0xF);
                     let sampler_reg = u16::from(next_u8() % 16);
-                    let opcode_token = 31u32 | (2u32 << 24) | (texture_type << 16);
+                    let opcode_token =
+                        synth_opcode_token(OPCODE_DCL, 2) | (texture_type << 16);
                     tokens.push(opcode_token);
                     tokens.push(encode_dst_token(10, sampler_reg, 0xF));
                 } else {
                     let usage_raw = if (next_u8() & 1) == 0 { 5u32 } else { 10u32 }; // texcoord/color
                     let usage_index = u32::from(next_u8() & 0xF);
-                    let opcode_token = 31u32
-                        | (2u32 << 24)
+                    let opcode_token = synth_opcode_token(OPCODE_DCL, 2)
                         | (usage_raw << 16)
                         | (usage_index << 20);
                     tokens.push(opcode_token);
@@ -208,23 +314,34 @@ fn synth_token_stream(data: &[u8]) -> Vec<u8> {
                 }
             }
             // COMMENT block (length in DWORDs lives in bits 16..30).
-            7 => {
+            11 => {
                 let comment_len = u32::from(next_u8() % 4);
-                tokens.push(0xFFFEu32 | (comment_len << 16));
+                tokens.push(OPCODE_COMMENT | (comment_len << 16));
                 for _ in 0..comment_len {
                     let w = u32::from_le_bytes([next_u8(), next_u8(), next_u8(), next_u8()]);
                     tokens.push(w);
                 }
             }
-            // RET
-            _ => {
-                tokens.push(28u32 | (1u32 << 24));
-            }
+            // `next_u8() % 12` is mathematically bounded, but keep the match exhaustiveness checker
+            // happy (and avoid relying on compiler range analysis).
+            _ => synth_push_control_op(&mut next_u8, &mut tokens, OPCODE_RET),
+        }
+
+        // Keep the stream balanced-ish by occasionally inserting ELSE/ENDIF without constructing a
+        // full CFG. The parser doesn't validate nesting, but the disassembler formats these ops.
+        if (next_u8() & 0xF) == 0 {
+            synth_push_control_op(&mut next_u8, &mut tokens, OPCODE_ELSE);
+        }
+        if (next_u8() & 0xF) == 0 {
+            synth_push_control_op(&mut next_u8, &mut tokens, OPCODE_ENDIF);
+        }
+        if (next_u8() & 0xF) == 0 {
+            synth_push_control_op(&mut next_u8, &mut tokens, OPCODE_RET);
         }
     }
 
     // END token.
-    tokens.push(0x0000_FFFF);
+    tokens.push(OPCODE_END);
 
     let mut out = Vec::with_capacity(tokens.len() * 4);
     for t in tokens {
