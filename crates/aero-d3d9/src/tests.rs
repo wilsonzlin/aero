@@ -47,6 +47,23 @@ fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     v
 }
 
+fn enc_inst_operand_count_len(opcode: u16, params: &[u32]) -> Vec<u32> {
+    // Some historical shader blobs encode opcode token "length" as the number of operand tokens
+    // (excluding the opcode token itself). `shader_translate` is expected to accept both
+    // encodings.
+    let token = (opcode as u32) | ((params.len() as u32) << 24);
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
+}
+
+fn enc_inst_with_extra_operand_count_len(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
+    let token = (opcode as u32) | ((params.len() as u32) << 24) | extra;
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
+}
+
 // Some tests build SM3 shaders explicitly (vs_3_0/ps_3_0). These helpers are currently identical
 // to the generic encoders above; they exist to make intent explicit at call sites.
 #[allow(dead_code)]
@@ -623,6 +640,78 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
 
     // mov oC0, r0
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_predicated_lrp_operand_count_len() -> Vec<u32> {
+    // Same instruction stream as `assemble_ps3_predicated_lrp`, but encoded using the
+    // operand-count length field (excluding the opcode token).
+    let mut out = vec![0xFFFF0300];
+
+    // def c0, 0.25, 0.25, 0.25, 0.25
+    out.extend(enc_inst_operand_count_len(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+        ],
+    ));
+    // def c1, 1.0, 0.0, 0.0, 1.0
+    out.extend(enc_inst_operand_count_len(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c2, 0.0, 1.0, 0.0, 1.0
+    out.extend(enc_inst_operand_count_len(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // setp_eq p0, c0, c0  (compare op 1 = eq)
+    out.extend(enc_inst_with_extra_operand_count_len(
+        0x004E,
+        1u32 << 16,
+        &[
+            enc_dst(19, 0, 0xF), // p0
+            enc_src(2, 0, 0xE4), // c0
+            enc_src(2, 0, 0xE4), // c0
+        ],
+    ));
+
+    // predicated lrp_sat_x2 r0, c0, c1, c2, p0.x
+    out.extend(enc_inst_with_extra_operand_count_len(
+        0x0012,
+        0x1000_0000 | (3u32 << 20),
+        &[
+            enc_dst(0, 0, 0xF),   // r0
+            enc_src(2, 0, 0xE4),  // c0 (t)
+            enc_src(2, 1, 0xE4),  // c1 (a)
+            enc_src(2, 2, 0xE4),  // c2 (b)
+            enc_src(19, 0, 0x00), // p0.x predicate token
+        ],
+    ));
+
+    // mov oC0, r0
+    out.extend(enc_inst_operand_count_len(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
     out.push(0x0000FFFF);
     out
 }
@@ -1702,6 +1791,31 @@ fn translates_simple_vs_to_wgsl() {
 #[test]
 fn translate_entrypoint_prefers_sm3_when_supported() {
     let ps_bytes = to_bytes(&assemble_ps3_predicated_lrp());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+    assert!(translated.wgsl.contains("@fragment"));
+    assert_eq!(translated.entry_point, "fs_main");
+}
+
+#[test]
+fn translate_entrypoint_accepts_operand_count_length_encoding() {
+    // Some historical shader blobs encoded opcode token length as operand count instead of total
+    // instruction length. The high-level translator should normalize this and still produce valid
+    // WGSL.
+    let ps_bytes = to_bytes(&assemble_ps3_predicated_lrp_operand_count_len());
     let translated =
         shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
             .unwrap();

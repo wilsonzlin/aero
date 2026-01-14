@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
@@ -158,8 +159,10 @@ pub fn translate_d3d9_shader_to_wgsl(
         )));
     }
     let token_stream = dxbc::extract_shader_bytecode(bytes)?;
+    let token_stream = normalize_sm2_sm3_instruction_lengths(token_stream)
+        .map_err(ShaderTranslateError::Malformed)?;
 
-    match try_translate_sm3(token_stream, options) {
+    match try_translate_sm3(token_stream.as_ref(), options) {
         Ok(ok) => Ok(ok),
         Err(err) => {
             if !err.is_fallbackable() {
@@ -168,7 +171,7 @@ pub fn translate_d3d9_shader_to_wgsl(
 
             // Fallback to the legacy translator. Use the extracted token stream so malformed DXBC
             // (already handled above) can't be silently bypassed.
-            let program = shader::parse(token_stream).map_err(|e| match e {
+            let program = shader::parse(token_stream.as_ref()).map_err(|e| match e {
                 // Treat obvious truncation/shape issues as malformed input rather than a generic
                 // translation failure.
                 shader::ShaderError::TokenStreamTooSmall
@@ -202,6 +205,211 @@ pub fn translate_d3d9_shader_to_wgsl(
             })
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sm2Sm3InstructionLengthEncoding {
+    /// Bits 24..27 encode the *total* instruction length in DWORD tokens, including the opcode
+    /// token itself.
+    TotalLength,
+    /// Bits 24..27 encode the number of operand tokens, excluding the opcode token.
+    OperandCount,
+}
+
+fn expected_operand_count_range(opcode: u16) -> Option<(usize, usize)> {
+    // Expected operand token count for a subset of common SM2/SM3 opcodes. This is used only for
+    // heuristically detecting operand-count-encoded token streams.
+    //
+    // Notes:
+    // - Some opcodes are variable-length (e.g. `dcl`) and are omitted.
+    // - Operand-less instructions are omitted since they do not distinguish encodings.
+    Some(match opcode {
+        0x0001 => (2, 2), // mov dst, src
+        0x0002 => (3, 3), // add dst, src0, src1
+        0x0003 => (3, 3), // sub
+        0x0004 => (4, 4), // mad dst, src0, src1, src2
+        0x0005 => (3, 3), // mul
+        0x0006 => (2, 2), // rcp
+        0x0007 => (2, 2), // rsq
+        0x0008 => (3, 3), // dp3
+        0x0009 => (3, 3), // dp4
+        0x000A => (3, 3), // min
+        0x000B => (3, 3), // max
+        0x000C => (3, 3), // slt
+        0x000D => (3, 3), // sge
+        0x000E => (2, 2), // exp
+        0x000F => (2, 2), // log
+        0x0012 => (4, 4), // lrp
+        0x0013 => (2, 2), // frc
+        0x0020 => (3, 3), // pow
+        0x0028 => (1, 1), // if
+        0x0029 => (2, 2), // ifc
+        0x0042 => (3, 3), // texld dst, coord, sampler
+        0x0051 => (5, 5), // def
+        0x0053 => (2, 2), // defb
+        0x0054 => (3, 3), // seq
+        0x0055 => (3, 3), // sne
+        0x0058 => (4, 4), // cmp
+        0x0059 => (4, 4), // dp2add
+        0x005A => (3, 3), // dp2
+        _ => return None,
+    })
+}
+
+fn score_sm2_sm3_length_encoding(
+    tokens: &[u32],
+    encoding: Sm2Sm3InstructionLengthEncoding,
+) -> Option<i32> {
+    if tokens.is_empty() {
+        return None;
+    }
+
+    let mut score = 0i32;
+    let mut idx = 1usize;
+    let mut steps = 0usize;
+    while idx < tokens.len() && steps < tokens.len() {
+        let token = tokens[idx];
+        let opcode = (token & 0xFFFF) as u16;
+
+        // Comment blocks are length-prefixed in bits 16..30 and must be skipped verbatim.
+        if opcode == 0xFFFE {
+            let comment_len = ((token >> 16) & 0x7FFF) as usize;
+            let total_len = 1usize.checked_add(comment_len)?;
+            if idx + total_len > tokens.len() {
+                return None;
+            }
+            idx += total_len;
+            steps += 1;
+            continue;
+        }
+
+        if opcode == 0xFFFF {
+            break;
+        }
+
+        let len_field = ((token >> 24) & 0x0F) as usize;
+        let total_len = match encoding {
+            Sm2Sm3InstructionLengthEncoding::TotalLength => {
+                if len_field == 0 { 1 } else { len_field }
+            }
+            Sm2Sm3InstructionLengthEncoding::OperandCount => 1usize.checked_add(len_field)?,
+        };
+        if idx + total_len > tokens.len() {
+            return None;
+        }
+        let operand_len = total_len - 1;
+
+        if let Some((min, max)) = expected_operand_count_range(opcode) {
+            // Reward matching operand counts; penalize mismatches. This helps distinguish real
+            // opcode tokens from register/operand tokens that happen to decode to an opcode.
+            if operand_len >= min && operand_len <= max {
+                score += 2;
+            } else {
+                score -= 1;
+            }
+        }
+
+        idx += total_len;
+        steps += 1;
+    }
+
+    Some(score)
+}
+
+fn normalize_sm2_sm3_instruction_lengths<'a>(
+    token_stream: &'a [u8],
+) -> Result<Cow<'a, [u8]>, String> {
+    if !token_stream.len().is_multiple_of(4) {
+        return Err(format!(
+            "token stream length {} is not a multiple of 4",
+            token_stream.len()
+        ));
+    }
+    if token_stream.len() < 4 {
+        return Err("token stream too small".to_owned());
+    }
+
+    let mut tokens: Vec<u32> = token_stream
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
+
+    // Some shader producers (notably older AeroGPU fixed-function shaders) encode opcode token
+    // length as the number of operand tokens rather than the total instruction length.
+    //
+    // The SM3 decoder (`sm3::decode`) and legacy bring-up parser (`shader::parse`) both expect the
+    // total instruction length encoding, so detect and rewrite operand-count token streams.
+    let score_total =
+        score_sm2_sm3_length_encoding(&tokens, Sm2Sm3InstructionLengthEncoding::TotalLength)
+            .unwrap_or(i32::MIN);
+    let score_operands =
+        score_sm2_sm3_length_encoding(&tokens, Sm2Sm3InstructionLengthEncoding::OperandCount)
+            .unwrap_or(i32::MIN);
+    let encoding = if score_operands > score_total {
+        Sm2Sm3InstructionLengthEncoding::OperandCount
+    } else {
+        Sm2Sm3InstructionLengthEncoding::TotalLength
+    };
+
+    if encoding == Sm2Sm3InstructionLengthEncoding::TotalLength {
+        return Ok(Cow::Borrowed(token_stream));
+    }
+
+    let mut idx = 1usize;
+    while idx < tokens.len() {
+        let token = tokens[idx];
+        let opcode = (token & 0xFFFF) as u16;
+
+        // Comments are variable-length data blocks that should be skipped.
+        // Layout: opcode=0xFFFE, length in DWORDs in bits 16..30.
+        if opcode == 0xFFFE {
+            let comment_len = ((token >> 16) & 0x7FFF) as usize;
+            let total_len = 1usize
+                .checked_add(comment_len)
+                .ok_or_else(|| "comment length overflow".to_owned())?;
+            if idx + total_len > tokens.len() {
+                return Err(format!(
+                    "comment length {comment_len} exceeds remaining tokens {}",
+                    tokens.len() - idx
+                ));
+            }
+            idx += total_len;
+            continue;
+        }
+
+        if opcode == 0xFFFF {
+            break;
+        }
+
+        // In operand-count encoding, bits 24..27 specify the number of operand tokens, so total
+        // instruction length is `operands + 1`.
+        let operand_count = ((token >> 24) & 0x0F) as usize;
+        let length = operand_count
+            .checked_add(1)
+            .ok_or_else(|| "instruction length overflow".to_owned())?;
+        if idx + length > tokens.len() {
+            return Err(format!(
+                "instruction length {length} exceeds remaining tokens {}",
+                tokens.len() - idx
+            ));
+        }
+
+        if operand_count > 0xE {
+            return Err(format!(
+                "operand count {operand_count} cannot be re-encoded into a 4-bit total-length field"
+            ));
+        }
+        let total_len_field = (operand_count + 1) as u32;
+        tokens[idx] = (token & !(0x0F << 24)) | ((total_len_field & 0x0F) << 24);
+
+        idx += length;
+    }
+
+    let mut out = Vec::with_capacity(token_stream.len());
+    for t in tokens {
+        out.extend_from_slice(&t.to_le_bytes());
+    }
+    Ok(Cow::Owned(out))
 }
 
 #[derive(Debug)]
