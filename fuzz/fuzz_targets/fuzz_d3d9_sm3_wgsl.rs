@@ -259,39 +259,148 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             let sampler = seed.get(12).copied().unwrap_or(0) % 4;
             let sampler_token = src_token(10, sampler, 0xE4, 0);
 
-            // dcl_2d s#
-            tokens.push(opcode_token(31, 1, 0) | (2u32 << 16));
+            // Declare sampler type. Use a small subset of valid texture types; this helps WGSL
+            // lowering reach texture-type-specific paths (including the 1D bias workaround).
+            let sampler_ty = match seed.get(21).copied().unwrap_or(0) % 4 {
+                0 => 1u32, // 1D
+                1 => 2u32, // 2D
+                2 => 3u32, // cube
+                _ => 4u32, // 3D
+            };
+            tokens.push(opcode_token(31, 1, 0) | (sampler_ty << 16));
             tokens.push(dst_token(10, sampler, 0));
 
-            match seed.get(2).copied().unwrap_or(0) % 3 {
+            // Optionally add predication around derivative ops / texture sampling so we exercise
+            // WGSL's branchless predication lowering for uniform-control-flow-sensitive ops.
+            let predicated = seed.get(13).copied().unwrap_or(0) & 1 != 0;
+            let pred_is_prefix = seed.get(13).copied().unwrap_or(0) & 2 != 0;
+            let pred_neg = (seed.get(13).copied().unwrap_or(0) >> 2) & 1;
+            let pred_token = src_token(19, 0, 0x00, pred_neg);
+
+            if predicated {
+                // setp p0.x, src0, src1
+                let p0 = dst_token(19, 0, 0x1);
+                let cmp = (seed.get(14).copied().unwrap_or(0) % 6) as u32;
+                tokens.push(opcode_token(78, 3, 0) | (cmp << 16));
+                tokens.push(p0);
+                tokens.push(src0);
+                tokens.push(src1);
+            }
+
+            // Derivative ops (pixel shaders only): dsx/dsy.
+            let r0 = dst_token(0, 0, 0);
+            let r1 = dst_token(0, 1, 0);
+            let emit_predicated_op2 = |tokens: &mut Vec<u32>, opcode: u32, dst: u32, src: u32| {
+                if predicated {
+                    let op = opcode_token(opcode, 3, mod_bits) | 0x1000_0000;
+                    tokens.push(op);
+                    if pred_is_prefix {
+                        tokens.push(pred_token);
+                        tokens.push(dst);
+                        tokens.push(src);
+                    } else {
+                        tokens.push(dst);
+                        tokens.push(src);
+                        tokens.push(pred_token);
+                    }
+                } else {
+                    tokens.push(opcode_token(opcode, 2, mod_bits));
+                    tokens.push(dst);
+                    tokens.push(src);
+                }
+            };
+            emit_predicated_op2(&mut tokens, 86, r0, src0);
+            emit_predicated_op2(&mut tokens, 87, r1, src0);
+
+            match seed.get(2).copied().unwrap_or(0) % 4 {
                 // texld / texldp (implicit LOD)
                 0 => {
-                    let project = if seed.get(13).copied().unwrap_or(0) & 1 != 0 {
-                        1u32 << 16
+                    let specific = if seed.get(15).copied().unwrap_or(0) & 1 != 0 {
+                        1u32 // texldp (project)
                     } else {
-                        0
+                        0u32 // texld
                     };
-                    tokens.push(opcode_token(66, 3, mod_bits) | project);
+                    let op = if predicated {
+                        opcode_token(66, 4, mod_bits) | 0x1000_0000 | (specific << 16)
+                    } else {
+                        opcode_token(66, 3, mod_bits) | (specific << 16)
+                    };
+                    tokens.push(op);
+                    if predicated && pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
                     tokens.push(dst);
                     tokens.push(src0);
                     tokens.push(sampler_token);
+                    if predicated && !pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
+                }
+                // texldb (bias) - pixel shaders only.
+                1 => {
+                    let specific = 2u32;
+                    let op = if predicated {
+                        opcode_token(66, 4, mod_bits) | 0x1000_0000 | (specific << 16)
+                    } else {
+                        opcode_token(66, 3, mod_bits) | (specific << 16)
+                    };
+                    tokens.push(op);
+                    if predicated && pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
+                    tokens.push(dst);
+                    tokens.push(src0);
+                    tokens.push(sampler_token);
+                    if predicated && !pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
                 }
                 // texldl (explicit LOD)
-                1 => {
-                    tokens.push(opcode_token(79, 3, mod_bits));
+                2 => {
+                    let op = if predicated {
+                        opcode_token(79, 4, mod_bits) | 0x1000_0000
+                    } else {
+                        opcode_token(79, 3, mod_bits)
+                    };
+                    tokens.push(op);
+                    if predicated && pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
                     tokens.push(dst);
                     tokens.push(src0);
                     tokens.push(sampler_token);
+                    if predicated && !pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
                 }
                 // texldd (gradients) - pixel shaders only.
                 _ => {
-                    tokens.push(opcode_token(77, 5, mod_bits));
+                    let r0_src = src_token(0, 0, swz, src_mod);
+                    let r1_src = src_token(0, 1, swz, src_mod);
+                    let op = if predicated {
+                        opcode_token(77, 6, mod_bits) | 0x1000_0000
+                    } else {
+                        opcode_token(77, 5, mod_bits)
+                    };
+                    tokens.push(op);
+                    if predicated && pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
                     tokens.push(dst);
                     tokens.push(src0);
-                    tokens.push(src0);
-                    tokens.push(src1);
+                    tokens.push(r0_src);
+                    tokens.push(r1_src);
                     tokens.push(sampler_token);
+                    if predicated && !pred_is_prefix {
+                        tokens.push(pred_token);
+                    }
                 }
+            }
+
+            // Optionally include a discard path (texkill) to exercise discard lowering.
+            if seed.get(16).copied().unwrap_or(0) & 1 != 0 {
+                tokens.push(opcode_token(65, 1, 0));
+                tokens.push(src0);
             }
         }
 
