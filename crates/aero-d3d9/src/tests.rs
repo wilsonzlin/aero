@@ -3829,7 +3829,7 @@ fn translate_entrypoint_rejects_pixel_shader_write_to_o_pos() {
 fn translate_entrypoint_rejects_vertex_shader_write_to_o_depth() {
     // Vertex shaders cannot write pixel shader depth outputs (`oDepth`).
     let mut words = vec![0xFFFE_0300]; // vs_3_0
-    // mov oDepth, v0
+                                       // mov oDepth, v0
     words.extend(enc_inst(0x0001, &[enc_dst(9, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
 
