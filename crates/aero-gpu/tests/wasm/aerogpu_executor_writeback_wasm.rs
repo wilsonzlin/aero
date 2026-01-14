@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use crate::common;
 use aero_gpu::aerogpu_executor::{AeroGpuExecutor, ExecutorEvent};
 use aero_gpu::guest_memory::VecGuestMemory;
@@ -135,9 +133,13 @@ async fn aerogpu_executor_process_cmd_stream_rejects_writeback_before_executing_
         "expected writeback pre-scan error, got: {report:?}"
     );
     assert_eq!(report.packets_processed, 0);
-    let err = report.events.iter().find_map(|e| match e {
-        ExecutorEvent::Error { at, message } => Some((*at, message)),
-    });
+    let err = report
+        .events
+        .iter()
+        .map(|e| match e {
+            ExecutorEvent::Error { at, message } => (*at, message),
+        })
+        .next();
     let Some((at, message)) = err else {
         panic!(
             "expected WRITEBACK_DST wasm validation error, got: {:#?}",

@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use crate::common;
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{AerogpuD3d9Executor, GuestMemory, VecGuestMemory};

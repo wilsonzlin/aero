@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use crate::common;
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, AerogpuD3d9ExecutorConfig};
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
