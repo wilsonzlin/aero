@@ -122,7 +122,9 @@ pub enum Opcode {
     Break,
     Breakc,
     Call,
+    CallNz,
     Ret,
+    Label,
     Dcl,
     Def,
     DefI,
@@ -167,11 +169,11 @@ impl Opcode {
             23 => Self::M3x3, // 0x17
             24 => Self::M3x2, // 0x18
             25 => Self::Call,
+            26 => Self::CallNz,
             27 => Self::Loop,
             28 => Self::Ret,
             29 => Self::EndLoop,
-            38 => Self::Rep,
-            39 => Self::EndRep,
+            30 => Self::Label,
             31 => Self::Dcl,
             32 => Self::Pow,
             33 => Self::Crs,    // 0x21
@@ -179,6 +181,8 @@ impl Opcode {
             35 => Self::Abs,    // 0x23
             36 => Self::Nrm,    // 0x24
             37 => Self::SinCos, // 0x25
+            38 => Self::Rep,
+            39 => Self::EndRep,
             40 => Self::If,
             41 => Self::Ifc,
             42 => Self::Else,
@@ -248,13 +252,15 @@ impl Opcode {
             Self::Nrm => 36,
             Self::SinCos => 37,
             Self::Call => 25,
+            Self::CallNz => 26,
             Self::Loop => 27,
             Self::Ret => 28,
             Self::EndLoop => 29,
-            Self::Rep => 38,
-            Self::EndRep => 39,
+            Self::Label => 30,
             Self::Dcl => 31,
             Self::Pow => 32,
+            Self::Rep => 38,
+            Self::EndRep => 39,
             Self::If => 40,
             Self::Ifc => 41,
             Self::Else => 42,
@@ -331,7 +337,9 @@ impl Opcode {
             Self::Break => "break",
             Self::Breakc => "breakc",
             Self::Call => "call",
+            Self::CallNz => "callnz",
             Self::Ret => "ret",
+            Self::Label => "label",
             Self::Dcl => "dcl",
             Self::Def => "def",
             Self::DefI => "defi",
@@ -1253,6 +1261,28 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::Call => {
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Src],
+                &mut operands,
+            )?;
+        }
+        Opcode::CallNz => {
+            // callnz: label, cond
+            parse_fixed_operands(
+                opcode,
+                stage,
+                major,
+                operand_tokens,
+                &[OperandKind::Src, OperandKind::Src],
+                &mut operands,
+            )?;
+        }
+        Opcode::Label => {
+            // label: label
             parse_fixed_operands(
                 opcode,
                 stage,

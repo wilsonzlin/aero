@@ -4,7 +4,7 @@
 //! new shader pipeline. It is intended for deterministic, headless regression tests
 //! (pixel hash comparisons) on CI where a GPU/WebGPU adapter may be missing.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::software::{RenderTarget, Texture, Vec4};
 use crate::state::{
@@ -336,6 +336,7 @@ enum Flow {
     Continue,
     Break,
     Discard,
+    Return,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -376,6 +377,7 @@ fn eval_cond(
 fn exec_block(
     block: &Block,
     depth: usize,
+    subroutines: &BTreeMap<u32, Block>,
     temps: &mut [Vec4],
     addrs: &mut [Vec4],
     loops: &mut [Vec4],
@@ -433,6 +435,7 @@ fn exec_block(
                     exec_block(
                         then_block,
                         depth + 1,
+                        subroutines,
                         temps,
                         addrs,
                         loops,
@@ -454,6 +457,7 @@ fn exec_block(
                     exec_block(
                         else_block,
                         depth + 1,
+                        subroutines,
                         temps,
                         addrs,
                         loops,
@@ -526,6 +530,7 @@ fn exec_block(
                     match exec_block(
                         body,
                         depth + 1,
+                        subroutines,
                         temps,
                         addrs,
                         loops,
@@ -548,6 +553,11 @@ fn exec_block(
                         Flow::Discard => {
                             discarded = true;
                             break;
+                        }
+                        Flow::Return => {
+                            // Early return from inside the loop unwinds the loop stack.
+                            loops[loop_idx] = saved_loop_reg;
+                            return Flow::Return;
                         }
                     }
 
@@ -603,6 +613,7 @@ fn exec_block(
                     match exec_block(
                         body,
                         depth + 1,
+                        subroutines,
                         temps,
                         addrs,
                         loops,
@@ -625,6 +636,10 @@ fn exec_block(
                         Flow::Discard => {
                             discarded = true;
                             break;
+                        }
+                        Flow::Return => {
+                            loops[loop_idx] = saved_loop_reg;
+                            return Flow::Return;
                         }
                     }
 
@@ -659,6 +674,37 @@ fn exec_block(
                     Flow::Continue
                 }
             }
+            Stmt::Call { label } => {
+                if let Some(body) = subroutines.get(label) {
+                    match exec_block(
+                        body,
+                        depth,
+                        subroutines,
+                        temps,
+                        addrs,
+                        loops,
+                        preds,
+                        inputs_v,
+                        inputs_t,
+                        constants,
+                        builtins,
+                        sampler_types,
+                        textures,
+                        sampler_states,
+                        o_pos,
+                        o_attr,
+                        o_tex,
+                        o_out,
+                        o_color,
+                    ) {
+                        Flow::Continue | Flow::Break | Flow::Return => Flow::Continue,
+                        Flow::Discard => Flow::Discard,
+                    }
+                } else {
+                    Flow::Continue
+                }
+            }
+            Stmt::Return => Flow::Return,
         };
 
         match flow {
@@ -1296,6 +1342,7 @@ fn run_vertex_shader(
     exec_block(
         &ir.body,
         0,
+        &ir.subroutines,
         &mut temps,
         &mut addrs,
         &mut loops,
@@ -1347,6 +1394,7 @@ fn run_pixel_shader(
     let flow = exec_block(
         &ir.body,
         0,
+        &ir.subroutines,
         &mut temps,
         &mut addrs,
         &mut loops,
@@ -1367,7 +1415,7 @@ fn run_pixel_shader(
 
     match flow {
         Flow::Discard => None,
-        Flow::Continue | Flow::Break => Some(o_color),
+        Flow::Continue | Flow::Break | Flow::Return => Some(o_color),
     }
 }
 
@@ -1441,6 +1489,7 @@ fn collect_used_pixel_inputs(block: &Block, out: &mut BTreeSet<(RegFile, u32)>) 
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_used_pixel_inputs_cond(cond, out),
             Stmt::Discard { src } => collect_used_pixel_inputs_src(src, out),
+            Stmt::Call { .. } | Stmt::Return => {}
         }
     }
 }
@@ -1721,6 +1770,9 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
 
     let mut used_ps_inputs = BTreeSet::<(RegFile, u32)>::new();
     collect_used_pixel_inputs(&ps.body, &mut used_ps_inputs);
+    for body in ps.subroutines.values() {
+        collect_used_pixel_inputs(body, &mut used_ps_inputs);
+    }
     let mut ps_inputs = Vec::<PsInputLocation>::new();
     let mut ps_position_inputs = BTreeSet::<u16>::new();
     for (file, index) in used_ps_inputs {

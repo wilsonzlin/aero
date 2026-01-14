@@ -4,6 +4,7 @@ use aero_d3d9::sm3::ir::{Block, Cond, RegFile, RegRef, ShaderIr, Src, Stmt};
 use aero_d3d9::sm3::types::{ShaderStage, ShaderVersion};
 use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, generate_wgsl, verify_ir};
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
+use std::collections::BTreeMap;
 
 fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     let prefix = match stage {
@@ -77,6 +78,7 @@ fn nested_if_ir(nesting: usize) -> ShaderIr {
         const_defs_f32: Vec::new(),
         const_defs_i32: Vec::new(),
         const_defs_bool: Vec::new(),
+        subroutines: BTreeMap::new(),
         body: inner,
         uses_semantic_locations: false,
     }

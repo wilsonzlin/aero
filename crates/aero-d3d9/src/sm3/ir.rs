@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use crate::sm3::decode::{
     ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType, WriteMask,
@@ -16,6 +16,8 @@ pub struct ShaderIr {
     pub const_defs_i32: Vec<ConstDefI32>,
     /// `defb b#` constants embedded in the shader bytecode.
     pub const_defs_bool: Vec<ConstDefBool>,
+    /// SM3 subroutine bodies keyed by label register index (`label l#`).
+    pub subroutines: BTreeMap<u32, Block>,
     pub body: Block,
     /// True when vertex shader input registers were remapped from raw `v#` indices to canonical
     /// WGSL `@location(n)` values based on `dcl_*` semantics (see
@@ -92,6 +94,12 @@ pub enum Stmt {
     Discard {
         src: Src,
     },
+    /// Call an SM3 subroutine defined by `label l#`.
+    Call {
+        label: u32,
+    },
+    /// Return from the current subroutine call frame (`ret` in SM3).
+    Return,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -530,6 +538,13 @@ impl fmt::Display for ShaderIr {
                 writeln!(f, "  b{} = {}", def.index, def.value)?;
             }
         }
+        if !self.subroutines.is_empty() {
+            writeln!(f, "subroutines:")?;
+            for (label, body) in &self.subroutines {
+                writeln!(f, "  l{label}:")?;
+                fmt_block(f, body, 2)?;
+            }
+        }
         writeln!(f, "body:")?;
         fmt_block(f, &self.body, 1)
     }
@@ -643,6 +658,8 @@ fn fmt_stmt(f: &mut fmt::Formatter<'_>, stmt: &Stmt, indent: usize) -> fmt::Resu
         Stmt::Break => writeln!(f, "{}break", pad),
         Stmt::BreakIf { cond } => writeln!(f, "{}break_if {}", pad, format_cond(cond)),
         Stmt::Discard { src } => writeln!(f, "{}discard {}", pad, format_src(src)),
+        Stmt::Call { label } => writeln!(f, "{}call l{}", pad, label),
+        Stmt::Return => writeln!(f, "{}ret", pad),
     }
 }
 

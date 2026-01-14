@@ -5372,6 +5372,7 @@ fn sm3_verify_rejects_loop_init_with_non_loop_register() {
         const_defs_f32: Vec::new(),
         const_defs_i32: Vec::new(),
         const_defs_bool: Vec::new(),
+        subroutines: std::collections::BTreeMap::new(),
         body: sm3::ir::Block {
             stmts: vec![sm3::ir::Stmt::Loop {
                 init: sm3::ir::LoopInit {
@@ -5409,6 +5410,7 @@ fn sm3_verify_rejects_loop_init_with_non_integer_ctrl_reg() {
         const_defs_f32: Vec::new(),
         const_defs_i32: Vec::new(),
         const_defs_bool: Vec::new(),
+        subroutines: std::collections::BTreeMap::new(),
         body: sm3::ir::Block {
             stmts: vec![sm3::ir::Stmt::Loop {
                 init: sm3::ir::LoopInit {

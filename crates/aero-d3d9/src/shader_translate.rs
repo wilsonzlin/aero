@@ -729,6 +729,9 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
 fn collect_used_samplers_sm3(ir: &sm3::ir::ShaderIr) -> BTreeSet<u16> {
     let mut out = BTreeSet::new();
     collect_used_samplers_block(&ir.body, &mut out);
+    for body in ir.subroutines.values() {
+        collect_used_samplers_block(body, &mut out);
+    }
     out
 }
 
@@ -767,7 +770,9 @@ fn collect_used_samplers_block(block: &sm3::ir::Block, out: &mut BTreeSet<u16>) 
             sm3::ir::Stmt::Rep { body, .. } => collect_used_samplers_block(body, out),
             sm3::ir::Stmt::Break
             | sm3::ir::Stmt::BreakIf { .. }
-            | sm3::ir::Stmt::Discard { .. } => {}
+            | sm3::ir::Stmt::Discard { .. }
+            | sm3::ir::Stmt::Call { .. }
+            | sm3::ir::Stmt::Return => {}
         }
     }
 }

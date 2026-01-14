@@ -266,11 +266,11 @@ fn nested_loops_restore_al() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
 
     // Each loop should save and restore the loop register.
+    assert!(wgsl.matches("let _aero_saved_loop_reg").count() >= 2, "{wgsl}");
     assert!(
-        wgsl.matches("let _aero_saved_loop_reg").count() >= 2,
+        wgsl.matches("aL = _aero_saved_loop_reg_").count() >= 2,
         "{wgsl}"
     );
-    assert!(wgsl.contains("aL = _aero_saved_loop_reg;"), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(

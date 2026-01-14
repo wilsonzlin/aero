@@ -1,4 +1,6 @@
-use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
+use crate::shader_limits::{
+    MAX_D3D9_SHADER_CONTROL_FLOW_NESTING, MAX_D3D9_SHADER_SUBROUTINE_CALL_DEPTH,
+};
 use crate::sm3::decode::{
     DclInfo, DclUsage, DecodedInstruction, DecodedShader, Opcode, Operand, RegisterFile,
     ResultShift, SrcModifier,
@@ -10,7 +12,7 @@ use crate::sm3::ir::{
 };
 use crate::sm3::types::ShaderStage;
 use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildError {
@@ -72,26 +74,349 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
         }
     }
 
-    // Pass 2: structured control-flow + ops.
+    // Pass 2: structured control-flow + ops (including SM3 subroutines).
+    let label_map = collect_label_map(shader)?;
+    let mut call_edges: HashMap<CallGraphNode, HashMap<u32, CallSite>> = HashMap::new();
+    let mut worklist: VecDeque<u32> = VecDeque::new();
+
+    let body = build_block(
+        shader,
+        0,
+        BuildMode::Main,
+        CallGraphNode::Main,
+        &label_map,
+        &mut call_edges,
+        &mut worklist,
+    )?;
+
+    let mut subroutines: BTreeMap<u32, Block> = BTreeMap::new();
+    while let Some(label) = worklist.pop_front() {
+        if subroutines.contains_key(&label) {
+            continue;
+        }
+        let &label_inst_index = label_map.get(&label).ok_or_else(|| BuildError {
+            location: crate::sm3::decode::InstructionLocation {
+                instruction_index: 0,
+                token_index: 0,
+            },
+            opcode: Opcode::Unknown(0),
+            message: format!("internal error: missing label l{label} in label map"),
+        })?;
+
+        let start = label_inst_index
+            .checked_add(1)
+            .ok_or_else(|| err_internal("label instruction index overflow"))?;
+        let block = build_block(
+            shader,
+            start,
+            BuildMode::Subroutine { label },
+            CallGraphNode::Subroutine(label),
+            &label_map,
+            &mut call_edges,
+            &mut worklist,
+        )?;
+        subroutines.insert(label, block);
+    }
+
+    validate_call_graph(&call_edges)?;
+
+    let mut ir = ShaderIr {
+        version,
+        inputs,
+        outputs,
+        samplers,
+        const_defs_f32,
+        const_defs_i32,
+        const_defs_bool,
+        subroutines,
+        body,
+        uses_semantic_locations: false,
+    };
+
+    apply_vertex_input_remap(&mut ir)?;
+
+    Ok(ir)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuildMode {
+    Main,
+    Subroutine { label: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum CallGraphNode {
+    Main,
+    Subroutine(u32),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CallSite {
+    location: crate::sm3::decode::InstructionLocation,
+    opcode: Opcode,
+}
+
+fn collect_label_map(shader: &DecodedShader) -> Result<HashMap<u32, usize>, BuildError> {
+    let mut map = HashMap::<u32, usize>::new();
+    for (idx, inst) in shader.instructions.iter().enumerate() {
+        if inst.opcode != Opcode::Label {
+            continue;
+        }
+        let label = extract_label_operand(inst, 0)?;
+        if let Some(prev) = map.insert(label, idx) {
+            return Err(err(
+                inst,
+                format!("duplicate label definition for l{label} (previous at instruction {prev})"),
+            ));
+        }
+    }
+    Ok(map)
+}
+
+fn record_call_edge(
+    call_edges: &mut HashMap<CallGraphNode, HashMap<u32, CallSite>>,
+    caller: CallGraphNode,
+    callee: u32,
+    inst: &DecodedInstruction,
+) {
+    call_edges
+        .entry(caller)
+        .or_default()
+        .entry(callee)
+        .or_insert(CallSite {
+            location: inst.location,
+            opcode: inst.opcode,
+        });
+}
+
+fn validate_call_graph(call_edges: &HashMap<CallGraphNode, HashMap<u32, CallSite>>) -> Result<(), BuildError> {
+    fn dfs(
+        node: CallGraphNode,
+        depth: usize,
+        stack: &mut Vec<u32>,
+        call_edges: &HashMap<CallGraphNode, HashMap<u32, CallSite>>,
+    ) -> Result<(), BuildError> {
+        let Some(children) = call_edges.get(&node) else {
+            return Ok(());
+        };
+        for (&child, site) in children {
+            if stack.contains(&child) {
+                let mut chain = stack
+                    .iter()
+                    .map(|l| format!("l{l}"))
+                    .collect::<Vec<_>>();
+                chain.push(format!("l{child}"));
+                return Err(BuildError {
+                    location: site.location,
+                    opcode: site.opcode,
+                    message: format!("recursive subroutine call detected: {}", chain.join(" -> ")),
+                });
+            }
+
+            let next_depth = depth + 1;
+            if next_depth > MAX_D3D9_SHADER_SUBROUTINE_CALL_DEPTH {
+                let mut chain = stack
+                    .iter()
+                    .map(|l| format!("l{l}"))
+                    .collect::<Vec<_>>();
+                chain.push(format!("l{child}"));
+                return Err(BuildError {
+                    location: site.location,
+                    opcode: site.opcode,
+                    message: format!(
+                        "subroutine call stack depth exceeds maximum {MAX_D3D9_SHADER_SUBROUTINE_CALL_DEPTH}: {}",
+                        chain.join(" -> ")
+                    ),
+                });
+            }
+
+            stack.push(child);
+            dfs(
+                CallGraphNode::Subroutine(child),
+                next_depth,
+                stack,
+                call_edges,
+            )?;
+            stack.pop();
+        }
+        Ok(())
+    }
+
+    let mut stack = Vec::new();
+    dfs(CallGraphNode::Main, 0, &mut stack, call_edges)
+}
+
+fn build_block(
+    shader: &DecodedShader,
+    start_instruction_index: usize,
+    mode: BuildMode,
+    node: CallGraphNode,
+    label_map: &HashMap<u32, usize>,
+    call_edges: &mut HashMap<CallGraphNode, HashMap<u32, CallSite>>,
+    worklist: &mut VecDeque<u32>,
+) -> Result<Block, BuildError> {
+    let version = shader.version;
     let mut stack: Vec<Frame> = vec![Frame::Root(Block::new())];
 
-    for inst in &shader.instructions {
+    let mut idx = start_instruction_index;
+    let mut terminated = false;
+
+    while idx < shader.instructions.len() {
+        let inst = &shader.instructions[idx];
+        idx += 1;
+
         match inst.opcode {
             Opcode::Comment | Opcode::Dcl | Opcode::Def | Opcode::DefI | Opcode::DefB => continue,
-            Opcode::End => break,
-            Opcode::Ret => {
-                // Some real-world SM3 shaders terminate the main program with an explicit `ret`
-                // instruction before the final END token. Since we don't currently support SM3
-                // subroutines (`call`/`callnz`/`label`), treat a top-level `ret` as end-of-shader.
-                //
-                // `ret` inside structured control flow would imply an early exit and requires a
-                // dedicated IR construct; reject that for now.
-                if stack.len() != 1 {
-                    return Err(err(inst, "ret inside control flow is not supported"));
+
+            Opcode::End => match mode {
+                BuildMode::Main => {
+                    terminated = true;
+                    break;
                 }
-                break;
+                BuildMode::Subroutine { label } => {
+                    return Err(err(
+                        inst,
+                        format!("subroutine l{label} reached end without a terminating ret"),
+                    ));
+                }
+            },
+
+            Opcode::Label => {
+                // SM3 `label` is a no-op at runtime; it just defines a call target.
+                continue;
             }
+
+            Opcode::Ret => match mode {
+                BuildMode::Main => {
+                    if inst.predicate.is_some() {
+                        return Err(err(inst, "predicated ret in main program is not supported"));
+                    }
+                    // Some real-world SM3 shaders terminate the main program with an explicit `ret`
+                    // instruction before the final END token. Treat a top-level `ret` as
+                    // end-of-shader.
+                    //
+                    // `ret` inside structured control flow would imply an early exit and requires a
+                    // dedicated IR construct; reject that for now.
+                    if stack.len() != 1 {
+                        return Err(err(inst, "ret inside control flow is not supported"));
+                    }
+                    terminated = true;
+                    break;
+                }
+                BuildMode::Subroutine { label: _ } => {
+                    // `ret` in a subroutine returns to the caller. Unlike the main program, `ret`
+                    // can appear inside structured control flow (early return).
+                    if let Some(pred) = &inst.predicate {
+                        let cond = Cond::Predicate {
+                            pred: PredicateRef {
+                                reg: to_ir_reg(inst, &pred.reg)?,
+                                component: pred.component,
+                                negate: pred.negate,
+                            },
+                        };
+                        let then_block = Block {
+                            stmts: vec![Stmt::Return],
+                        };
+                        push_stmt(
+                            &mut stack,
+                            Stmt::If {
+                                cond,
+                                then_block,
+                                else_block: None,
+                            },
+                        )?;
+                        continue;
+                    }
+
+                    push_stmt(&mut stack, Stmt::Return)?;
+
+                    // A top-level `ret` terminates the subroutine definition in the token stream.
+                    if stack.len() == 1 {
+                        terminated = true;
+                        break;
+                    }
+                }
+            },
+
             Opcode::Nop => {}
+
+            Opcode::Call => {
+                let label = extract_label_operand(inst, 0)?;
+                if !label_map.contains_key(&label) {
+                    return Err(err(inst, format!("call target label l{label} is not defined")));
+                }
+                record_call_edge(call_edges, node, label, inst);
+                worklist.push_back(label);
+
+                let call_stmt = Stmt::Call { label };
+                if let Some(pred) = &inst.predicate {
+                    let cond = Cond::Predicate {
+                        pred: PredicateRef {
+                            reg: to_ir_reg(inst, &pred.reg)?,
+                            component: pred.component,
+                            negate: pred.negate,
+                        },
+                    };
+                    let then_block = Block {
+                        stmts: vec![call_stmt],
+                    };
+                    push_stmt(
+                        &mut stack,
+                        Stmt::If {
+                            cond,
+                            then_block,
+                            else_block: None,
+                        },
+                    )?;
+                } else {
+                    push_stmt(&mut stack, call_stmt)?;
+                }
+            }
+
+            Opcode::CallNz => {
+                let label = extract_label_operand(inst, 0)?;
+                if !label_map.contains_key(&label) {
+                    return Err(err(
+                        inst,
+                        format!("callnz target label l{label} is not defined"),
+                    ));
+                }
+                record_call_edge(call_edges, node, label, inst);
+                worklist.push_back(label);
+
+                let cond_src = extract_src(inst, 1)?;
+                let inner_if = Stmt::If {
+                    cond: Cond::NonZero { src: cond_src },
+                    then_block: Block {
+                        stmts: vec![Stmt::Call { label }],
+                    },
+                    else_block: None,
+                };
+
+                if let Some(pred) = &inst.predicate {
+                    let cond = Cond::Predicate {
+                        pred: PredicateRef {
+                            reg: to_ir_reg(inst, &pred.reg)?,
+                            component: pred.component,
+                            negate: pred.negate,
+                        },
+                    };
+                    let then_block = Block {
+                        stmts: vec![inner_if],
+                    };
+                    push_stmt(
+                        &mut stack,
+                        Stmt::If {
+                            cond,
+                            then_block,
+                            else_block: None,
+                        },
+                    )?;
+                } else {
+                    push_stmt(&mut stack, inner_if)?;
+                }
+            }
+
             Opcode::If => {
                 if stack.len() > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
                     return Err(err(
@@ -510,41 +835,32 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::TexLdl => push_texldl(&mut stack, inst)?,
             Opcode::TexLdd => push_texldd(&mut stack, inst)?,
 
-            Opcode::Call => return Err(err(inst, "call/callnz not supported")),
-
             Opcode::Unknown(op) => return Err(err(inst, format!("unsupported opcode 0x{op:04x}"))),
         }
     }
 
-    let body = match stack.pop() {
-        Some(Frame::Root(block)) if stack.is_empty() => block,
-        _ => {
-            return Err(BuildError {
-                location: crate::sm3::decode::InstructionLocation {
-                    instruction_index: 0,
-                    token_index: 0,
-                },
-                opcode: Opcode::Unknown(0),
-                message: "unbalanced control-flow stack".to_owned(),
-            })
-        }
+    if matches!(mode, BuildMode::Subroutine { .. }) && !terminated {
+        return Err(err_internal("subroutine parsing terminated without reaching ret"));
+    }
+
+    match stack.pop() {
+        Some(Frame::Root(block)) if stack.is_empty() => Ok(block),
+        _ => Err(err_internal("unbalanced control-flow stack")),
+    }
+}
+
+fn extract_label_operand(inst: &DecodedInstruction, idx: usize) -> Result<u32, BuildError> {
+    let src = match inst.operands.get(idx) {
+        Some(Operand::Src(src)) => src,
+        _ => return Err(err(inst, format!("missing label operand {idx}"))),
     };
-
-    let mut ir = ShaderIr {
-        version,
-        inputs,
-        outputs,
-        samplers,
-        const_defs_f32,
-        const_defs_i32,
-        const_defs_bool,
-        body,
-        uses_semantic_locations: false,
-    };
-
-    apply_vertex_input_remap(&mut ir)?;
-
-    Ok(ir)
+    if src.reg.file != RegisterFile::Label {
+        return Err(err(inst, "label operand is not a label register"));
+    }
+    if src.reg.relative.is_some() {
+        return Err(err(inst, "relative addressing is not supported for label operands"));
+    }
+    Ok(src.reg.index)
 }
 
 fn handle_dcl(
@@ -806,6 +1122,7 @@ fn collect_used_input_regs_block(block: &Block, out: &mut BTreeSet<u32>) {
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_used_input_regs_cond(cond, out),
             Stmt::Discard { src } => collect_used_input_regs_src(src, out),
+            Stmt::Call { .. } | Stmt::Return => {}
         }
     }
 }
@@ -1123,6 +1440,7 @@ fn remap_input_regs_in_block(block: &mut Block, remap: &HashMap<u32, u32>) {
             Stmt::Break => {}
             Stmt::BreakIf { cond } => remap_input_regs_in_cond(cond, remap),
             Stmt::Discard { src } => remap_input_regs_in_src(src, remap),
+            Stmt::Call { .. } | Stmt::Return => {}
         }
     }
 }
@@ -1410,6 +1728,9 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
 
     let mut used_vs_inputs = BTreeSet::<u32>::new();
     collect_used_input_regs_block(&ir.body, &mut used_vs_inputs);
+    for body in ir.subroutines.values() {
+        collect_used_input_regs_block(body, &mut used_vs_inputs);
+    }
 
     if used_vs_inputs.is_empty() {
         return Ok(());
@@ -1487,6 +1808,9 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
     }
 
     remap_input_regs_in_block(&mut ir.body, &remap);
+    for body in ir.subroutines.values_mut() {
+        remap_input_regs_in_block(body, &remap);
+    }
     ir.uses_semantic_locations = true;
     Ok(())
 }

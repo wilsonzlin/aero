@@ -235,7 +235,7 @@ fn wgsl_ps30_reads_vpos_compiles() {
     .expect("wgsl validate");
 
     assert!(wgsl.contains("@builtin(position)"), "{wgsl}");
-    assert!(wgsl.contains("let misc0"), "{wgsl}");
+    assert!(wgsl.contains("misc0 = input.frag_pos;"), "{wgsl}");
 }
 
 #[test]
@@ -280,7 +280,7 @@ fn wgsl_ps30_dcl_position_v0_uses_builtin_position() {
         "expected POSITION input to map to fragment @builtin(position)\n{wgsl}"
     );
     assert!(
-        wgsl.contains("let v0: vec4<f32> = input.frag_pos;"),
+        wgsl.contains("v0 = input.frag_pos;"),
         "expected v0 to be bound from builtin frag_pos\n{wgsl}"
     );
     assert!(
@@ -325,7 +325,10 @@ fn wgsl_ps30_reads_vface_compiles() {
     .expect("wgsl validate");
 
     assert!(wgsl.contains("@builtin(front_facing)"), "{wgsl}");
-    assert!(wgsl.contains("let misc1"), "{wgsl}");
+    assert!(
+        wgsl.contains("misc1 = vec4<f32>(face, face, face, face);"),
+        "{wgsl}"
+    );
 }
 
 #[test]
@@ -460,7 +463,8 @@ fn wgsl_dcl_cube_sampler_emits_texture_cube_and_xyz_coords() {
         wgsl.wgsl
     );
     assert!(
-        wgsl.wgsl.contains("textureSample(tex0, samp0, (c0).xyz)"),
+        wgsl.wgsl
+            .contains("textureSample(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz)"),
         "{}",
         wgsl.wgsl
     );
@@ -516,7 +520,8 @@ fn wgsl_dcl_volume_sampler_emits_texture_3d_and_xyz_coords() {
         wgsl.wgsl
     );
     assert!(
-        wgsl.wgsl.contains("textureSample(tex0, samp0, (c0).xyz)"),
+        wgsl.wgsl
+            .contains("textureSample(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz)"),
         "{}",
         wgsl.wgsl
     );
@@ -572,7 +577,8 @@ fn wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord() {
         wgsl.wgsl
     );
     assert!(
-        wgsl.wgsl.contains("textureSample(tex0, samp0, (c0).x)"),
+        wgsl.wgsl
+            .contains("textureSample(tex0, samp0, (constants.c[CONST_BASE + 0u]).x)"),
         "{}",
         wgsl.wgsl
     );
@@ -618,7 +624,9 @@ fn wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
     assert!(
-        wgsl.contains("textureSample(tex0, samp0, ((c0).x / (c0).w))"),
+        wgsl.contains(
+            "textureSample(tex0, samp0, ((constants.c[CONST_BASE + 0u]).x / (constants.c[CONST_BASE + 0u]).w))"
+        ),
         "{wgsl}"
     );
 
@@ -664,7 +672,9 @@ fn wgsl_dcl_1d_sampler_texldd_emits_texture_sample_grad_x() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(
-        wgsl.contains("textureSampleGrad(tex0, samp0, (c0).x, (c1).x, (c2).x)"),
+        wgsl.contains(
+            "textureSampleGrad(tex0, samp0, (constants.c[CONST_BASE + 0u]).x, (constants.c[CONST_BASE + 1u]).x, (constants.c[CONST_BASE + 2u]).x)"
+        ),
         "{wgsl}"
     );
 
@@ -709,7 +719,9 @@ fn wgsl_dcl_cube_sampler_texldp_emits_projective_divide_xyz() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
     assert!(
-        wgsl.contains("textureSample(tex0, samp0, ((c0).xyz / (c0).w))"),
+        wgsl.contains(
+            "textureSample(tex0, samp0, ((constants.c[CONST_BASE + 0u]).xyz / (constants.c[CONST_BASE + 0u]).w))"
+        ),
         "{wgsl}"
     );
 
@@ -754,7 +766,9 @@ fn wgsl_dcl_volume_sampler_texldp_emits_projective_divide_xyz() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
     assert!(
-        wgsl.contains("textureSample(tex0, samp0, ((c0).xyz / (c0).w))"),
+        wgsl.contains(
+            "textureSample(tex0, samp0, ((constants.c[CONST_BASE + 0u]).xyz / (constants.c[CONST_BASE + 0u]).w))"
+        ),
         "{wgsl}"
     );
 
@@ -795,7 +809,8 @@ fn wgsl_texldp_emits_projective_divide() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
     assert!(
-        wgsl.contains("((c0).xy / (c0).w)") || wgsl.contains(").xy / (c0).w"),
+        wgsl.contains("((constants.c[CONST_BASE + 0u]).xy / (constants.c[CONST_BASE + 0u]).w)")
+            || wgsl.contains(").xy / (constants.c[CONST_BASE + 0u]).w"),
         "{wgsl}"
     );
 
@@ -840,7 +855,9 @@ fn wgsl_texldb_emits_texture_sample_bias() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSampleBias("), "{wgsl}");
     assert!(
-        wgsl.contains("textureSampleBias(tex0, samp0, (c0).xy, (c0).w)"),
+        wgsl.contains(
+            "textureSampleBias(tex0, samp0, (constants.c[CONST_BASE + 0u]).xy, (constants.c[CONST_BASE + 0u]).w)"
+        ),
         "{wgsl}"
     );
 
@@ -888,7 +905,9 @@ fn wgsl_dcl_1d_sampler_texldb_emits_texture_sample_grad_x_with_bias() {
         "textureSampleBias is not valid for 1D textures in WGSL\n{wgsl}"
     );
     assert!(
-        wgsl.contains("textureSampleGrad(tex0, samp0, (c0).x, (dpdx((c0).x) * exp2((c0).w)), (dpdy((c0).x) * exp2((c0).w)))"),
+        wgsl.contains(
+            "textureSampleGrad(tex0, samp0, (constants.c[CONST_BASE + 0u]).x, (dpdx((constants.c[CONST_BASE + 0u]).x) * exp2((constants.c[CONST_BASE + 0u]).w)), (dpdy((constants.c[CONST_BASE + 0u]).x) * exp2((constants.c[CONST_BASE + 0u]).w)))"
+        ),
         "{wgsl}"
     );
 
@@ -933,7 +952,9 @@ fn wgsl_dcl_cube_sampler_texldb_emits_texture_sample_bias_xyz() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSampleBias("), "{wgsl}");
     assert!(
-        wgsl.contains("textureSampleBias(tex0, samp0, (c0).xyz, (c0).w)"),
+        wgsl.contains(
+            "textureSampleBias(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz, (constants.c[CONST_BASE + 0u]).w)"
+        ),
         "{wgsl}"
     );
 
@@ -978,7 +999,9 @@ fn wgsl_dcl_volume_sampler_texldb_emits_texture_sample_bias_xyz() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSampleBias("), "{wgsl}");
     assert!(
-        wgsl.contains("textureSampleBias(tex0, samp0, (c0).xyz, (c0).w)"),
+        wgsl.contains(
+            "textureSampleBias(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz, (constants.c[CONST_BASE + 0u]).w)"
+        ),
         "{wgsl}"
     );
 
@@ -1071,7 +1094,9 @@ fn wgsl_dcl_cube_sampler_texldd_emits_texture_sample_grad_xyz() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(
-        wgsl.contains("textureSampleGrad(tex0, samp0, (c0).xyz, (c1).xyz, (c2).xyz)"),
+        wgsl.contains(
+            "textureSampleGrad(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz, (constants.c[CONST_BASE + 1u]).xyz, (constants.c[CONST_BASE + 2u]).xyz)"
+        ),
         "{wgsl}"
     );
 
@@ -1121,7 +1146,9 @@ fn wgsl_dcl_volume_sampler_texldd_emits_texture_sample_grad_xyz() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(
-        wgsl.contains("textureSampleGrad(tex0, samp0, (c0).xyz, (c1).xyz, (c2).xyz)"),
+        wgsl.contains(
+            "textureSampleGrad(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz, (constants.c[CONST_BASE + 1u]).xyz, (constants.c[CONST_BASE + 2u]).xyz)"
+        ),
         "{wgsl}"
     );
 
@@ -1220,7 +1247,12 @@ fn wgsl_texldl_emits_texture_sample_level_explicit_lod() {
 
     let wgsl = generate_wgsl(&ir).unwrap();
     assert!(wgsl.wgsl.contains("textureSampleLevel("), "{}", wgsl.wgsl);
-    assert!(wgsl.wgsl.contains("(c0).w"), "{}", wgsl.wgsl);
+    assert!(
+        wgsl.wgsl
+            .contains("(constants.c[CONST_BASE + 0u]).w"),
+        "{}",
+        wgsl.wgsl
+    );
     assert_eq!(wgsl.bind_group_layout.sampler_group, 2);
     assert_eq!(
         wgsl.bind_group_layout.sampler_bindings.get(&1),
@@ -1276,7 +1308,9 @@ fn wgsl_dcl_1d_sampler_texldl_emits_texture_sample_level_x_lod() {
     );
     assert!(
         wgsl.wgsl
-            .contains("textureSampleLevel(tex0, samp0, (c0).x, (c0).w)"),
+            .contains(
+                "textureSampleLevel(tex0, samp0, (constants.c[CONST_BASE + 0u]).x, (constants.c[CONST_BASE + 0u]).w)"
+            ),
         "{}",
         wgsl.wgsl
     );
@@ -1326,7 +1360,9 @@ fn wgsl_dcl_cube_sampler_texldl_emits_texture_sample_level_xyz_lod() {
     );
     assert!(
         wgsl.wgsl
-            .contains("textureSampleLevel(tex0, samp0, (c0).xyz, (c0).w)"),
+            .contains(
+                "textureSampleLevel(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz, (constants.c[CONST_BASE + 0u]).w)"
+            ),
         "{}",
         wgsl.wgsl
     );
@@ -1376,7 +1412,9 @@ fn wgsl_dcl_volume_sampler_texldl_emits_texture_sample_level_xyz_lod() {
     );
     assert!(
         wgsl.wgsl
-            .contains("textureSampleLevel(tex0, samp0, (c0).xyz, (c0).w)"),
+            .contains(
+                "textureSampleLevel(tex0, samp0, (constants.c[CONST_BASE + 0u]).xyz, (constants.c[CONST_BASE + 0u]).w)"
+            ),
         "{}",
         wgsl.wgsl
     );
@@ -1490,7 +1528,7 @@ fn wgsl_defb_if_compiles() {
     .expect("wgsl validate");
 
     assert!(
-        wgsl.contains("let b0: vec4<bool> = vec4<bool>(true, true, true, true);"),
+        wgsl.contains("const b0: vec4<bool> = vec4<bool>(true, true, true, true);"),
         "{wgsl}"
     );
     assert!(wgsl.contains("if ("));
@@ -1548,7 +1586,7 @@ fn wgsl_defi_loop_breakc_compiles() {
     .expect("wgsl validate");
 
     assert!(
-        wgsl.contains("let i0: vec4<i32> = vec4<i32>(1, 0, 0, 0);"),
+        wgsl.contains("const i0: vec4<i32> = vec4<i32>(1, 0, 0, 0);"),
         "{wgsl}"
     );
     assert!(wgsl.contains("loop {"), "{wgsl}");
@@ -1671,7 +1709,7 @@ fn wgsl_setp_and_predication_compiles() {
     verify_ir(&ir).unwrap();
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
-    assert!(wgsl.contains("var p0"), "{wgsl}");
+    assert!(wgsl.contains("var<private> p0"), "{wgsl}");
     assert!(wgsl.contains("if ("), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");

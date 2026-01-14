@@ -19,7 +19,11 @@ impl std::fmt::Display for VerifyError {
 impl std::error::Error for VerifyError {}
 
 pub fn verify_ir(ir: &ShaderIr) -> Result<(), VerifyError> {
-    verify_block(&ir.body, ir.version.stage, 0, 0)
+    verify_block(&ir.body, ir.version.stage, 0, 0, false)?;
+    for body in ir.subroutines.values() {
+        verify_block(body, ir.version.stage, 0, 0, true)?;
+    }
+    Ok(())
 }
 
 fn verify_block(
@@ -27,6 +31,7 @@ fn verify_block(
     stage: ShaderStage,
     depth: usize,
     loop_depth: usize,
+    in_subroutine: bool,
 ) -> Result<(), VerifyError> {
     if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
         return Err(VerifyError {
@@ -44,9 +49,9 @@ fn verify_block(
                 else_block,
             } => {
                 verify_cond(cond, stage)?;
-                verify_block(then_block, stage, depth + 1, loop_depth)?;
+                verify_block(then_block, stage, depth + 1, loop_depth, in_subroutine)?;
                 if let Some(else_block) = else_block {
-                    verify_block(else_block, stage, depth + 1, loop_depth)?;
+                    verify_block(else_block, stage, depth + 1, loop_depth, in_subroutine)?;
                 }
             }
             Stmt::Loop { init, body } => {
@@ -60,7 +65,7 @@ fn verify_block(
                         message: "loop init refers to a non-integer-constant register".to_owned(),
                     });
                 }
-                verify_block(body, stage, depth + 1, loop_depth + 1)?;
+                verify_block(body, stage, depth + 1, loop_depth + 1, in_subroutine)?;
             }
             Stmt::Rep { count_reg, body } => {
                 if count_reg.file != RegFile::ConstInt {
@@ -68,7 +73,7 @@ fn verify_block(
                         message: "rep init refers to a non-integer-constant register".to_owned(),
                     });
                 }
-                verify_block(body, stage, depth + 1, loop_depth + 1)?;
+                verify_block(body, stage, depth + 1, loop_depth + 1, in_subroutine)?;
             }
             Stmt::Break => {
                 if loop_depth == 0 {
@@ -92,6 +97,14 @@ fn verify_block(
                     });
                 }
                 verify_src(src, stage)?;
+            }
+            Stmt::Call { .. } => {}
+            Stmt::Return => {
+                if !in_subroutine {
+                    return Err(VerifyError {
+                        message: "ret/return statement outside of a subroutine".to_owned(),
+                    });
+                }
             }
         }
     }

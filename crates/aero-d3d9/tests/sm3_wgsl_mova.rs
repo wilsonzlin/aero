@@ -105,7 +105,7 @@ fn wgsl_supports_mova_and_relative_constant_indexing() {
         .expect("wgsl validate");
 
         // Address register + clamped relative indexing should be present.
-        assert!(wgsl.wgsl.contains("var a0: vec4<i32>"));
+        assert!(wgsl.wgsl.contains("var<private> a0: vec4<i32>"));
         assert!(wgsl.wgsl.contains("a0.x"));
         assert!(wgsl.wgsl.contains("clamp(i32(1)"));
 
@@ -198,7 +198,11 @@ fn wgsl_relative_constant_indexing_uses_addr_component_y() {
 
         // Address register + clamped relative indexing should reference the requested component
         // (`a0.y`), not assume `.x`.
-        assert!(wgsl.wgsl.contains("var a0: vec4<i32>"), "{}", wgsl.wgsl);
+        assert!(
+            wgsl.wgsl.contains("var<private> a0: vec4<i32>"),
+            "{}",
+            wgsl.wgsl
+        );
         assert!(wgsl.wgsl.contains("a0.y"), "{}", wgsl.wgsl);
         assert!(wgsl.wgsl.contains("clamp(i32(1) + (a0.y)"), "{}", wgsl.wgsl);
         assert!(

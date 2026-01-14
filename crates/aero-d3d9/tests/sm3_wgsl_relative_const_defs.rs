@@ -4,6 +4,7 @@ use aero_d3d9::sm3::ir::{
     Block, ConstDefF32, Dst, InstModifiers, IrOp, RegFile, RegRef, RelativeRef, ShaderIr, Src, Stmt,
 };
 use aero_d3d9::sm3::types::{ShaderStage, ShaderVersion};
+use std::collections::BTreeMap;
 
 #[test]
 fn relative_constant_def_overrides_do_not_blow_up_wgsl_size() {
@@ -57,6 +58,7 @@ fn relative_constant_def_overrides_do_not_blow_up_wgsl_size() {
         const_defs_f32,
         const_defs_i32: Vec::new(),
         const_defs_bool: Vec::new(),
+        subroutines: BTreeMap::new(),
         body: Block {
             stmts: vec![Stmt::Op(IrOp::Mov {
                 dst,
@@ -146,6 +148,7 @@ fn lrp_uses_aero_read_const_for_relative_constants_when_defs_present() {
         const_defs_f32,
         const_defs_i32: Vec::new(),
         const_defs_bool: Vec::new(),
+        subroutines: BTreeMap::new(),
         body: Block {
             stmts: vec![Stmt::Op(IrOp::Lrp {
                 dst,

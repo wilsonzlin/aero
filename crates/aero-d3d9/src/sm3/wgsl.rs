@@ -3,7 +3,7 @@ use std::fmt::Write;
 
 use crate::shader_limits::{
     MAX_D3D9_SAMPLER_REGISTER_INDEX, MAX_D3D9_SHADER_CONTROL_FLOW_NESTING,
-    MAX_D3D9_SHADER_REGISTER_INDEX,
+    MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_WGSL_BYTES,
 };
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType};
 use crate::sm3::ir::{
@@ -407,6 +407,7 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage, depth: usize) -> Resul
             Stmt::Break => {}
             Stmt::BreakIf { cond } => collect_cond_usage(cond, usage),
             Stmt::Discard { src } => collect_src_usage(src, usage),
+            Stmt::Call { .. } | Stmt::Return => {}
         }
     }
     Ok(())
@@ -823,7 +824,14 @@ fn src_expr(
                 format!("aero_read_const({idx_expr})")
             }
         } else {
-            reg_var_name(&src.reg)?
+            // For non-relative constant reads, access the uniform buffer directly so that SM3
+            // subroutine helper functions can reference `c#` registers without relying on
+            // function-local `let c# = ...` bindings.
+            if f32_defs.contains_key(&src.reg.index) {
+                format!("c{}", src.reg.index)
+            } else {
+                format!("constants.c[CONST_BASE + {}u]", src.reg.index)
+            }
         }
     } else {
         reg_var_name(&src.reg)?
@@ -1915,6 +1923,29 @@ fn emit_assign(dst: &Dst, value: String) -> Result<String, WgslError> {
     Ok(out)
 }
 
+#[derive(Debug, Clone)]
+struct LoopRestore {
+    loop_reg: String,
+    saved_var: String,
+}
+
+#[derive(Debug, Clone)]
+struct EmitState {
+    in_subroutine: bool,
+    loop_stack: Vec<LoopRestore>,
+    next_loop_id: u32,
+}
+
+impl EmitState {
+    fn new(in_subroutine: bool) -> Self {
+        Self {
+            in_subroutine,
+            loop_stack: Vec::new(),
+            next_loop_id: 0,
+        }
+    }
+}
+
 fn emit_block(
     wgsl: &mut String,
     block: &Block,
@@ -1923,6 +1954,7 @@ fn emit_block(
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
     sampler_types: &HashMap<u32, TextureType>,
+    state: &mut EmitState,
 ) -> Result<(), WgslError> {
     if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
         return Err(err(format!(
@@ -1930,7 +1962,7 @@ fn emit_block(
         )));
     }
     for stmt in &block.stmts {
-        emit_stmt(wgsl, stmt, indent, depth, stage, f32_defs, sampler_types)?;
+        emit_stmt(wgsl, stmt, indent, depth, stage, f32_defs, sampler_types, state)?;
     }
     Ok(())
 }
@@ -1943,6 +1975,7 @@ fn emit_stmt(
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
     sampler_types: &HashMap<u32, TextureType>,
+    state: &mut EmitState,
 ) -> Result<(), WgslError> {
     let pad = "  ".repeat(indent);
     match stmt {
@@ -2105,6 +2138,7 @@ fn emit_stmt(
                 stage,
                 f32_defs,
                 sampler_types,
+                state,
             )?;
             if let Some(else_block) = else_block {
                 let _ = writeln!(wgsl, "{pad}}} else {{");
@@ -2116,6 +2150,7 @@ fn emit_stmt(
                     stage,
                     f32_defs,
                     sampler_types,
+                    state,
                 )?;
             }
             let _ = writeln!(wgsl, "{pad}}}");
@@ -2146,12 +2181,15 @@ fn emit_stmt(
 
             let pad1 = "  ".repeat(indent + 1);
             let pad2 = "  ".repeat(indent + 2);
+            let loop_id = state.next_loop_id;
+            state.next_loop_id = state.next_loop_id.wrapping_add(1);
+            let saved_loop_reg = format!("_aero_saved_loop_reg_{loop_id}");
 
             let _ = writeln!(wgsl, "{pad}{{");
             let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
             let _ = writeln!(
                 wgsl,
-                "{pad1}let _aero_saved_loop_reg: vec4<i32> = {loop_reg};"
+                "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};"
             );
             let _ = writeln!(wgsl, "{pad1}let _aero_loop_end: i32 = ({ctrl}).y;");
             let _ = writeln!(wgsl, "{pad1}let _aero_loop_step: i32 = ({ctrl}).z;");
@@ -2168,6 +2206,10 @@ fn emit_stmt(
                 "{pad2}if ((_aero_loop_step > 0 && {loop_reg}.x > _aero_loop_end) || (_aero_loop_step < 0 && {loop_reg}.x < _aero_loop_end)) {{ break; }}"
             );
 
+            state.loop_stack.push(LoopRestore {
+                loop_reg: loop_reg.clone(),
+                saved_var: saved_loop_reg.clone(),
+            });
             emit_block(
                 wgsl,
                 body,
@@ -2176,12 +2218,14 @@ fn emit_stmt(
                 stage,
                 f32_defs,
                 sampler_types,
+                state,
             )?;
+            state.loop_stack.pop();
 
             let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
             let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
             let _ = writeln!(wgsl, "{pad1}}}");
-            let _ = writeln!(wgsl, "{pad1}{loop_reg} = _aero_saved_loop_reg;");
+            let _ = writeln!(wgsl, "{pad1}{loop_reg} = {saved_loop_reg};");
             let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Rep { count_reg, body } => {
@@ -2208,12 +2252,15 @@ fn emit_stmt(
 
             let pad1 = "  ".repeat(indent + 1);
             let pad2 = "  ".repeat(indent + 2);
+            let loop_id = state.next_loop_id;
+            state.next_loop_id = state.next_loop_id.wrapping_add(1);
+            let saved_loop_reg = format!("_aero_saved_loop_reg_{loop_id}");
 
             let _ = writeln!(wgsl, "{pad}{{");
             let _ = writeln!(wgsl, "{pad1}var _aero_loop_iter: u32 = 0u;");
             let _ = writeln!(
                 wgsl,
-                "{pad1}let _aero_saved_loop_reg: vec4<i32> = {loop_reg};"
+                "{pad1}let {saved_loop_reg}: vec4<i32> = {loop_reg};"
             );
             let _ = writeln!(wgsl, "{pad1}let _aero_rep_count: i32 = ({count}).x;");
             let _ = writeln!(wgsl, "{pad1}{loop_reg}.x = 0;");
@@ -2228,6 +2275,10 @@ fn emit_stmt(
                 "{pad2}if ({loop_reg}.x >= _aero_rep_count) {{ break; }}"
             );
 
+            state.loop_stack.push(LoopRestore {
+                loop_reg: loop_reg.clone(),
+                saved_var: saved_loop_reg.clone(),
+            });
             emit_block(
                 wgsl,
                 body,
@@ -2236,12 +2287,14 @@ fn emit_stmt(
                 stage,
                 f32_defs,
                 sampler_types,
+                state,
             )?;
+            state.loop_stack.pop();
 
             let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + 1;");
             let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
             let _ = writeln!(wgsl, "{pad1}}}");
-            let _ = writeln!(wgsl, "{pad1}{loop_reg} = _aero_saved_loop_reg;");
+            let _ = writeln!(wgsl, "{pad1}{loop_reg} = {saved_loop_reg};");
             let _ = writeln!(wgsl, "{pad}}}");
         }
         Stmt::Break => {
@@ -2264,6 +2317,20 @@ fn emit_stmt(
             let inner_pad = "  ".repeat(indent + 1);
             let _ = writeln!(wgsl, "{inner_pad}discard;");
             let _ = writeln!(wgsl, "{pad}}}");
+        }
+        Stmt::Call { label } => {
+            let _ = writeln!(wgsl, "{pad}aero_sub_l{label}();");
+        }
+        Stmt::Return => {
+            if !state.in_subroutine {
+                return Err(err("ret/return statement outside of a subroutine"));
+            }
+            // `return` can occur inside nested loops; restore the loop stack to match D3D9's loop
+            // register save/restore semantics.
+            for restore in state.loop_stack.iter().rev() {
+                let _ = writeln!(wgsl, "{pad}{} = {};", restore.loop_reg, restore.saved_var);
+            }
+            let _ = writeln!(wgsl, "{pad}return;");
         }
     }
     Ok(())
@@ -2317,6 +2384,9 @@ pub fn generate_wgsl_with_options(
     // Collect usage so we can declare required locals and constant defs.
     let mut usage = RegUsage::new();
     collect_reg_usage(&ir.body, &mut usage, 0)?;
+    for body in ir.subroutines.values() {
+        collect_reg_usage(body, &mut usage, 0)?;
+    }
 
     // Hostile-input hardening: decoding already caps indices using `crate::shader_limits`, but
     // keep a second line of defense here since WGSL codegen can otherwise balloon into large output
@@ -2497,38 +2567,98 @@ pub fn generate_wgsl_with_options(
         wgsl.push_str("}\n\n");
     }
 
-    let emit_const_decls = |wgsl: &mut String| {
-        // Non-embedded float constants come from the uniform constant buffer.
-        for idx in &usage.float_consts {
-            if f32_defs.contains_key(idx) {
-                continue;
-            }
-            let _ = writeln!(
-                wgsl,
-                "  let c{idx}: vec4<f32> = constants.c[CONST_BASE + {idx}u];"
-            );
-        }
-
-        // Embedded integer constants (`defi i#`).
+    // Embedded integer constants (`defi i#`). D3D9 i# registers are not writable at runtime, so we
+    // can lower them as module-scope `const`.
+    if !usage.int_consts.is_empty() {
         for idx in &usage.int_consts {
             let value = i32_defs.get(idx).copied().unwrap_or([0; 4]);
             let _ = writeln!(
                 wgsl,
-                "  let i{idx}: vec4<i32> = vec4<i32>({}, {}, {}, {});",
+                "const i{idx}: vec4<i32> = vec4<i32>({}, {}, {}, {});",
                 value[0], value[1], value[2], value[3]
             );
         }
+        wgsl.push('\n');
+    }
 
-        // Embedded boolean constants (`defb b#`). D3D bool regs are scalar; we splat across vec4 for
-        // register-like access with swizzles.
+    // Embedded boolean constants (`defb b#`). D3D bool regs are scalar; we splat across vec4 for
+    // register-like access with swizzles.
+    if !usage.bool_consts.is_empty() {
         for idx in &usage.bool_consts {
             let v = bool_defs.get(idx).copied().unwrap_or(false);
             let _ = writeln!(
                 wgsl,
-                "  let b{idx}: vec4<bool> = vec4<bool>({v}, {v}, {v}, {v});"
+                "const b{idx}: vec4<bool> = vec4<bool>({v}, {v}, {v}, {v});"
             );
         }
-    };
+        wgsl.push('\n');
+    }
+
+    // Private register state shared between the entry point and SM3 subroutine helper functions.
+    //
+    // WGSL functions cannot capture entry-point locals. Declaring registers as `var<private>`
+    // allows helper functions (`call` targets) to mutate the same register state as the main
+    // program.
+    if let Some(max_r) = usage.temps.iter().copied().max() {
+        for r in 0..=max_r {
+            let _ = writeln!(
+                wgsl,
+                "var<private> r{r}: vec4<f32> = vec4<f32>(0.0);"
+            );
+        }
+    }
+    if let Some(max_a) = usage.addrs.iter().copied().max() {
+        for a in 0..=max_a {
+            let _ = writeln!(wgsl, "var<private> a{a}: vec4<i32> = vec4<i32>(0);");
+        }
+    }
+    for l in &usage.loop_regs {
+        let reg = RegRef {
+            file: RegFile::Loop,
+            index: *l,
+            relative: None,
+        };
+        let name = reg_var_name(&reg)?;
+        let _ = writeln!(wgsl, "var<private> {name}: vec4<i32> = vec4<i32>(0);");
+    }
+    if let Some(max_p) = usage.predicates.iter().copied().max() {
+        for p in 0..=max_p {
+            let _ = writeln!(
+                wgsl,
+                "var<private> p{p}: vec4<bool> = vec4<bool>(false);"
+            );
+        }
+    }
+    for (file, index) in &usage.inputs {
+        if !matches!(*file, RegFile::Input | RegFile::Texture) {
+            continue;
+        }
+        let reg = RegRef {
+            file: *file,
+            index: *index,
+            relative: None,
+        };
+        let name = reg_var_name(&reg)?;
+        let _ = writeln!(
+            wgsl,
+            "var<private> {name}: vec4<f32> = vec4<f32>(0.0);"
+        );
+    }
+    for idx in &usage.misc_inputs {
+        let _ = writeln!(
+            wgsl,
+            "var<private> misc{idx}: vec4<f32> = vec4<f32>(0.0);"
+        );
+    }
+    if !usage.temps.is_empty()
+        || !usage.addrs.is_empty()
+        || !usage.loop_regs.is_empty()
+        || !usage.predicates.is_empty()
+        || !usage.inputs.is_empty()
+        || !usage.misc_inputs.is_empty()
+    {
+        wgsl.push('\n');
+    }
 
     match ir.version.stage {
         ShaderStage::Vertex => {
@@ -2600,6 +2730,48 @@ pub fn generate_wgsl_with_options(
                 vs_varying_locations.insert((*file, *index), loc);
             }
 
+            // Outputs used by the shader. These are mutable private vars that get copied into the
+            // return value at the end.
+            let mut required_outputs = usage.outputs_used.clone();
+            // Always provide `oPos` so we can emit a stable return struct.
+            required_outputs.insert((RegFile::RastOut, 0));
+            // Ensure all varyings in the interface are declared, even if never written.
+            required_outputs.extend(vs_varyings.iter().copied());
+
+            for (file, index) in &required_outputs {
+                let reg = RegRef {
+                    file: *file,
+                    index: *index,
+                    relative: None,
+                };
+                let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(
+                    wgsl,
+                    "var<private> {name}: {} = {};",
+                    ty.wgsl_vec4(),
+                    default_vec4(ty)
+                );
+            }
+            wgsl.push('\n');
+
+            // SM3 subroutines (`label` targets).
+            for (label, body) in &ir.subroutines {
+                let _ = writeln!(wgsl, "fn aero_sub_l{label}() {{");
+                let mut state = EmitState::new(true);
+                emit_block(
+                    &mut wgsl,
+                    body,
+                    1,
+                    0,
+                    ShaderStage::Vertex,
+                    &f32_defs,
+                    &sampler_type_map,
+                    &mut state,
+                )?;
+                wgsl.push_str("}\n\n");
+            }
+
             if has_inputs {
                 wgsl.push_str("struct VsInput {\n");
                 for idx in &vs_inputs {
@@ -2627,72 +2799,15 @@ pub fn generate_wgsl_with_options(
                 wgsl.push_str("@vertex\nfn vs_main() -> VsOut {\n");
             }
 
-            // Local temp registers.
-            if let Some(max_r) = usage.temps.iter().copied().max() {
-                for r in 0..=max_r {
-                    let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
-                }
-            }
-
-            // Address registers (`a#`) used for relative constant indexing.
-            if let Some(max_a) = usage.addrs.iter().copied().max() {
-                for a in 0..=max_a {
-                    let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
-                }
-            }
-
-            // Loop registers (`aL#`) used for SM2/3 loop constructs and relative constant indexing.
-            for l in &usage.loop_regs {
-                let reg = RegRef {
-                    file: RegFile::Loop,
-                    index: *l,
-                    relative: None,
-                };
-                let name = reg_var_name(&reg)?;
-                let _ = writeln!(wgsl, "  var {name}: vec4<i32> = vec4<i32>(0);");
-            }
-
-            // Predicate registers (`p#`).
-            if let Some(max_p) = usage.predicates.iter().copied().max() {
-                for p in 0..=max_p {
-                    let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
-                }
-            }
-
-            // Bind vertex inputs to locals that match the D3D register naming (`v#`).
+            // Bind vertex inputs to private regs (`v#`).
             if has_inputs {
                 for idx in &vs_inputs {
-                    let _ = writeln!(wgsl, "  let v{idx}: vec4<f32> = input.v{idx};");
+                    let _ = writeln!(wgsl, "  v{idx} = input.v{idx};");
                 }
             }
 
-            // Outputs used by the shader. These are mutable locals that get copied into the return
-            // value at the end.
-            let mut required_outputs = usage.outputs_used.clone();
-            // Always provide `oPos` so we can emit a stable return struct.
-            required_outputs.insert((RegFile::RastOut, 0));
-            // Ensure all varyings in the interface are declared, even if never written.
-            required_outputs.extend(vs_varyings.iter().copied());
-
-            for (file, index) in &required_outputs {
-                let reg = RegRef {
-                    file: *file,
-                    index: *index,
-                    relative: None,
-                };
-                let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
-                let name = reg_var_name(&reg)?;
-                let _ = writeln!(
-                    wgsl,
-                    "  var {name}: {} = {};",
-                    ty.wgsl_vec4(),
-                    default_vec4(ty)
-                );
-            }
-
-            emit_const_decls(&mut wgsl);
-
             wgsl.push('\n');
+            let mut state = EmitState::new(false);
             emit_block(
                 &mut wgsl,
                 &ir.body,
@@ -2701,6 +2816,7 @@ pub fn generate_wgsl_with_options(
                 ShaderStage::Vertex,
                 &f32_defs,
                 &sampler_type_map,
+                &mut state,
             )?;
 
             wgsl.push_str("  var out: VsOut;\n");
@@ -2812,6 +2928,47 @@ pub fn generate_wgsl_with_options(
             }
             wgsl.push_str("};\n\n");
 
+            // Outputs used by the shader. These are mutable private vars that get copied into the
+            // return value at the end.
+            let mut required_outputs = usage.outputs_used.clone();
+            required_outputs.extend(color_outputs.iter().map(|&idx| (RegFile::ColorOut, idx)));
+            if has_depth_out {
+                required_outputs.insert((RegFile::DepthOut, 0));
+            }
+            for (file, index) in &required_outputs {
+                let reg = RegRef {
+                    file: *file,
+                    index: *index,
+                    relative: None,
+                };
+                let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
+                let name = reg_var_name(&reg)?;
+                let _ = writeln!(
+                    wgsl,
+                    "var<private> {name}: {} = {};",
+                    ty.wgsl_vec4(),
+                    default_vec4(ty)
+                );
+            }
+            wgsl.push('\n');
+
+            // SM3 subroutines (`label` targets).
+            for (label, body) in &ir.subroutines {
+                let _ = writeln!(wgsl, "fn aero_sub_l{label}() {{");
+                let mut state = EmitState::new(true);
+                emit_block(
+                    &mut wgsl,
+                    body,
+                    1,
+                    0,
+                    ShaderStage::Pixel,
+                    &f32_defs,
+                    &sampler_type_map,
+                    &mut state,
+                )?;
+                wgsl.push_str("}\n\n");
+            }
+
             if has_inputs {
                 wgsl.push_str("struct FsIn {\n");
                 for ((file, index), loc) in &ps_input_locations {
@@ -2837,43 +2994,11 @@ pub fn generate_wgsl_with_options(
                 wgsl.push_str("@fragment\nfn fs_main() -> FsOut {\n");
             }
 
-            // Local temp registers.
-            if let Some(max_r) = usage.temps.iter().copied().max() {
-                for r in 0..=max_r {
-                    let _ = writeln!(wgsl, "  var r{r}: vec4<f32> = vec4<f32>(0.0);");
-                }
-            }
-
-            // Address registers (`a#`) used for relative constant indexing.
-            if let Some(max_a) = usage.addrs.iter().copied().max() {
-                for a in 0..=max_a {
-                    let _ = writeln!(wgsl, "  var a{a}: vec4<i32> = vec4<i32>(0);");
-                }
-            }
-
-            // Loop registers (`aL#`) used for SM2/3 loop constructs and relative constant indexing.
-            for l in &usage.loop_regs {
-                let reg = RegRef {
-                    file: RegFile::Loop,
-                    index: *l,
-                    relative: None,
-                };
-                let name = reg_var_name(&reg)?;
-                let _ = writeln!(wgsl, "  var {name}: vec4<i32> = vec4<i32>(0);");
-            }
-
-            // Predicate registers (`p#`).
-            if let Some(max_p) = usage.predicates.iter().copied().max() {
-                for p in 0..=max_p {
-                    let _ = writeln!(wgsl, "  var p{p}: vec4<bool> = vec4<bool>(false);");
-                }
-            }
-
-            // Bind pixel inputs to locals that match the D3D register naming (`v#` / `t#`).
+            // Bind pixel inputs to private regs (`v#` / `t#` / misc#).
             if has_inputs {
                 for (file, index) in &ps_inputs {
                     if *file == RegFile::Input && ps_position_inputs.contains(index) {
-                        let _ = writeln!(wgsl, "  let v{index}: vec4<f32> = input.frag_pos;");
+                        let _ = writeln!(wgsl, "  v{index} = input.frag_pos;");
                         continue;
                     }
                     let reg = RegRef {
@@ -2882,48 +3007,23 @@ pub fn generate_wgsl_with_options(
                         relative: None,
                     };
                     let name = reg_var_name(&reg)?;
-                    let _ = writeln!(wgsl, "  let {name}: vec4<f32> = input.{name};");
+                    let _ = writeln!(wgsl, "  {name} = input.{name};");
                 }
 
                 // Builtin inputs (misc register file).
                 if usage.misc_inputs.contains(&0) {
-                    wgsl.push_str("  let misc0: vec4<f32> = input.frag_pos;\n");
+                    wgsl.push_str("  misc0 = input.frag_pos;\n");
                 }
                 if usage.misc_inputs.contains(&1) {
                     // D3D9 vFace is a float sign (+1 or -1). WGSL exposes front-facing as a
                     // boolean, so map it to the legacy sign convention and splat to vec4.
                     wgsl.push_str("  let face: f32 = select(-1.0, 1.0, input.front_facing);\n");
-                    wgsl.push_str("  let misc1: vec4<f32> = vec4<f32>(face, face, face, face);\n");
+                    wgsl.push_str("  misc1 = vec4<f32>(face, face, face, face);\n");
                 }
             }
 
-            // Outputs used by the shader. These are mutable locals that get copied into the return
-            // value at the end.
-            let mut required_outputs = usage.outputs_used.clone();
-            required_outputs.extend(color_outputs.iter().map(|&idx| (RegFile::ColorOut, idx)));
-            if has_depth_out {
-                required_outputs.insert((RegFile::DepthOut, 0));
-            }
-
-            for (file, index) in &required_outputs {
-                let reg = RegRef {
-                    file: *file,
-                    index: *index,
-                    relative: None,
-                };
-                let ty = reg_scalar_ty(*file).unwrap_or(ScalarTy::F32);
-                let name = reg_var_name(&reg)?;
-                let _ = writeln!(
-                    wgsl,
-                    "  var {name}: {} = {};",
-                    ty.wgsl_vec4(),
-                    default_vec4(ty)
-                );
-            }
-
-            emit_const_decls(&mut wgsl);
-
             wgsl.push('\n');
+            let mut state = EmitState::new(false);
             emit_block(
                 &mut wgsl,
                 &ir.body,
@@ -2932,6 +3032,7 @@ pub fn generate_wgsl_with_options(
                 ShaderStage::Pixel,
                 &f32_defs,
                 &sampler_type_map,
+                &mut state,
             )?;
 
             wgsl.push_str("  var out: FsOut;\n");
@@ -2943,6 +3044,13 @@ pub fn generate_wgsl_with_options(
             }
             wgsl.push_str("  return out;\n}\n");
         }
+    }
+
+    if wgsl.len() > MAX_D3D9_WGSL_BYTES {
+        return Err(err(format!(
+            "generated WGSL size {} exceeds maximum {MAX_D3D9_WGSL_BYTES} bytes",
+            wgsl.len()
+        )));
     }
 
     Ok(WgslOutput {

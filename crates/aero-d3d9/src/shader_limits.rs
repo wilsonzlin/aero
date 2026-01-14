@@ -28,6 +28,22 @@ pub(crate) const MAX_D3D9_SHADER_TOKEN_COUNT: usize = MAX_D3D9_SHADER_BYTECODE_B
 /// overall token-size cap and trigger a Rust stack overflow during translation.
 pub(crate) const MAX_D3D9_SHADER_CONTROL_FLOW_NESTING: usize = 64;
 
+/// Maximum allowed SM3 subroutine call stack depth (`call`/`callnz`).
+///
+/// Real-world D3D9 SM3 shaders typically use shallow subroutine call graphs. We keep a conservative
+/// hard cap to:
+/// - prevent malicious shaders from building extremely deep call chains and triggering Rust stack
+///   overflows in the translator and software interpreter;
+/// - keep WGSL generation and validation costs bounded.
+pub(crate) const MAX_D3D9_SHADER_SUBROUTINE_CALL_DEPTH: usize = 32;
+
+/// Maximum size of generated WGSL source (in bytes).
+///
+/// The D3D9 token stream is treated as untrusted input; without an explicit cap, a malicious shader
+/// could use legal encodings to trigger very large WGSL output and exhaust memory in downstream
+/// compilation/validation.
+pub(crate) const MAX_D3D9_WGSL_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
+
 /// Maximum tolerated register index for any register file (r#/c#/s#/v#/t#/etc).
 ///
 /// Even though the DX9 token encoding can represent register indices up to 2047, the Aero
