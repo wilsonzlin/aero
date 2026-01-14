@@ -11108,15 +11108,39 @@ impl snapshot::SnapshotSource for Machine {
         if let Some(virtio_input_keyboard) = &self.virtio_input_keyboard {
             let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
-                let command = {
+                let (command, bar0_base, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.command())
-                        .unwrap_or(0)
+                    let mut command = 0;
+                    let mut bar0_base = None;
+                    let mut msix_ctrl_bits = None;
+                    if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
+                        command = cfg.command();
+                        bar0_base = cfg.bar_range(0).map(|range| range.base);
+                        if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
+                            let ctrl = cfg
+                                .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                                as u16;
+                            msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
+                        }
+                    }
+                    (command, bar0_base, msix_ctrl_bits)
                 };
-                virtio_input_keyboard.borrow_mut().set_pci_command(command);
+
+                let mut dev = virtio_input_keyboard.borrow_mut();
+                dev.set_pci_command(command);
+                if let Some(bar0_base) = bar0_base {
+                    dev.config_mut().set_bar_base(0, bar0_base);
+                }
+
+                if let Some(msix_ctrl_bits) = msix_ctrl_bits {
+                    if let Some(msix_off) = dev.config_mut().find_capability(PCI_CAP_ID_MSIX) {
+                        let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
+                        let runtime_ctrl = dev.config_mut().read(ctrl_off, 2) as u16;
+                        let new_ctrl =
+                            (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK) | msix_ctrl_bits;
+                        dev.config_mut().write(ctrl_off, 2, u32::from(new_ctrl));
+                    }
+                }
             }
 
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -11128,15 +11152,39 @@ impl snapshot::SnapshotSource for Machine {
         if let Some(virtio_input_mouse) = &self.virtio_input_mouse {
             let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
-                let command = {
+                let (command, bar0_base, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.command())
-                        .unwrap_or(0)
+                    let mut command = 0;
+                    let mut bar0_base = None;
+                    let mut msix_ctrl_bits = None;
+                    if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
+                        command = cfg.command();
+                        bar0_base = cfg.bar_range(0).map(|range| range.base);
+                        if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
+                            let ctrl = cfg
+                                .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                                as u16;
+                            msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
+                        }
+                    }
+                    (command, bar0_base, msix_ctrl_bits)
                 };
-                virtio_input_mouse.borrow_mut().set_pci_command(command);
+
+                let mut dev = virtio_input_mouse.borrow_mut();
+                dev.set_pci_command(command);
+                if let Some(bar0_base) = bar0_base {
+                    dev.config_mut().set_bar_base(0, bar0_base);
+                }
+
+                if let Some(msix_ctrl_bits) = msix_ctrl_bits {
+                    if let Some(msix_off) = dev.config_mut().find_capability(PCI_CAP_ID_MSIX) {
+                        let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
+                        let runtime_ctrl = dev.config_mut().read(ctrl_off, 2) as u16;
+                        let new_ctrl =
+                            (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK) | msix_ctrl_bits;
+                        dev.config_mut().write(ctrl_off, 2, u32::from(new_ctrl));
+                    }
+                }
             }
 
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
