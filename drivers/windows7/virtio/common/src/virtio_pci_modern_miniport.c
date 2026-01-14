@@ -732,6 +732,15 @@ VirtioPciNotifyQueue(_Inout_ VIRTIO_PCI_DEVICE *Dev, _In_ USHORT QueueIndex)
         return;
     }
 
+    /*
+     * NotifyBase is required even when a cached doorbell address exists: if the
+     * device is torn down (e.g. surprise removal) callers may proactively NULL
+     * out BAR-backed pointers to make late notify attempts a no-op.
+     */
+    if (Dev->NotifyBase == NULL) {
+        return;
+    }
+
     notifyAddr = NULL;
     if (Dev->QueueNotifyAddrCache != NULL && QueueIndex < Dev->QueueNotifyAddrCacheCount) {
         notifyAddr = Dev->QueueNotifyAddrCache[QueueIndex];
