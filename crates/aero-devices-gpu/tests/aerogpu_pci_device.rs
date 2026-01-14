@@ -138,11 +138,11 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
     let fence_gpa = 0x3000u64;
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
 
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
@@ -195,11 +195,11 @@ fn ring_reset_clears_pending_doorbell_even_when_dma_is_disabled() {
 
     // Fence page.
     let fence_gpa = 0x3000u64;
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
 
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
@@ -254,10 +254,10 @@ fn ring_reset_dma_is_deferred_until_bus_mastering_is_enabled() {
     mem.write_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET, 0xDEAD_BEEF);
     mem.write_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, 999);
 
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
 
@@ -320,8 +320,8 @@ fn pci_wrapper_gates_aerogpu_intx_on_pci_command_intx_disable_bit() {
     );
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
@@ -394,7 +394,7 @@ fn enabling_vblank_irq_does_not_latch_stale_irq_from_catchup_ticks() {
         }
     }
 
-    let mut mem = NoDmaMemory::default();
+    let mut mem = NoDmaMemory;
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: Some(60),
         ..Default::default()
@@ -488,10 +488,10 @@ fn vsynced_present_does_not_complete_on_elapsed_vblank_before_submission() {
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, signal_fence);
 
     // Hook up registers.
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
@@ -648,11 +648,11 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
 
     // Fence page.
     let fence_gpa = 0x3000u64;
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
 
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
@@ -738,8 +738,8 @@ fn drain_pending_submissions_filters_out_submissions_completed_before_drain() {
         mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence);
     }
 
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);

@@ -316,7 +316,7 @@ mod tests {
 
         // size_bytes too small for declared entry_count/stride.
         let mut hdr = make_valid_header_with_abi(abi_version);
-        hdr.size_bytes = hdr.size_bytes - 1;
+        hdr.size_bytes -= 1;
         assert!(!hdr.is_valid(0xFFFF));
     }
 
@@ -755,7 +755,7 @@ mod tests {
         let entry_count = 2u32;
         let size_bytes =
             AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * AeroGpuAllocEntry::SIZE_BYTES;
-        mem.write_u32(table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+        mem.write_u32(table_gpa, AEROGPU_ALLOC_TABLE_MAGIC);
         mem.write_u32(table_gpa + 4, abi_version);
         mem.write_u32(table_gpa + 8, size_bytes);
         mem.write_u32(table_gpa + 12, entry_count);
@@ -763,14 +763,14 @@ mod tests {
         mem.write_u32(table_gpa + 20, 0);
 
         let e0 = table_gpa + u64::from(AeroGpuAllocTableHeader::SIZE_BYTES);
-        mem.write_u32(e0 + 0, 1);
+        mem.write_u32(e0, 1);
         mem.write_u32(e0 + 4, 0);
         mem.write_u64(e0 + 8, 0x1000);
         mem.write_u64(e0 + 16, 0x10);
         mem.write_u64(e0 + 24, 0);
 
         let e1 = e0 + u64::from(AeroGpuAllocEntry::SIZE_BYTES);
-        mem.write_u32(e1 + 0, 1);
+        mem.write_u32(e1, 1);
         mem.write_u32(e1 + 4, 0);
         mem.write_u64(e1 + 8, 0x2000);
         mem.write_u64(e1 + 16, 0x20);
@@ -788,7 +788,7 @@ mod tests {
         let entry_count = 1u32;
         let size_bytes =
             AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * AeroGpuAllocEntry::SIZE_BYTES;
-        mem.write_u32(table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+        mem.write_u32(table_gpa, AEROGPU_ALLOC_TABLE_MAGIC);
         mem.write_u32(table_gpa + 4, abi_version);
         mem.write_u32(table_gpa + 8, size_bytes);
         mem.write_u32(table_gpa + 12, entry_count);
@@ -796,7 +796,7 @@ mod tests {
         mem.write_u32(table_gpa + 20, 0);
 
         let e0 = table_gpa + u64::from(AeroGpuAllocTableHeader::SIZE_BYTES);
-        mem.write_u32(e0 + 0, 2);
+        mem.write_u32(e0, 2);
         mem.write_u32(e0 + 4, 0);
         mem.write_u64(e0 + 8, u64::MAX - 15);
         mem.write_u64(e0 + 16, 32);
@@ -820,7 +820,7 @@ mod tests {
         let entry_count = 1u32;
         let entry_stride = AeroGpuAllocEntry::SIZE_BYTES + 16;
         let size_bytes = AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * entry_stride;
-        mem.write_u32(table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+        mem.write_u32(table_gpa, AEROGPU_ALLOC_TABLE_MAGIC);
         mem.write_u32(table_gpa + 4, abi_version);
         mem.write_u32(table_gpa + 8, size_bytes);
         mem.write_u32(table_gpa + 12, entry_count);
@@ -828,7 +828,7 @@ mod tests {
         mem.write_u32(table_gpa + 20, 0);
 
         let e0 = table_gpa + u64::from(AeroGpuAllocTableHeader::SIZE_BYTES);
-        mem.write_u32(e0 + 0, 10);
+        mem.write_u32(e0, 10);
         mem.write_u32(e0 + 4, AEROGPU_ALLOC_FLAG_READONLY);
         mem.write_u64(e0 + 8, 0x1122_3344_5566_7788);
         mem.write_u64(e0 + 16, 0x1000);
@@ -1176,5 +1176,4 @@ pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, com
     mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
 
     // Keep writes within the defined struct size; do not touch the rest of the page.
-    let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
 }

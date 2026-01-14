@@ -17,9 +17,11 @@ impl MemoryBus for NoDmaMemory {
 
 #[test]
 fn vblank_irq_status_not_latched_while_masked_or_on_reenable() {
-    let mut mem = NoDmaMemory::default();
-    let mut cfg = AeroGpuBar0MmioDeviceConfig::default();
-    cfg.vblank_hz = Some(60);
+    let mut mem = NoDmaMemory;
+    let cfg = AeroGpuBar0MmioDeviceConfig {
+        vblank_hz: Some(60),
+        ..Default::default()
+    };
     let mut dev = AeroGpuBar0MmioDevice::new(cfg);
 
     // Enable scanout to start the free-running vblank clock.

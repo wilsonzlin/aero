@@ -77,10 +77,10 @@ fn doorbell_advances_completed_fence_with_immediate_backend_in_deferred_mode() {
 
     let fence_gpa = 0x3000u64;
 
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
 
@@ -156,10 +156,10 @@ fn irq_status_enable_and_ack_semantics() {
     mem.write_u64(desc2_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 3);
 
     let fence_gpa = 0x3000u64;
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
 
@@ -254,10 +254,10 @@ fn ring_control_reset_clears_completed_fence_and_syncs_head_and_fence_page() {
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
 
     let fence_gpa = 0x3000u64;
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
 
@@ -401,10 +401,10 @@ fn doorbell_is_ignored_until_ring_is_enabled_and_requires_a_new_kick() {
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 7);
 
     let fence_gpa = 0x3000u64;
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
 
     // Ring is not enabled yet. A doorbell should be ignored.
@@ -547,14 +547,14 @@ fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
 
     let cmd0_gpa = 0x4000u64;
     // Wrong magic -> BadHeader.
-    mem.write_u32(cmd0_gpa + 0, 0);
+    mem.write_u32(cmd0_gpa, 0);
     mem.write_u32(cmd0_gpa + 4, AEROGPU_ABI_VERSION_U32);
     mem.write_u32(cmd0_gpa + 8, 16);
     mem.write_u32(cmd0_gpa + 12, 0);
 
     let cmd1_gpa = 0x5000u64;
     // Wrong ABI version (but correct magic) -> BadHeader as well.
-    mem.write_u32(cmd1_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd1_gpa, AEROGPU_CMD_STREAM_MAGIC);
     mem.write_u32(cmd1_gpa + 4, 0);
     mem.write_u32(cmd1_gpa + 8, 16);
     mem.write_u32(cmd1_gpa + 12, 0);

@@ -87,10 +87,10 @@ fn vsync_present_doorbell_does_not_complete_until_next_vblank_after_submission()
     mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, signal_fence);
 
     // Program the device registers the way a real guest would.
-    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
-    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
-    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
-    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa);
+    dev.write(mmio::FENCE_GPA_HI, 4, fence_gpa >> 32);
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa);
+    dev.write(mmio::RING_GPA_HI, 4, ring_gpa >> 32);
     dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
     dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);

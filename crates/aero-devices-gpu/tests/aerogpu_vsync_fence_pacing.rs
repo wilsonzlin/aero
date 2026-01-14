@@ -89,8 +89,7 @@ fn vsync_present_fence_does_not_complete_until_vblank_tick() {
         regs.abi_version,
     );
 
-    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
-    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     write_submit_desc(
         &mut mem,
         desc_gpa,
@@ -163,8 +162,7 @@ fn pending_vsync_fence_is_flushed_when_scanout_is_disabled() {
         regs.abi_version,
     );
 
-    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
-    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     write_submit_desc(
         &mut mem,
         desc_gpa,
@@ -226,7 +224,7 @@ fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank() {
     );
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
 
-    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     write_submit_desc(
         &mut mem,
         desc0_gpa,
@@ -236,7 +234,7 @@ fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank() {
         AeroGpuSubmitDesc::FLAG_PRESENT,
     );
 
-    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
+    let desc1_gpa = desc0_gpa + stride;
     // Empty submission (no cmd stream) should be treated as immediate.
     write_submit_desc(&mut mem, desc1_gpa, 0, 0, 2, 0);
 
@@ -292,7 +290,7 @@ fn completes_at_most_one_vsync_fence_per_vblank_tick() {
     );
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
 
-    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 0 * stride;
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     write_submit_desc(
         &mut mem,
         desc0_gpa,
@@ -302,7 +300,7 @@ fn completes_at_most_one_vsync_fence_per_vblank_tick() {
         AeroGpuSubmitDesc::FLAG_PRESENT,
     );
 
-    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + 1 * stride;
+    let desc1_gpa = desc0_gpa + stride;
     write_submit_desc(
         &mut mem,
         desc1_gpa,

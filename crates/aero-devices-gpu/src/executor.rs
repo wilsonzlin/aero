@@ -526,7 +526,7 @@ impl AeroGpuExecutor {
                                 desc.cmd_size_bytes,
                             )
                         } else {
-                            cmd_stream_has_vsync_present_bytes(&cmd_stream).map_err(|_| ())
+                            cmd_stream_has_vsync_present_bytes(&cmd_stream)
                         };
 
                         match scan_result {

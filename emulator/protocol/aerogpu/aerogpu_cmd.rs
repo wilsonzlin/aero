@@ -1993,40 +1993,56 @@ pub fn cmd_stream_has_vsync_present_reader<F>(
     mut read: F,
     cmd_gpa: u64,
     cmd_size_bytes: u32,
-) -> Result<bool, ()>
+) -> Result<bool, AerogpuCmdDecodeError>
 where
     F: FnMut(u64, &mut [u8]),
 {
-    let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| ())?;
+    let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
     if cmd_size < AerogpuCmdStreamHeader::SIZE_BYTES {
-        return Err(());
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
     }
 
     let mut stream_hdr_bytes = [0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
     read(cmd_gpa, &mut stream_hdr_bytes);
-    let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes).map_err(|_| ())?;
+    let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes)?;
 
-    let declared_size = stream_hdr.size_bytes as usize;
-    if declared_size > cmd_size {
-        return Err(());
+    if stream_hdr.size_bytes > cmd_size_bytes {
+        return Err(AerogpuCmdDecodeError::PacketOverrunsStream {
+            offset: 0,
+            packet_size_bytes: stream_hdr.size_bytes,
+            stream_size_bytes: cmd_size_bytes,
+        });
     }
+    let declared_size = stream_hdr.size_bytes as usize;
 
     let mut offset = AerogpuCmdStreamHeader::SIZE_BYTES;
     while offset < declared_size {
         let rem = declared_size - offset;
         if rem < AerogpuCmdHdr::SIZE_BYTES {
-            return Err(());
+            return Err(AerogpuCmdDecodeError::PacketOverrunsStream {
+                offset: u32::try_from(offset).map_err(|_| AerogpuCmdDecodeError::CountOverflow)?,
+                packet_size_bytes: AerogpuCmdHdr::SIZE_BYTES as u32,
+                stream_size_bytes: stream_hdr.size_bytes,
+            });
         }
 
-        let cmd_hdr_gpa = cmd_gpa.checked_add(offset as u64).ok_or(())?;
+        let cmd_hdr_gpa = cmd_gpa
+            .checked_add(offset as u64)
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
         let mut cmd_hdr_bytes = [0u8; AerogpuCmdHdr::SIZE_BYTES];
         read(cmd_hdr_gpa, &mut cmd_hdr_bytes);
-        let cmd_hdr = decode_cmd_hdr_le(&cmd_hdr_bytes).map_err(|_| ())?;
+        let cmd_hdr = decode_cmd_hdr_le(&cmd_hdr_bytes)?;
 
         let packet_size = cmd_hdr.size_bytes as usize;
-        let end = offset.checked_add(packet_size).ok_or(())?;
+        let end = offset
+            .checked_add(packet_size)
+            .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
         if end > declared_size {
-            return Err(());
+            return Err(AerogpuCmdDecodeError::PacketOverrunsStream {
+                offset: u32::try_from(offset).map_err(|_| AerogpuCmdDecodeError::CountOverflow)?,
+                packet_size_bytes: cmd_hdr.size_bytes,
+                stream_size_bytes: stream_hdr.size_bytes,
+            });
         }
 
         if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
@@ -2034,9 +2050,14 @@ where
         {
             // flags is always at offset 12 (hdr + scanout_id).
             if packet_size < 16 {
-                return Err(());
+                return Err(AerogpuCmdDecodeError::PayloadSizeMismatch {
+                    expected: 16,
+                    found: packet_size,
+                });
             }
-            let flags_gpa = cmd_hdr_gpa.checked_add(12).ok_or(())?;
+            let flags_gpa = cmd_hdr_gpa
+                .checked_add(12)
+                .ok_or(AerogpuCmdDecodeError::CountOverflow)?;
             let mut flags_bytes = [0u8; 4];
             read(flags_gpa, &mut flags_bytes);
             let flags = u32::from_le_bytes(flags_bytes);
