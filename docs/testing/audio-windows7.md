@@ -118,7 +118,14 @@ Use the UI’s **Disks** panel + **Workers** panel to boot Windows:
   - Click **Start workers** (or **Start VM**).
 - Wait for Windows to reach the desktop.
 
-**If you are installing from ISO:** once Windows is installed and boots successfully from the HDD, **unmount the ISO/CD** for subsequent boots so the test is faster and more deterministic.
+Boot device selection note (BIOS `DL`):
+
+- When booting the **installer ISO**, ensure the VM is configured to boot from **CD0** (`DL=0xE0`) *before* reset/restart.
+- For normal boots after installation, ensure the VM is configured to boot from **HDD0** (`DL=0x80`) *before* reset/restart.
+- Aero’s legacy BIOS does **not** currently probe a “boot order” list; the host/runtime must select a single boot drive number (`DL`).
+  See [`docs/05-storage-topology-win7.md`](../05-storage-topology-win7.md#boot-flows-normative).
+
+**If you are installing from ISO:** once Windows is installed, switch the boot drive to **HDD0** (`DL=0x80`) for subsequent boots. Unmounting the ISO/CD is optional but recommended to keep the test faster and more deterministic.
 
 ---
 
