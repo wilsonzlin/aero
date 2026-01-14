@@ -14,6 +14,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# This script historically used Windows IMAPI2 (COM) to build ISOs. That path is inherently
+# non-deterministic. When `cargo` is available, we now prefer the deterministic Rust ISO writer
+# (`tools/packaging/aero_packager`, binary: `aero_iso`) so CI/local builds can produce
+# bit-identical ISO outputs across runs/hosts.
+# Use `-LegacyIso` to force the IMAPI2 path (Windows only).
+
 function Get-IsWindows {
     try {
         return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
@@ -32,8 +38,8 @@ function New-IsoFile {
         [switch] $LegacyIso
     )
 
-    if (-not (Test-Path $SourcePath)) {
-        throw "SourcePath does not exist: '$SourcePath'."
+    if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) {
+        throw "SourcePath does not exist or is not a directory: '$SourcePath'."
     }
 
     $outDir = Split-Path -Parent $IsoPath
