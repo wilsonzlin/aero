@@ -48,11 +48,11 @@ fn xhci_snapshot_roundtrip_preserves_reset_timer_and_usb_topology() {
     hub.attach(1, Box::new(keyboard.clone()));
     ctrl.attach_device(0, Box::new(hub));
 
-    // Root port 1: attach another device so root port resets can start.
-    ctrl.attach_device(1, Box::new(UsbHidKeyboardHandle::new()));
+    // Root port 1: WebUSB passthrough device used to keep a control transfer pending (NAK).
+    ctrl.attach_device(1, Box::new(UsbWebUsbPassthroughDevice::new()));
 
-    // Root port 2: WebUSB passthrough device used to keep a control transfer pending (NAK).
-    ctrl.attach_device(2, Box::new(UsbWebUsbPassthroughDevice::new()));
+    // Root port 2: attach another device so root port resets can start.
+    ctrl.attach_device(2, Box::new(UsbHidKeyboardHandle::new()));
 
     // Reset + enable root port 0 so the hub's internal timers tick.
     ctrl.write_portsc(0, PORTSC_PR);
@@ -143,20 +143,20 @@ fn xhci_snapshot_roundtrip_preserves_reset_timer_and_usb_topology() {
         );
     }
 
-    // Start a root-hub port reset on port 1 and advance it partially.
-    ctrl.write_portsc(1, PORTSC_PR);
+    // Start a root-hub port reset on port 2 and advance it partially.
+    ctrl.write_portsc(2, PORTSC_PR);
     for _ in 0..10 {
         ctrl.tick_1ms_no_dma();
     }
-    assert_ne!(ctrl.read_portsc(1) & PORTSC_PR, 0);
+    assert_ne!(ctrl.read_portsc(2) & PORTSC_PR, 0);
 
     // Start a control-IN transfer to the WebUSB passthrough device. With no host completion, the
     // device returns NAK and keeps the control transfer pending, exercising snapshot/restore of
     // in-flight control state and nested device model snapshots.
     {
         let dev = ctrl
-            .port_device_mut(2)
-            .expect("expected WebUSB device on root port 2");
+            .port_device_mut(1)
+            .expect("expected WebUSB device on root port 1");
         assert_eq!(
             dev.handle_setup(SetupPacket {
                 bm_request_type: 0x80, // DeviceToHost | Standard | Device
@@ -199,8 +199,8 @@ fn xhci_snapshot_roundtrip_preserves_reset_timer_and_usb_topology() {
     // Pending NAK control transfer should remain pending after restore.
     {
         let dev = restored
-            .port_device_mut(2)
-            .expect("expected WebUSB device on restored root port 2");
+            .port_device_mut(1)
+            .expect("expected WebUSB device on restored root port 1");
         assert!(
             matches!(dev.handle_in(0, 64), UsbInResult::Nak),
             "expected NAK on restored pending control transfer"
@@ -234,7 +234,7 @@ fn xhci_snapshot_roundtrip_preserves_reset_timer_and_usb_topology() {
 
     // Port reset timer remaining time should be preserved.
     let mut remaining = 0usize;
-    while restored.read_portsc(1) & PORTSC_PR != 0 {
+    while restored.read_portsc(2) & PORTSC_PR != 0 {
         restored.tick_1ms_no_dma();
         remaining += 1;
         assert!(
