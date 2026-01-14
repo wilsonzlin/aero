@@ -378,7 +378,7 @@ All integers are **big-endian**.
 | var    | 2        | `remote_port`    | u16   | Remote UDP port. |
 | var+2  | N        | `payload`        | bytes | UDP payload bytes. |
 
-Minimum frame length is **12 bytes** for IPv4 and **24 bytes** for IPv6.
+Minimum frame length is **12 bytes** for IPv4 and **24 bytes** for IPv6 (`24` is the v2 IPv6 header size; see `internal/udpproto.MaxFrameOverheadBytes`).
 
 ### Example (v2, IPv6 golden vector)
 
