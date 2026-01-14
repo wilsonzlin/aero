@@ -1245,6 +1245,155 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
     }
   }
 
+  // Subtest 7: ClearState resets depth-stencil state.
+  {
+    // Create + bind depth buffer.
+    DXGI_FORMAT depth_format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    const char* depth_format_label = "D24_UNORM_S8_UINT";
+    ComPtr<ID3D10Texture2D> depth_tex;
+    ComPtr<ID3D10DepthStencilView> dsv;
+    HRESULT hr_d24_tex = S_OK;
+    HRESULT hr_d24_dsv = S_OK;
+    HRESULT hr_d32_tex = S_OK;
+    HRESULT hr_d32_dsv = S_OK;
+
+    D3D10_TEXTURE2D_DESC depth_desc = rt_desc;
+    depth_desc.Format = depth_format;
+    depth_desc.BindFlags = D3D10_BIND_DEPTH_STENCIL;
+
+    hr = device->CreateTexture2D(&depth_desc, NULL, depth_tex.put());
+    if (FAILED(hr)) {
+      hr_d24_tex = hr;
+    } else {
+      hr = device->CreateDepthStencilView(depth_tex.get(), NULL, dsv.put());
+      if (FAILED(hr)) {
+        hr_d24_dsv = hr;
+      }
+    }
+
+    if (!depth_tex || !dsv) {
+      // Fall back to D32_FLOAT when D24S8 isn't supported (common for early bring-up).
+      depth_tex.reset();
+      dsv.reset();
+      depth_format = DXGI_FORMAT_D32_FLOAT;
+      depth_format_label = "D32_FLOAT";
+      depth_desc.Format = depth_format;
+
+      hr = device->CreateTexture2D(&depth_desc, NULL, depth_tex.put());
+      if (FAILED(hr)) {
+        hr_d32_tex = hr;
+        return reporter.Fail("CreateTexture2D(depth) failed: %s => %s; fallback %s => %s",
+                             "D24_UNORM_S8_UINT",
+                             aerogpu_test::HresultToString(hr_d24_tex).c_str(),
+                             "D32_FLOAT",
+                             aerogpu_test::HresultToString(hr_d32_tex).c_str());
+      }
+      hr = device->CreateDepthStencilView(depth_tex.get(), NULL, dsv.put());
+      if (FAILED(hr)) {
+        hr_d32_dsv = hr;
+        return reporter.Fail("CreateDepthStencilView(depth) failed: %s => %s; fallback %s => %s",
+                             "D24_UNORM_S8_UINT",
+                             aerogpu_test::HresultToString(hr_d24_dsv).c_str(),
+                             "D32_FLOAT",
+                             aerogpu_test::HresultToString(hr_d32_dsv).c_str());
+      }
+      aerogpu_test::PrintfStdout("INFO: %s: depth format %s unavailable (%s / %s); using %s",
+                                 kTestName,
+                                 "D24_UNORM_S8_UINT",
+                                 aerogpu_test::HresultToString(hr_d24_tex).c_str(),
+                                 aerogpu_test::HresultToString(hr_d24_dsv).c_str(),
+                                 depth_format_label);
+    }
+
+    D3D10_DEPTH_STENCIL_DESC ds_desc;
+    ZeroMemory(&ds_desc, sizeof(ds_desc));
+    ds_desc.DepthEnable = TRUE;
+    ds_desc.DepthWriteMask = D3D10_DEPTH_WRITE_MASK_ALL;
+    ds_desc.DepthFunc = D3D10_COMPARISON_GREATER;
+    ds_desc.StencilEnable = FALSE;
+    ds_desc.StencilReadMask = D3D10_DEFAULT_STENCIL_READ_MASK;
+    ds_desc.StencilWriteMask = D3D10_DEFAULT_STENCIL_WRITE_MASK;
+    ds_desc.FrontFace.StencilFailOp = D3D10_STENCIL_OP_KEEP;
+    ds_desc.FrontFace.StencilDepthFailOp = D3D10_STENCIL_OP_KEEP;
+    ds_desc.FrontFace.StencilPassOp = D3D10_STENCIL_OP_KEEP;
+    ds_desc.FrontFace.StencilFunc = D3D10_COMPARISON_ALWAYS;
+    ds_desc.BackFace = ds_desc.FrontFace;
+
+    ComPtr<ID3D10DepthStencilState> dss_greater;
+    hr = device->CreateDepthStencilState(&ds_desc, dss_greater.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreateDepthStencilState(GREATER) [ClearState subtest]", hr);
+    }
+
+    device->OMSetRenderTargets(1, rtvs, dsv.get());
+    device->RSSetViewports(1, &vp);
+    device->IASetInputLayout(input_layout.get());
+    device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    device->VSSetShader(vs.get());
+    device->PSSetShader(ps.get());
+    SetVb(vb_depth_front.get());
+
+    // With depth cleared to 1.0, DepthFunc=GREATER should reject Z=0.5, leaving the clear color intact.
+    device->ClearRenderTargetView(rtv.get(), clear_red);
+    device->ClearDepthStencilView(dsv.get(), D3D10_CLEAR_DEPTH, 1.0f, 0);
+    device->OMSetDepthStencilState(dss_greater.get(), 0);
+    device->Draw(3, 0);
+
+    uint32_t before_clear = 0;
+    int rb = Readback(dsv.get(),
+                      L"d3d10_1_rs_om_state_sanity_clear_state_depth_before.bmp",
+                      L"d3d10_1_rs_om_state_sanity_clear_state_depth_before.bin",
+                      &before_clear,
+                      NULL);
+    if (rb != 0) {
+      return rb;
+    }
+    const uint32_t expected_red = 0xFFFF0000u;
+    if ((before_clear & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState depth precondition failed: center=0x%08lX expected ~0x%08lX (fmt=%s)",
+                           (unsigned long)before_clear,
+                           (unsigned long)expected_red,
+                           depth_format_label);
+    }
+
+    device->ClearState();
+
+    // ClearState unbinds state; rebind required pipeline state, but do not
+    // explicitly set a depth-stencil state. The default should no longer be
+    // DepthFunc=GREATER, so the Z=0.5 triangle should draw.
+    device->OMSetRenderTargets(1, rtvs, dsv.get());
+    device->RSSetViewports(1, &vp);
+    device->IASetInputLayout(input_layout.get());
+    device->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    device->VSSetShader(vs.get());
+    device->PSSetShader(ps.get());
+    SetVb(vb_depth_front.get());
+
+    device->ClearRenderTargetView(rtv.get(), clear_red);
+    device->ClearDepthStencilView(dsv.get(), D3D10_CLEAR_DEPTH, 1.0f, 0);
+    device->Draw(3, 0);
+
+    uint32_t after_clear = 0;
+    rb = Readback(dsv.get(),
+                  L"d3d10_1_rs_om_state_sanity_clear_state_depth_after.bmp",
+                  L"d3d10_1_rs_om_state_sanity_clear_state_depth_after.bin",
+                  &after_clear,
+                  NULL);
+    if (rb != 0) {
+      return rb;
+    }
+    const uint32_t expected_green = 0xFF00FF00u;
+    if ((after_clear & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
+        ((after_clear >> 24) & 0xFFu) != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState depth reset failed: center=0x%08lX expected ~0x%08lX (fmt=%s)",
+                           (unsigned long)after_clear,
+                           (unsigned long)expected_green,
+                           depth_format_label);
+    }
+  }
+
   return reporter.Pass();
 }
 
