@@ -23,10 +23,7 @@ fn linear_addr(guest_base: u32, paddr: u64, len: usize) -> u32 {
         linear_end <= u64::from(u32::MAX),
         "linear addr out of u32 range"
     );
-    assert!(
-        linear_end >= linear,
-        "linear addr range should not wrap"
-    );
+    assert!(linear_end >= linear, "linear addr range should not wrap");
     u32::try_from(linear).expect("linear address should fit in u32")
 }
 
@@ -96,8 +93,7 @@ fn xhci_step_frame_drains_event_ring_when_bme_enabled() {
     );
     read_bytes(guest_base, ring_base, &mut trb_bytes);
     assert_eq!(
-        trb_bytes,
-        [0u8; TRB_LEN],
+        trb_bytes, [0u8; TRB_LEN],
         "event ring should remain untouched while BME is disabled"
     );
 
@@ -112,13 +108,15 @@ fn xhci_step_frame_drains_event_ring_when_bme_enabled() {
 
     read_bytes(guest_base, ring_base, &mut trb_bytes);
     assert_ne!(
-        trb_bytes,
-        [0u8; TRB_LEN],
+        trb_bytes, [0u8; TRB_LEN],
         "expected event TRB to be written into guest memory"
     );
 
     let trb = Trb::from_bytes(trb_bytes);
-    assert!(trb.cycle(), "producer cycle bit should be set on initial enqueue");
+    assert!(
+        trb.cycle(),
+        "producer cycle bit should be set on initial enqueue"
+    );
     assert_eq!(trb.trb_type(), TrbType::PortStatusChangeEvent);
     let port_id = (trb.parameter >> regs::PSC_EVENT_PORT_ID_SHIFT) as u8;
     assert_eq!(port_id, 1, "root port 0 should use Port ID 1 in event TRBs");
@@ -126,4 +124,3 @@ fn xhci_step_frame_drains_event_ring_when_bme_enabled() {
     // Keep the test aligned with the public xHCI constants: the MMIO window must remain 64KiB.
     assert_eq!(XhciController::MMIO_SIZE, 0x1_0000);
 }
-
