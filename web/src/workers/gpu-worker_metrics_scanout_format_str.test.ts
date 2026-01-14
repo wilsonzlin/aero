@@ -34,7 +34,8 @@ async function waitForWorkerMessage(
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const rawMsg = (maybeProtocol as { message?: unknown }).message;
+        const errMsg = typeof rawMsg === "string" ? rawMsg : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -149,7 +150,11 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
       await new Promise((resolve) => setTimeout(resolve, 300));
       const metricsPromise = waitForWorkerMessage(
         worker,
-        (msg) => isGpuWorkerMessageBase(msg) && (msg as { type?: unknown }).type === "metrics" && !!(msg as any).scanout,
+        (msg) => {
+          if (!isGpuWorkerMessageBase(msg)) return false;
+          const m = msg as { type?: unknown; scanout?: unknown };
+          return m.type === "metrics" && !!m.scanout;
+        },
         10_000,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
@@ -162,7 +167,11 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
       // Stats messages are emitted by the telemetry poller and should include the same scanout snapshot.
       const statsMsg = (await waitForWorkerMessage(
         worker,
-        (msg) => isGpuWorkerMessageBase(msg) && (msg as { type?: unknown }).type === "stats" && !!(msg as any).scanout,
+        (msg) => {
+          if (!isGpuWorkerMessageBase(msg)) return false;
+          const m = msg as { type?: unknown; scanout?: unknown };
+          return m.type === "stats" && !!m.scanout;
+        },
         10_000,
       )) as GpuRuntimeStatsMessage;
       expect(statsMsg.scanout).toBeTruthy();

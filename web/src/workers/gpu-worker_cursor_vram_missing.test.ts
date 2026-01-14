@@ -26,7 +26,8 @@ async function waitForWorkerMessage(
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const rawMsg = (maybeProtocol as { message?: unknown }).message;
+        const errMsg = typeof rawMsg === "string" ? rawMsg : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -131,15 +132,17 @@ describe("workers/gpu-worker cursor VRAM missing diagnostics", () => {
       const eventsPromise = waitForWorkerMessage(
         worker,
         (msg) => {
-          const m = msg as { protocol?: unknown; type?: unknown; events?: unknown[] } | undefined;
-          if (m?.protocol !== GPU_PROTOCOL_NAME || m.type !== "events") return false;
-          const events = Array.isArray(m.events) ? m.events : [];
-          return events.some(
-            (ev) => (ev as { category?: unknown; message?: unknown })?.category === "CursorReadback" && String((ev as any).message).includes(expectedSnippet),
-          );
-        },
-        10_000,
-      );
+           const m = msg as { protocol?: unknown; type?: unknown; events?: unknown[] } | undefined;
+           if (m?.protocol !== GPU_PROTOCOL_NAME || m.type !== "events") return false;
+           const events = Array.isArray(m.events) ? m.events : [];
+           return events.some(
+            (ev) =>
+              (ev as { category?: unknown; message?: unknown } | null | undefined)?.category === "CursorReadback" &&
+              String((ev as { message?: unknown }).message).includes(expectedSnippet),
+           );
+         },
+         10_000,
+       );
 
       // Drive a tick so the worker polls CursorState and attempts a cursor readback.
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
@@ -147,8 +150,11 @@ describe("workers/gpu-worker cursor VRAM missing diagnostics", () => {
       const eventsMsgRaw = await eventsPromise;
 
       const eventsMsg = eventsMsgRaw as { events?: unknown[] };
-      const ev = (eventsMsg.events ?? []).find((e) => (e as any)?.category === "CursorReadback") as any;
+      const ev = (eventsMsg.events ?? []).find(
+        (e) => (e as { category?: unknown } | null | undefined)?.category === "CursorReadback",
+      ) as { severity?: unknown; message?: unknown; details?: unknown } | undefined;
       expect(ev).toBeTruthy();
+      if (!ev) throw new Error("expected CursorReadback event");
       expect(ev.severity).toBe("warn");
        expect(String(ev.message)).toContain(expectedSnippet);
        expect(ev.details).toMatchObject({

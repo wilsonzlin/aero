@@ -33,7 +33,8 @@ async function waitForWorkerMessage(
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const rawMsg = (maybeProtocol as { message?: unknown }).message;
+        const errMsg = typeof rawMsg === "string" ? rawMsg : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -163,26 +164,38 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
       const deviceLostEvents = waitForWorkerMessage(
         worker,
         (msg) => {
-          const m = msg as { protocol?: unknown; type?: unknown; events?: unknown[] } | undefined;
-          if (m?.protocol !== GPU_PROTOCOL_NAME || m.type !== "events") return false;
-          const events = Array.isArray(m.events) ? m.events : [];
-          return events.some((ev) => (ev as any)?.category === "DeviceLost" && typeof (ev as any)?.details?.scanout?.format_str === "string");
-        },
-        10_000,
-      );
+           const m = msg as { protocol?: unknown; type?: unknown; events?: unknown[] } | undefined;
+           if (m?.protocol !== GPU_PROTOCOL_NAME || m.type !== "events") return false;
+           const events = Array.isArray(m.events) ? m.events : [];
+           return events.some((ev) => {
+             const e = ev as { category?: unknown; details?: unknown } | null | undefined;
+             if (e?.category !== "DeviceLost") return false;
+             const details = e.details;
+             if (!details || typeof details !== "object") return false;
+             const scanout = (details as { scanout?: unknown }).scanout;
+             if (!scanout || typeof scanout !== "object") return false;
+             const formatStr = (scanout as { format_str?: unknown }).format_str;
+             return typeof formatStr === "string";
+           });
+         },
+         10_000,
+       );
 
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
 
-      await firstPresentCall;
-      await readyAfterRecovery;
-      const eventsMsg = (await deviceLostEvents) as { events?: unknown[] };
-      const deviceLost = (eventsMsg.events ?? []).find((ev) => (ev as any)?.category === "DeviceLost") as any;
-      expect(deviceLost).toBeTruthy();
-      expect(deviceLost.details).toMatchObject({
-        scanout: {
-          format: SCANOUT_FORMAT_B8G8R8A8,
-          format_str: aerogpuFormatToString(SCANOUT_FORMAT_B8G8R8A8),
-        },
+       await firstPresentCall;
+       await readyAfterRecovery;
+       const eventsMsg = (await deviceLostEvents) as { events?: unknown[] };
+       const deviceLost = (eventsMsg.events ?? []).find(
+         (ev) => (ev as { category?: unknown } | null | undefined)?.category === "DeviceLost",
+       ) as { details?: unknown } | undefined;
+       expect(deviceLost).toBeTruthy();
+       if (!deviceLost) throw new Error("expected DeviceLost event");
+       expect(deviceLost.details).toMatchObject({
+         scanout: {
+           format: SCANOUT_FORMAT_B8G8R8A8,
+           format_str: aerogpuFormatToString(SCANOUT_FORMAT_B8G8R8A8),
+         },
       });
 
       // Tick #2: should present successfully without requiring a legacy framebuffer DIRTY event.

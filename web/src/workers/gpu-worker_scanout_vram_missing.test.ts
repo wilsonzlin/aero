@@ -134,17 +134,21 @@ describe("workers/gpu-worker scanout VRAM missing diagnostics", () => {
 
       const eventsPromise = waitForWorkerMessage(worker, (msg) => {
         if (!isGpuWorkerMessageBase(msg)) return false;
-        const any = msg as { type?: unknown; events?: unknown };
-        if (any.type !== "events") return false;
-        const events = (any.events ?? []) as unknown[];
+        const m = msg as { type?: unknown; events?: unknown } | undefined;
+        if (m?.type !== "events") return false;
+        const events = Array.isArray(m.events) ? m.events : [];
         return events.some(
-          (ev) => (ev as { category?: unknown; message?: unknown })?.category === "Scanout" && String((ev as any).message).includes(expectedSnippet),
+          (ev) =>
+            (ev as { category?: unknown; message?: unknown } | null | undefined)?.category === "Scanout" &&
+            String((ev as { message?: unknown }).message).includes(expectedSnippet),
         );
       }, 10_000);
 
       const errorPromise = waitForWorkerMessage(worker, (msg) => {
         const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
-        return maybeProtocol?.type === MessageType.ERROR && typeof (maybeProtocol as any).message === "string" && (maybeProtocol as any).message.includes(expectedSnippet);
+        if (maybeProtocol?.type !== MessageType.ERROR) return false;
+        const rawMsg = (maybeProtocol as { message?: unknown }).message;
+        return typeof rawMsg === "string" && rawMsg.includes(expectedSnippet);
       }, 10_000);
 
       // Drive a tick to trigger `presentOnce()` which performs the VRAM-missing scanout guard.
@@ -158,8 +162,11 @@ describe("workers/gpu-worker scanout VRAM missing diagnostics", () => {
       const [eventsMsgRaw, errorMsgRaw] = await Promise.all([eventsPromise, errorPromise]);
 
       const eventsMsg = eventsMsgRaw as { events?: unknown[] };
-      const scanoutEvent = (eventsMsg.events ?? []).find((ev) => (ev as any)?.category === "Scanout") as any;
+      const scanoutEvent = (eventsMsg.events ?? []).find(
+        (ev) => (ev as { category?: unknown } | null | undefined)?.category === "Scanout",
+      ) as { message?: unknown; severity?: unknown; details?: unknown } | undefined;
       expect(scanoutEvent).toBeTruthy();
+      if (!scanoutEvent) throw new Error("expected Scanout event");
       expect(String(scanoutEvent.message)).toContain(expectedSnippet);
       expect(scanoutEvent.severity).toBe("error");
       expect(scanoutEvent.details).toMatchObject({
