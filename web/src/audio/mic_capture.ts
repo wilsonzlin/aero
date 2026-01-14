@@ -63,6 +63,9 @@ export class MicCapture extends EventTarget {
 
   private backend: "worklet" | "script" | null = null;
   private trackLabel: string | null = null;
+  private trackEnabled: boolean | null = null;
+  private trackMuted: boolean | null = null;
+  private trackReadyState: MediaStreamTrackState | null = null;
   private trackSettings: MediaTrackSettings | null = null;
   private trackConstraints: MediaTrackConstraints | null = null;
   private trackCapabilities: MediaTrackCapabilities | null = null;
@@ -113,6 +116,9 @@ export class MicCapture extends EventTarget {
 
       const track = stream.getAudioTracks()[0] ?? null;
       this.trackLabel = track ? track.label || null : null;
+      this.trackEnabled = track ? Boolean(track.enabled) : null;
+      this.trackMuted = track ? Boolean(track.muted) : null;
+      this.trackReadyState = track ? track.readyState : null;
       this.trackSettings = track && typeof track.getSettings === "function" ? track.getSettings() : null;
       this.trackConstraints = track && typeof track.getConstraints === "function" ? track.getConstraints() : null;
       this.trackCapabilities = null;
@@ -264,6 +270,9 @@ export class MicCapture extends EventTarget {
 
     this.backend = null;
     this.trackLabel = null;
+    this.trackEnabled = null;
+    this.trackMuted = null;
+    this.trackReadyState = null;
     this.trackSettings = null;
     this.trackConstraints = null;
     this.trackCapabilities = null;
@@ -286,6 +295,9 @@ export class MicCapture extends EventTarget {
   getDebugInfo(): {
     backend: "worklet" | "script" | null;
     trackLabel: string | null;
+    trackEnabled: boolean | null;
+    trackMuted: boolean | null;
+    trackReadyState: MediaStreamTrackState | null;
     trackSettings: MediaTrackSettings | null;
     trackConstraints: MediaTrackConstraints | null;
     trackCapabilities: MediaTrackCapabilities | null;
@@ -293,6 +305,9 @@ export class MicCapture extends EventTarget {
     return {
       backend: this.backend,
       trackLabel: this.trackLabel,
+      trackEnabled: this.trackEnabled,
+      trackMuted: this.trackMuted,
+      trackReadyState: this.trackReadyState,
       trackSettings: this.trackSettings,
       trackConstraints: this.trackConstraints,
       trackCapabilities: this.trackCapabilities,

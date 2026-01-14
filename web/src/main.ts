@@ -238,6 +238,9 @@ type MicAttachmentInfo = {
   deviceIdHash: string | null;
   backend: "worklet" | "script" | null;
   trackLabel: string | null;
+  trackEnabled: boolean | null;
+  trackMuted: boolean | null;
+  trackReadyState: string | null;
   trackSettings: Record<string, unknown> | null;
   trackConstraints: Record<string, unknown> | null;
   trackCapabilities: Record<string, unknown> | null;
@@ -4423,6 +4426,9 @@ function renderAudioPanel(): HTMLElement {
     deviceIdHash: string | null;
     backend: "worklet" | "script" | null;
     trackLabel: string | null;
+    trackEnabled: boolean | null;
+    trackMuted: boolean | null;
+    trackReadyState: string | null;
     trackSettings: Record<string, unknown> | null;
     trackConstraints: Record<string, unknown> | null;
     trackCapabilities: Record<string, unknown> | null;
@@ -4662,6 +4668,9 @@ function renderAudioPanel(): HTMLElement {
         deviceIdHash: att.deviceIdHash,
         backend: att.backend,
         trackLabel: att.trackLabel,
+        trackEnabled: att.trackEnabled,
+        trackMuted: att.trackMuted,
+        trackReadyState: att.trackReadyState,
         trackSettings: att.trackSettings,
         trackConstraints: att.trackConstraints,
         trackCapabilities: att.trackCapabilities,
@@ -4719,6 +4728,9 @@ function renderAudioPanel(): HTMLElement {
         deviceIdHash: att.deviceIdHash,
         backend: att.backend,
         trackLabel: att.trackLabel,
+        trackEnabled: att.trackEnabled,
+        trackMuted: att.trackMuted,
+        trackReadyState: att.trackReadyState,
         trackSettings: att.trackSettings,
         trackConstraints: att.trackConstraints,
         trackCapabilities: att.trackCapabilities,
@@ -5691,6 +5703,9 @@ function renderMicrophonePanel(): HTMLElement {
           deviceIdHash,
           backend: dbg.backend,
           trackLabel: dbg.trackLabel,
+          trackEnabled: typeof dbg.trackEnabled === "boolean" ? dbg.trackEnabled : null,
+          trackMuted: typeof dbg.trackMuted === "boolean" ? dbg.trackMuted : null,
+          trackReadyState: typeof dbg.trackReadyState === "string" ? dbg.trackReadyState : null,
           trackSettings: sanitizeTrackInfo(dbg.trackSettings),
           trackConstraints: sanitizeTrackInfo(dbg.trackConstraints),
           trackCapabilities: sanitizeTrackInfo(dbg.trackCapabilities),

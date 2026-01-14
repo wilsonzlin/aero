@@ -142,6 +142,9 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
 
   const track = {
     label: "Test Mic",
+    enabled: true,
+    muted: false,
+    readyState: "live",
     addEventListener: vi.fn(),
     stop: vi.fn(),
     getSettings: vi.fn(() => ({ deviceId: "raw-device-id", sampleRate: 48_000 })),
@@ -165,6 +168,9 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
   const dbg = mic.getDebugInfo();
   expect(dbg.backend).toBe("worklet");
   expect(dbg.trackLabel).toBe("Test Mic");
+  expect(dbg.trackEnabled).toBe(true);
+  expect(dbg.trackMuted).toBe(false);
+  expect(dbg.trackReadyState).toBe("live");
   expect(dbg.trackSettings).toEqual({ deviceId: "raw-device-id", sampleRate: 48_000 });
   expect(dbg.trackConstraints).toEqual({ deviceId: { exact: "raw-device-id" } });
   expect(dbg.trackCapabilities).toEqual({ deviceId: "raw-device-id", echoCancellation: [true, false] });
@@ -173,6 +179,9 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
   expect(mic.getDebugInfo()).toEqual({
     backend: null,
     trackLabel: null,
+    trackEnabled: null,
+    trackMuted: null,
+    trackReadyState: null,
     trackSettings: null,
     trackConstraints: null,
     trackCapabilities: null,
