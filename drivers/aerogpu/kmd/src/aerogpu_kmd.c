@@ -10424,6 +10424,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 const ULONGLONG seqWait100ns = ((ULONGLONG)seqWaitMs * 10000ull);
                 if (seqNow100ns >= deadline || (deadline - seqNow100ns) < seqWait100ns) {
                     io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                     return STATUS_SUCCESS;
                 }
                 const ULONGLONG seqDeadline = seqNow100ns + seqWait100ns;
@@ -10446,6 +10447,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     if (seqNow < seq0) {
                         /* Vblank sequence must be monotonic. Treat regressions as failure. */
                         io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK;
+                        InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                         return STATUS_SUCCESS;
                     }
                 }
@@ -10603,6 +10605,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                  */
                 if (!adapter->InterruptRegistered) {
                     io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                     return STATUS_SUCCESS;
                 }
 
@@ -10632,6 +10635,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 const ULONGLONG deliveryWait100ns = ((ULONGLONG)deliveryWaitMs * 10000ull);
                 if (deliveryNow100ns >= deadline || (deadline - deliveryNow100ns) < deliveryWait100ns) {
                     io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                     return STATUS_SUCCESS;
                 }
                 const ULONGLONG deliveryDeadline = deliveryNow100ns + deliveryWait100ns;
@@ -10666,6 +10670,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                 if (!delivered) {
                     io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                     return STATUS_SUCCESS;
                 }
             }
