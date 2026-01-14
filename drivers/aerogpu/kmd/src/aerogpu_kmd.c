@@ -10548,6 +10548,17 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 if (!EnableInterrupt) {
                     AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_FENCE);
                 }
+                /*
+                 * Race hardening: an IRQ_ERROR can be latched in the ISR while we hold IrqEnableLock
+                 * (DIRQL preempts DISPATCH_LEVEL). If that happens between the latch check above and
+                 * this IRQ_ENABLE programming, we may have re-enabled ERROR delivery. Re-check and
+                 * force ERROR masked if the device is now in a latched error state.
+                 */
+                if ((enable & AEROGPU_IRQ_ERROR) != 0 && AeroGpuIsDeviceErrorLatched(adapter)) {
+                    enable &= ~AEROGPU_IRQ_ERROR;
+                    adapter->IrqEnableMask = enable;
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
+                }
             }
             KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
         }
@@ -10620,6 +10631,15 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                  * with dxgkrnl. This mirrors StartDevice and avoids unhandled interrupt storms.
                  */
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
+                /*
+                 * Same race hardening as DMA_COMPLETED: if an IRQ_ERROR was latched while we held
+                 * IrqEnableLock, ensure we did not re-enable ERROR delivery.
+                 */
+                if ((enable & AEROGPU_IRQ_ERROR) != 0 && AeroGpuIsDeviceErrorLatched(adapter)) {
+                    enable &= ~AEROGPU_IRQ_ERROR;
+                    adapter->IrqEnableMask = enable;
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->InterruptRegistered ? enable : 0);
+                }
             }
 
             /* Be robust against stale pending bits when disabling. */
@@ -13083,7 +13103,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     {
                         KIRQL oldIrql;
                         KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-                        const ULONG enable = savedEnableMask & ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                        ULONG enable = savedEnableMask & ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                        if (AeroGpuIsDeviceErrorLatched(adapter)) {
+                            enable &= ~AEROGPU_IRQ_ERROR;
+                        }
                         adapter->IrqEnableMask = enable;
                         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
                         KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
@@ -13094,7 +13117,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     {
                         KIRQL oldIrql;
                         KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-                        const ULONG enable = savedEnableMask | AEROGPU_IRQ_SCANOUT_VBLANK;
+                        ULONG enable = savedEnableMask | AEROGPU_IRQ_SCANOUT_VBLANK;
+                        if (AeroGpuIsDeviceErrorLatched(adapter)) {
+                            enable &= ~AEROGPU_IRQ_ERROR;
+                        }
                         adapter->IrqEnableMask = enable;
                         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
                         KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
@@ -13126,7 +13152,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         {
                             KIRQL oldIrql;
                             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-                            const ULONG enable = savedEnableMask & ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                            ULONG enable = savedEnableMask & ~AEROGPU_IRQ_SCANOUT_VBLANK;
+                            if (AeroGpuIsDeviceErrorLatched(adapter)) {
+                                enable &= ~AEROGPU_IRQ_ERROR;
+                            }
                             adapter->IrqEnableMask = enable;
                             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
                             KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
@@ -13156,9 +13185,13 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     {
                         KIRQL oldIrql;
                         KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
-                        adapter->IrqEnableMask = savedEnableMask;
+                        ULONG enable = savedEnableMask;
+                        if (AeroGpuIsDeviceErrorLatched(adapter)) {
+                            enable &= ~AEROGPU_IRQ_ERROR;
+                        }
+                        adapter->IrqEnableMask = enable;
                         if (AeroGpuMmioSafeNow(adapter)) {
-                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, savedEnableMask);
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
                         }
                         KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
                     }
