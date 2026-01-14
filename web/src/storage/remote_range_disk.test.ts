@@ -1918,6 +1918,120 @@ describe("RemoteRangeDisk", () => {
     await disk.close();
   });
 
+  it("disables persistent caching if metadata persistence hits quota (and continues serving reads)", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(chunkSize * 2);
+    let rangeGets = 0;
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    class TrackingDisk extends MemorySparseDisk {
+      writeCalls = 0;
+      override async writeBlock(blockIndex: number, bytes: Uint8Array): Promise<void> {
+        this.writeCalls += 1;
+        await super.writeBlock(blockIndex, bytes);
+      }
+    }
+
+    class TrackingFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: TrackingDisk | null = null;
+
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new TrackingDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    class QuotaFailMetadataStore extends MemoryMetadataStore {
+      writes = 0;
+      override async write(cacheId: string, meta: any): Promise<void> {
+        this.writes += 1;
+        // Allow initial metadata write during init, then simulate quota exhaustion.
+        if (this.writes >= 2) {
+          throw new DOMException("quota exceeded", "QuotaExceededError");
+        }
+        await super.write(cacheId, meta);
+      }
+    }
+
+    const factory = new TrackingFactory();
+    const metadataStore = new QuotaFailMetadataStore();
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "quota-drop-meta", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      maxConcurrentFetches: 1,
+      readAheadChunks: 0,
+      metadataStore,
+      sparseCacheFactory: factory,
+      fetchFn,
+    });
+
+    const first = new Uint8Array(chunkSize);
+    await disk.readSectors(0, first);
+    expect(first).toEqual(data.subarray(0, first.byteLength));
+    expect(rangeGets).toBe(1);
+    expect(factory.lastCreated?.writeCalls).toBe(1);
+
+    // Force metadata persistence; it should fail with quota and disable persistent caching.
+    await disk.flush();
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+    expect(metadataStore.writes).toBe(2);
+
+    // With caching disabled, subsequent reads should re-download and must not attempt further
+    // sparse cache writes.
+    const second = new Uint8Array(chunkSize);
+    await disk.readSectors(0, second);
+    expect(second).toEqual(data.subarray(0, second.byteLength));
+    expect(rangeGets).toBe(2);
+    expect(factory.lastCreated?.writeCalls).toBe(1);
+    expect(metadataStore.writes).toBe(2);
+
+    await disk.close();
+  });
+
   it("treats clearCache quota failures as non-fatal (cache disabled)", async () => {
     const chunkSize = 512;
     const data = makeTestData(chunkSize * 2);
