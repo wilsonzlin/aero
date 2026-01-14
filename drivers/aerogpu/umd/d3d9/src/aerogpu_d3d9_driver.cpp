@@ -4311,8 +4311,20 @@ FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t 
       return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
     }
     default:
-      // Unsupported op: best-effort fall back to textured modulate when a texture
-      // is bound, otherwise treat as diffuse-only.
+      // Unsupported op: best-effort approximation based on the referenced sources.
+      //
+      // This is intentionally conservative: if the app's combiner does not reference
+      // TEXTURE, avoid sampling even if a texture happens to be bound.
+      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
+      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
+      if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Diffuse) {
+        return FixedfuncStage0Src::Diffuse;
+      }
+      if (a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Texture) {
+        return has_tex0 ? FixedfuncStage0Src::Texture : FixedfuncStage0Src::Diffuse;
+      }
+      // One texture + one diffuse: approximate with modulate when a texture is
+      // bound, otherwise treat as diffuse-only.
       return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
   }
 }
