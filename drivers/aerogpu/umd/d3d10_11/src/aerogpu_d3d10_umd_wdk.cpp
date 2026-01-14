@@ -2704,7 +2704,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #endif
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
-    cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
+    cmd->usage_flags = bind_flags_to_buffer_usage_flags(res->bind_flags);
     cmd->size_bytes = padded_size_bytes;
     cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = res->backing_offset_bytes;

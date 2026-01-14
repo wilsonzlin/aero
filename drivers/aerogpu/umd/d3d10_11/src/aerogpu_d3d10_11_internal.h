@@ -44,6 +44,8 @@ constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;
 constexpr uint32_t kMaxSamplerSlots = 16;
 constexpr uint32_t kMaxUavSlots = 8;
+// Back-compat alias: older code used this name for the compute UAV buffer slot count.
+constexpr uint32_t kMaxUnorderedAccessBufferSlots = kMaxUavSlots;
 
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
@@ -265,6 +267,11 @@ inline uint32_t bind_flags_to_usage_flags_for_texture(uint32_t bind_flags) {
 // usage mapping so buffers do not pick up TEXTURE usage when `bind_flags`
 // contains D3D11_BIND_SHADER_RESOURCE.
 inline uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
+  return bind_flags_to_usage_flags_for_buffer(bind_flags);
+}
+
+// Back-compat alias used by older call sites (e.g. portable UMD tests).
+inline uint32_t bind_flags_to_buffer_usage_flags(uint32_t bind_flags) {
   return bind_flags_to_usage_flags_for_buffer(bind_flags);
 }
 

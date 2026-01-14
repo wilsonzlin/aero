@@ -144,6 +144,7 @@ using aerogpu::d3d10_11::aerogpu_texture_format_layout;
 using aerogpu::d3d10_11::aerogpu_texture_min_row_pitch_bytes;
 using aerogpu::d3d10_11::aerogpu_texture_num_rows;
 using aerogpu::d3d10_11::aerogpu_texture_required_size_bytes;
+using aerogpu::d3d10_11::bind_flags_to_buffer_usage_flags;
 using aerogpu::d3d10_11::bind_flags_to_usage_flags;
 using aerogpu::d3d10_11::bytes_per_pixel_aerogpu;
 using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
@@ -1644,7 +1645,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return FailCreateResource(res, E_OUTOFMEMORY);
     }
     cmd->buffer_handle = res->handle;
-    cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
+    cmd->usage_flags = bind_flags_to_buffer_usage_flags(res->bind_flags);
     cmd->size_bytes = res->size_bytes;
     cmd->backing_alloc_id = res->backing_alloc_id;
     cmd->backing_offset_bytes = res->alloc_offset_bytes;
