@@ -45,6 +45,11 @@ function writeOctalField(dst: Uint8Array, offset: number, len: number, value: nu
   const digitsLen = Math.max(0, len - 1);
   const v = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
   const oct = v.toString(8);
+  // We intentionally do not implement GNU/base-256 encoding. If a value doesn't fit in the field,
+  // the archive would be invalid (and previous versions would silently truncate), so fail loudly.
+  if (oct.length > digitsLen) {
+    throw new Error(`tar: value too large for octal field (value=${v} oct=${oct} digits=${digitsLen})`);
+  }
   const padded = oct.padStart(digitsLen, "0").slice(-digitsLen) + "\0";
   writeAsciiField(dst, offset, len, padded);
 }

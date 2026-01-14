@@ -4,6 +4,7 @@ import { createTarArchive } from "./tar";
 
 function parseTarEntries(tar: Uint8Array): Array<{ name: string; data: Uint8Array }> {
   const entries: Array<{ name: string; data: Uint8Array }> = [];
+  const dec = new TextDecoder();
   let off = 0;
   while (off + 512 <= tar.byteLength) {
     const header = tar.subarray(off, off + 512);
@@ -20,8 +21,11 @@ function parseTarEntries(tar: Uint8Array): Array<{ name: string; data: Uint8Arra
     if (allZero) break;
 
     const nameBytes = header.subarray(0, 100);
-    const name = new TextDecoder().decode(nameBytes).split("\0")[0]!;
-    const sizeRaw = new TextDecoder().decode(header.subarray(124, 136)).split("\0")[0]!.trim();
+    const prefixBytes = header.subarray(345, 500);
+    const nameField = dec.decode(nameBytes).split("\0")[0]!;
+    const prefixField = dec.decode(prefixBytes).split("\0")[0]!;
+    const name = prefixField ? `${prefixField}/${nameField}` : nameField;
+    const sizeRaw = dec.decode(header.subarray(124, 136)).split("\0")[0]!.trim();
     const size = sizeRaw ? Number.parseInt(sizeRaw, 8) : 0;
     const data = tar.subarray(off, off + size);
     off += size;
@@ -61,5 +65,33 @@ describe("createTarArchive()", () => {
     expect(entries.map((e) => e.name)).toEqual(["dir/sub/file.txt"]);
     expect(new TextDecoder().decode(entries[0]!.data)).toBe("ok");
   });
-});
 
+  it("supports ustar prefix field when paths exceed the 100-byte name field", () => {
+    const enc = new TextEncoder();
+    const prefix = "a".repeat(120);
+    const name = "b".repeat(50);
+    const longPath = `${prefix}/${name}`;
+    expect(longPath.length).toBeGreaterThan(100);
+    const tar = createTarArchive([{ path: longPath, data: enc.encode("ok") }], { mtimeSec: 0 });
+    const entries = parseTarEntries(tar);
+    expect(entries.map((e) => e.name)).toEqual([longPath]);
+    expect(new TextDecoder().decode(entries[0]!.data)).toBe("ok");
+  });
+
+  it("throws on paths too long for the ustar prefix+name fields", () => {
+    const enc = new TextEncoder();
+    const noSlash = "a".repeat(300);
+    expect(() => createTarArchive([{ path: noSlash, data: enc.encode("x") }], { mtimeSec: 0 })).toThrowError(
+      /path too long/i,
+    );
+  });
+
+  it("throws when header numeric fields overflow their octal encoding", () => {
+    const enc = new TextEncoder();
+    // ustar mtime field uses 11 octal digits (len=12 including the trailing NUL).
+    const oversizedMtime = 8 ** 11;
+    expect(() => createTarArchive([{ path: "file.txt", data: enc.encode("x"), mtimeSec: oversizedMtime }])).toThrowError(
+      /value too large/i,
+    );
+  });
+});
