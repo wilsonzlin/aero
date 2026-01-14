@@ -6737,8 +6737,9 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
-  std::vector<aerogpu_constant_buffer_binding> bindings;
-  bindings.resize(buffer_count);
+  // Constant buffer bindings are limited to 14 slots in D3D10/10.1, so avoid heap
+  // allocations in this hot path.
+  std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> bindings{};
   for (UINT i = 0; i < buffer_count; i++) {
     aerogpu_constant_buffer_binding b{};
     b.buffer = 0;
@@ -6763,7 +6764,7 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), buffer_count * sizeof(bindings[0]));
   if (!cmd) {
     set_error(dev, E_OUTOFMEMORY);
     return;
