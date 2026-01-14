@@ -233,6 +233,7 @@ The input injector worker (`io.worker.ts` in `vmRuntime=legacy`, `machine_cpu.wo
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
 # If your Node workspace entrypoint is `web/` (instead of the repo root), use:
 #   cargo xtask input --node-dir web
+#   cargo xtask input --web-dir web
 # Note: by default this runs a focused subset of `aero-usb` tests (UHCI + external hub + EHCI +
 # EHCI snapshot roundtrip + USB2 companion routing + WebUSB passthrough (UHCI + xHCI) + key HID
 # snapshot compatibility/clamping tests + shared HID usage fixtures + xHCI bring-up smoke/reg-gating).
@@ -242,8 +243,9 @@ cargo xtask input
 # If you run Node tooling from `web/` directly (or your `node_modules/` live under `web/`),
 # you can point `cargo xtask input` at that workspace:
 cargo xtask input --node-dir web
-# (Equivalent env var form.)
+# (Equivalent env var forms.)
 AERO_NODE_DIR=web cargo xtask input
+AERO_WEB_DIR=web cargo xtask input
 
 # Run only the Rust USB/input tests (skips Node + Playwright; does not require `node_modules`).
 cargo xtask input --rust-only
@@ -320,6 +322,7 @@ cargo xtask input --e2e
 bash ./scripts/safe-run.sh cargo xtask input
 # If your Node workspace is `web/`, you can also use:
 AERO_NODE_DIR=web bash ./scripts/safe-run.sh cargo xtask input
+# (Or: AERO_WEB_DIR=web)
 bash ./scripts/safe-run.sh cargo xtask input --rust-only
 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test webusb_uhci_bridge \
