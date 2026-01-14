@@ -232,7 +232,7 @@ fn aerogpu_submission_bridge_drains_cmd_streams_with_zero_fence() {
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Ring header.
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -243,7 +243,7 @@ fn aerogpu_submission_bridge_drains_cmd_streams_with_zero_fence() {
 
     // Submit desc in slot 0 with signal_fence=0 (best-effort/internal submissions).
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc_gpa + 4, 0); // flags
     m.write_physical_u32(desc_gpa + 8, 0); // context_id
     m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
