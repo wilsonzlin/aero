@@ -19458,7 +19458,7 @@ fn main() {{
                     group: 3,
                     binding: crate::runtime::tessellation::BINDING_VS_OUT_REGS,
                     visibility: wgpu::ShaderStages::COMPUTE,
-                    kind: crate::BindingKind::ExpansionStorageBuffer { read_only: true },
+                    kind: crate::BindingKind::ExpansionStorageBuffer { read_only: false },
                 },
                 crate::Binding {
                     group: 3,
@@ -19485,13 +19485,13 @@ fn main() {{
 
             let cp_wgsl = format!(
                 r#"
-struct Params {{
-    value: vec4<f32>,
-}};
-
-@group(3) @binding({cb0}) var<uniform> params: Params;
-@group(3) @binding({vs_out}) var<storage, read> vs_out_regs: array<vec4<f32>>;
-@group(3) @binding({hs_out}) var<storage, read_write> hs_out_regs: array<vec4<f32>>;
+ struct Params {{
+     value: vec4<f32>,
+ }};
+ 
+ @group(3) @binding({cb0}) var<uniform> params: Params;
+ @group(3) @binding({vs_out}) var<storage, read_write> vs_out_regs: array<vec4<f32>>;
+ @group(3) @binding({hs_out}) var<storage, read_write> hs_out_regs: array<vec4<f32>>;
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
@@ -20377,7 +20377,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             writer.create_texture2d(
                 RT,
                 AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-                AerogpuFormat::R8G8B8A8Unorm as u32,
+                AEROGPU_FORMAT_R8G8B8A8_UNORM,
                 8,
                 8,
                 1,

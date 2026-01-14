@@ -813,11 +813,12 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
                 mapped_at_creation: false,
             });
 
+            // `layout_pass::wgsl_tessellation_layout_pass` enables debug counters in tests, which
+            // expands `DebugOut` to 16 bytes (flag + counters + padding).
+            let layout_debug_size: u64 = 16;
             let layout_debug = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("tess test layout debug"),
-                // `layout_pass::wgsl_tessellation_layout_pass` enables debug counters in tests, so
-                // the storage struct is at least 16 bytes.
-                size: 16,
+                size: layout_debug_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
@@ -1059,7 +1060,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             });
             let staging_debug = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("tess test staging layout debug"),
-                size: 4,
+                size: layout_debug_size,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -1084,7 +1085,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 0,
                 indirect_args_size,
             );
-            encoder.copy_buffer_to_buffer(&layout_debug, 0, &staging_debug, 0, 4);
+            encoder.copy_buffer_to_buffer(&layout_debug, 0, &staging_debug, 0, layout_debug_size);
             encoder.copy_buffer_to_buffer(
                 &expanded_vertices,
                 0,
@@ -1135,7 +1136,9 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 "vertex_count_total should match triangle integer-partitioning formula"
             );
 
-            let debug_bytes = read_buffer(&device, &staging_debug, 4).await.unwrap();
+            let debug_bytes = read_buffer(&device, &staging_debug, layout_debug_size as usize)
+                .await
+                .unwrap();
             assert_eq!(
                 read_u32_le(&debug_bytes[0..4]),
                 0,
