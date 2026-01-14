@@ -243,6 +243,16 @@ async function opfsReadLruChunkCacheBytes(
               const obj = chunks as Record<string, unknown>;
               let entries = 0;
               for (const key in obj) {
+                if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+                // Chunk indices are stored as base-10 integer strings ("0", "1", ...). Treat any
+                // other keys as a corrupt index and fall back to scanning chunk files.
+                if (!/^\d+$/.test(key)) {
+                  throw new Error("index.json contains non-numeric chunk keys");
+                }
+                const idx = Number(key);
+                if (!Number.isSafeInteger(idx) || idx < 0) {
+                  throw new Error("index.json contains invalid chunk key");
+                }
                 const meta = obj[key];
                 if (!meta || typeof meta !== "object") continue;
                 entries += 1;
@@ -318,6 +328,11 @@ async function opfsReadLruChunkCacheIndexStats(
     const obj = chunks as Record<string, unknown>;
     for (const key in obj) {
       if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      // Chunk indices are stored as base-10 integer strings ("0", "1", ...). Treat any other keys
+      // as a corrupt index so callers can fall back to scanning on-disk chunk files.
+      if (!/^\d+$/.test(key)) return null;
+      const idx = Number(key);
+      if (!Number.isSafeInteger(idx) || idx < 0) return null;
       const meta = obj[key];
       if (!meta || typeof meta !== "object") continue;
       chunkCount += 1;
