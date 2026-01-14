@@ -1257,6 +1257,7 @@ static void InitLockForWrite(D3DDDICB_LOCK* lock) {
 }
 
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write);
+static bool AerogpuFormatIsDepth(uint32_t aerogpu_format);
 
 static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
                              AeroGpuDevice* dev,
