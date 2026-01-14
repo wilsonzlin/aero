@@ -3351,8 +3351,12 @@ try {
 
             $rootFull = $null
             try { $rootFull = [System.IO.Path]::GetFullPath($scriptDir) } catch { $rootFull = $scriptDir }
-            $rootLower = $null
-            try { $rootLower = $rootFull.ToLower() } catch { $rootLower = "" }
+            # Use a trailing path separator when computing relative paths to avoid prefix collisions
+            # (e.g. C:\Foo vs C:\Foobar).
+            $prefix = $rootFull
+            if (-not ($prefix.EndsWith("\") -or $prefix.EndsWith("/"))) { $prefix += "\" }
+            $prefixLower = ""
+            try { $prefixLower = $prefix.ToLower() } catch { $prefixLower = "" }
 
             $fileItems = @()
             foreach ($it in @($items)) {
@@ -3370,8 +3374,8 @@ try {
                 $rel = $full
                 try {
                     $fullCanon = [System.IO.Path]::GetFullPath($full)
-                    if ($rootLower -and $fullCanon.ToLower().StartsWith($rootLower)) {
-                        $rel = $fullCanon.Substring($rootFull.Length)
+                    if ($prefixLower -and $fullCanon.ToLower().StartsWith($prefixLower)) {
+                        $rel = $fullCanon.Substring($prefix.Length)
                         $rel = $rel.TrimStart('\','/')
                     } else {
                         $rel = $fullCanon
