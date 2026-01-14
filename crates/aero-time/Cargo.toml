@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"

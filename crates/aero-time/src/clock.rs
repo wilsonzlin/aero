@@ -1,6 +1,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant` panics at runtime on wasm32 targets. Use `web-time`'s `Instant` instead
+// to keep `StdHostClock` usable in the browser/Node environments.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 #[inline]
 fn duration_as_u64_ns(duration: Duration) -> u64 {

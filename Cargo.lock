@@ -840,6 +840,9 @@ dependencies = [
 [[package]]
 name = "aero-time"
 version = "0.1.0"
+dependencies = [
+ "web-time",
+]
 
 [[package]]
 name = "aero-timers"
