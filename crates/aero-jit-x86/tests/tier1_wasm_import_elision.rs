@@ -23,6 +23,20 @@ fn import_entries(wasm: &[u8]) -> Vec<(String, String, TypeRef)> {
     out
 }
 
+fn type_count(wasm: &[u8]) -> u32 {
+    for payload in Parser::new(0).parse_all(wasm) {
+        if let Payload::TypeSection(types) = payload.expect("parse wasm") {
+            let mut count = 0u32;
+            for ty in types.into_iter_err_on_gc_types() {
+                ty.expect("parse type");
+                count += 1;
+            }
+            return count;
+        }
+    }
+    panic!("type section not found");
+}
+
 #[test]
 fn tier1_block_without_mem_ops_imports_only_memory() {
     let b = IrBuilder::new(0x1000);
@@ -43,6 +57,12 @@ fn tier1_block_without_mem_ops_imports_only_memory() {
     assert!(
         matches!(ty, TypeRef::Memory(_)),
         "expected env.memory import to be a memory, got {ty:?}"
+    );
+
+    assert_eq!(
+        type_count(&wasm),
+        1,
+        "expected Tier-1 block without helper imports to only define one function type (the block signature)"
     );
 }
 
@@ -73,5 +93,10 @@ fn tier1_block_with_load_imports_mem_read_helpers() {
         found_mem_read_u8,
         "expected Tier-1 block with a load to import env.mem_read_u8"
     );
-}
 
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected Tier-1 block with a single load to define only the mem_read_u8 and block function types"
+    );
+}

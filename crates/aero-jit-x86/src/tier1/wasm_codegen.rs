@@ -352,38 +352,64 @@ impl Tier1WasmCodegen {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
-        let ty_mem_read_u8 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I32]);
-        let ty_mem_read_u16 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I32]);
-        let ty_mem_read_u32 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I32]);
-        let ty_mem_read_u64 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I64]);
-        let ty_mem_write_u8 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I32], []);
-        let ty_mem_write_u16 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I32], []);
-        let ty_mem_write_u32 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I32], []);
-        let ty_mem_write_u64 = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64, ValType::I64], []);
+        // Keep the type section minimal: only emit helper import types that are actually used by
+        // this block.
+        let ty_mem_read_u8 = needs_mem_read_u8.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I32]);
+            ty
+        });
+        let ty_mem_read_u16 = needs_mem_read_u16.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I32]);
+            ty
+        });
+        let ty_mem_read_u32 = needs_mem_read_u32.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I32]);
+            ty
+        });
+        let ty_mem_read_u64 = needs_mem_read_u64.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I64]);
+            ty
+        });
+        let ty_mem_write_u8 = needs_mem_write_u8.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I32], []);
+            ty
+        });
+        let ty_mem_write_u16 = needs_mem_write_u16.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I32], []);
+            ty
+        });
+        let ty_mem_write_u32 = needs_mem_write_u32.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I32], []);
+            ty
+        });
+        let ty_mem_write_u64 = needs_mem_write_u64.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I64], []);
+            ty
+        });
         let ty_mmu_translate = if options.inline_tlb {
             let ty = types.len();
             types.ty().function(
@@ -411,10 +437,13 @@ impl Tier1WasmCodegen {
         } else {
             None
         };
-        let ty_jit_exit = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I64], [ValType::I64]);
+        let ty_jit_exit = needs_jit_exit.then(|| {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64], [ValType::I64]);
+            ty
+        });
         let ty_block = types.len();
         types
             .ty()
@@ -465,56 +494,56 @@ impl Tier1WasmCodegen {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U8,
-                EntityType::Function(ty_mem_read_u8),
+                EntityType::Function(ty_mem_read_u8.expect("type for mem_read_u8")),
             );
         }
         if needs_mem_read_u16 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U16,
-                EntityType::Function(ty_mem_read_u16),
+                EntityType::Function(ty_mem_read_u16.expect("type for mem_read_u16")),
             );
         }
         if needs_mem_read_u32 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U32,
-                EntityType::Function(ty_mem_read_u32),
+                EntityType::Function(ty_mem_read_u32.expect("type for mem_read_u32")),
             );
         }
         if needs_mem_read_u64 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_READ_U64,
-                EntityType::Function(ty_mem_read_u64),
+                EntityType::Function(ty_mem_read_u64.expect("type for mem_read_u64")),
             );
         }
         if needs_mem_write_u8 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U8,
-                EntityType::Function(ty_mem_write_u8),
+                EntityType::Function(ty_mem_write_u8.expect("type for mem_write_u8")),
             );
         }
         if needs_mem_write_u16 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U16,
-                EntityType::Function(ty_mem_write_u16),
+                EntityType::Function(ty_mem_write_u16.expect("type for mem_write_u16")),
             );
         }
         if needs_mem_write_u32 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U32,
-                EntityType::Function(ty_mem_write_u32),
+                EntityType::Function(ty_mem_write_u32.expect("type for mem_write_u32")),
             );
         }
         if needs_mem_write_u64 {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U64,
-                EntityType::Function(ty_mem_write_u64),
+                EntityType::Function(ty_mem_write_u64.expect("type for mem_write_u64")),
             );
         }
         if options.inline_tlb {
@@ -535,7 +564,7 @@ impl Tier1WasmCodegen {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_JIT_EXIT,
-                EntityType::Function(ty_jit_exit),
+                EntityType::Function(ty_jit_exit.expect("type for jit_exit")),
             );
         }
         module.section(&imports);
