@@ -1416,7 +1416,7 @@ fn decodes_and_translates_loop_with_breakc_and_continuec() {
         module
             .instructions
             .iter()
-            .any(|i| matches!(i, Sm4Inst::BreakC { .. })),
+            .any(|i| matches!(i, Sm4Inst::BreakC { op: Sm4CmpOp::Lt, .. })),
         "expected BreakC instruction in decoded module: {:#?}",
         module.instructions
     );
@@ -1424,7 +1424,7 @@ fn decodes_and_translates_loop_with_breakc_and_continuec() {
         module
             .instructions
             .iter()
-            .any(|i| matches!(i, Sm4Inst::ContinueC { .. })),
+            .any(|i| matches!(i, Sm4Inst::ContinueC { op: Sm4CmpOp::Gt, .. })),
         "expected ContinueC instruction in decoded module: {:#?}",
         module.instructions
     );
