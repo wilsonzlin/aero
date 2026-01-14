@@ -68,7 +68,7 @@ impl HostPolicy {
     }
 
     pub fn allows_domain(&self, name: &str) -> bool {
-        let name = name.trim().trim_end_matches('.');
+        let name = name.trim().trim_matches('.');
         if self
             .deny_domains
             .iter()
@@ -87,7 +87,7 @@ impl HostPolicy {
 }
 
 fn domain_matches(name: &str, suffix: &str) -> bool {
-    let suffix = suffix.trim().trim_end_matches('.');
+    let suffix = suffix.trim().trim_matches('.');
     if suffix.is_empty() {
         return false;
     }
@@ -122,11 +122,14 @@ mod tests {
     fn domain_matches_requires_suffix_boundary_and_is_case_insensitive() {
         assert!(domain_matches("Example.COM", "example.com"));
         assert!(domain_matches("sub.Example.COM", "example.com"));
+        assert!(domain_matches("example.com", ".example.com"));
+        assert!(domain_matches("sub.example.com", ".example.com."));
         assert!(!domain_matches("notexample.com", "example.com"));
         assert!(!domain_matches("example.com.evil", "example.com"));
         assert!(!domain_matches("evilcom", "com"));
         assert!(domain_matches("example.COM", "COM"));
         assert!(domain_matches("example.com", "com."));
+        assert!(!domain_matches("example.com", "."));
     }
 
     #[test]

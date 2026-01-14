@@ -101,7 +101,7 @@ impl EgressPolicy {
     }
 
     pub fn allows_domain(&self, name: &str) -> bool {
-        let name = name.trim().trim_end_matches('.');
+        let name = name.trim().trim_matches('.');
         if self
             .blocked_domains
             .iter()
@@ -154,15 +154,19 @@ fn parse_domain_list_env(var: &str) -> Vec<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(normalize_domain)
+        // Drop invalid entries like "." / ".." (which normalize to the empty string). Keeping them
+        // would incorrectly enable "deny by default" behavior since the allowlist is considered
+        // enabled when non-empty.
+        .filter(|s| !s.is_empty())
         .collect()
 }
 
 fn normalize_domain(name: &str) -> String {
-    name.trim_end_matches('.').trim().to_ascii_lowercase()
+    name.trim().trim_matches('.').to_ascii_lowercase()
 }
 
 fn domain_matches(name: &str, suffix: &str) -> bool {
-    let suffix = suffix.trim().trim_end_matches('.');
+    let suffix = suffix.trim().trim_matches('.');
     if suffix.is_empty() {
         return false;
     }
@@ -380,5 +384,25 @@ mod tests {
             assert!(!policy.allows_domain("sub.bad.example.com"));
             assert!(policy.allows_domain("good.example.com"));
         }
+    }
+
+    #[test]
+    fn domain_suffixes_accept_optional_leading_dot_and_ignore_empty_entries() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
+
+        // Leading dots are common in suffix-based configs; treat them as equivalent to the bare
+        // suffix.
+        let _allowed_domains = EnvVarGuard::set("AERO_L2_ALLOWED_DOMAINS", ".Example.COM");
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(policy.allows_domain("example.com"));
+        assert!(policy.allows_domain("sub.example.com"));
+        assert!(!policy.allows_domain("other.test"));
+
+        // Entries that normalize to empty (e.g. ".") should be ignored, not treated as an enabled
+        // allowlist that matches nothing.
+        let _allowed_domains = EnvVarGuard::set("AERO_L2_ALLOWED_DOMAINS", ".");
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(policy.allows_domain("example.com"));
     }
 }
