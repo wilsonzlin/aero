@@ -22,7 +22,7 @@ This directory contains “graphics stack” implementation notes and bring-up c
 
 - `win7-d3d9ex-umd-minimal.md` — minimal D3D9Ex UMD/DDI surface for DWM + basic D3D9 apps.
 - `win7-d3d9-umd-tracing.md` — lightweight D3D9 UMD DDI call tracing (which entrypoints DWM/apps invoke).
-- `win7-d3d9-fixedfunc-wvp.md` — fixed-function WVP implementation notes (`D3DFVF_XYZ*` draw-time constants + `ProcessVertices` CPU path).
+- `win7-d3d9-fixedfunc-wvp.md` — fixed-function WVP implementation notes (`D3DFVF_XYZ*` draw-time WVP paths + `ProcessVertices` CPU path).
 - `win7-d3d10-11-umd-minimal.md` — minimal D3D10 + D3D11 UMD/DDI surface (SM4/SM5) plus DXGI swapchain expectations (targeting FL10_0 bring-up, roadmap to FL11_0).
 - `win7-d3d10-11-umd-allocations.md` — CreateResource-side Win7/WDDM 1.1 allocation contract (`pfnAllocateCb`/`pfnDeallocateCb`, `D3DDDI_ALLOCATIONINFO`, `DXGI_DDI_PRIMARY_DESC` primary/backbuffer identification).
 - `win7-d3d11-map-unmap.md` — Win7 D3D11 Map/Unmap + runtime `LockCb`/`UnlockCb` semantics (dynamic uploads + staging readback).
