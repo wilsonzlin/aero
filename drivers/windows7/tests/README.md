@@ -39,6 +39,12 @@ drivers/windows7/tests/
     with `--test-blk-resize` / env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1` to enable it.
   - When the host harness is run with `--with-blk-resize` / `-WithBlkResize`, it waits for the guest `READY` marker,
     issues a QMP resize (`blockdev-resize` with fallback to legacy `block_resize`), and requires `virtio-blk-resize|PASS`.
+- Includes an opt-in virtio-blk miniport reset/recovery stability test (`virtio-blk-reset`) that validates the
+  **driver reset path** end-to-end.
+  - Disabled by default; provision the guest to run the selftest with `--test-blk-reset` / env var
+    `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1` to enable it.
+  - When the host harness is run with `--with-blk-reset` / `-WithBlkReset`, it requires the guest `virtio-blk-reset`
+    marker to `PASS` (treats `SKIP`/`FAIL`/missing as failure).
 - Runs a virtio-net test (wait for DHCP, UDP echo roundtrip to the host harness, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
   - Also validates the underlying virtio-input PCI function(s) are bound to the expected driver service (`aero_virtio_input`)
@@ -103,9 +109,15 @@ drivers/windows7/tests/
    # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
    # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>
 
+   # Optional: virtio-blk miniport reset/recovery stability test (requires `--test-blk-reset` in the guest):
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...
+ 
        AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-       AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>
-       AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=aero_virtio_input|pnp_id=<...>|hwid0=<...>
+        AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>
+        AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=aero_virtio_input|pnp_id=<...>|hwid0=<...>
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet|SKIP|not_present|tablet_devices=0|tablet_collections=0
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set
@@ -163,6 +175,8 @@ When the harness is run with:
   or missing marker is treated as a hard failure).
 - `-WithBlkResize` / `--with-blk-resize`, `virtio-blk-resize` must `PASS` (and a guest `SKIP|flag_not_set` or missing marker
   is treated as a hard failure). This path also triggers a runtime QMP resize.
+- `-WithBlkReset` / `--with-blk-reset`, `virtio-blk-reset` must `PASS` (and a guest `SKIP`/`FAIL` or missing marker is treated
+  as a hard failure). This requires the guest image provisioned with `--test-blk-reset`.
 - `-RequireNetCsumOffload` / `--require-net-csum-offload`, the harness additionally requires `virtio-net-offload-csum` to report
   `PASS` and `tx_csum > 0` (at least one checksum-offloaded TX packet was observed).
 - `--require-net-udp-csum-offload` (Python harness), the harness additionally requires `virtio-net-offload-csum` to report
