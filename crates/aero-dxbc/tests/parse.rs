@@ -182,11 +182,37 @@ fn malformed_chunk_offset_points_into_header_is_error() {
 }
 
 #[test]
+fn malformed_chunk_offset_points_into_header_tail_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
+    // Point at the final byte of the fixed header (still inside header).
+    let bad_off = 31u32;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("points into DXBC header"));
+}
+
+#[test]
 fn malformed_chunk_offset_points_into_offset_table_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     // Point the first chunk offset into the 4-byte chunk offset table itself.
     // Use a misaligned offset to ensure we never assume 4-byte alignment.
     let bad_off = 33u32;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("points into chunk offset table"));
+}
+
+#[test]
+fn malformed_chunk_offset_points_to_offset_table_start_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
+    // Point exactly at the start of the chunk offset table (aligned case).
+    let bad_off = 32u32;
     let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
     bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
 
