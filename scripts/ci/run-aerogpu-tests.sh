@@ -40,6 +40,7 @@ run cargo test -p aero-devices-gpu --locked
 
 run cargo test -p aero-machine --locked \
   --test aerogpu_pci_enumeration \
+  --test aerogpu_bar0_mmio_vblank \
   --test aerogpu_immediate_backend_completes_fence \
   --test aerogpu_features \
   --test aerogpu_submission_bridge \
