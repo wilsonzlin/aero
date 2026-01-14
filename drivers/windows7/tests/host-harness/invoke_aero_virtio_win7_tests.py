@@ -1896,9 +1896,13 @@ def _try_qmp_set_link(endpoint: _QmpEndpoint, *, name: str, up: bool) -> None:
 
         err = resp.get("error")
         if isinstance(err, dict):
-            klass = err.get("class")
             desc = err.get("desc")
-            if klass == "CommandNotFound":
+            # Detect "unknown command" responses across QEMU versions (some use GenericError with a
+            # descriptive `desc` rather than the structured CommandNotFound class).
+            if _qmp_error_is_command_not_found(
+                _QmpCommandError(execute="set_link", resp=resp),
+                command="set_link",
+            ):
                 raise RuntimeError(
                     "unsupported QEMU: QMP does not support set_link (required for --with-net-link-flap). "
                     "Upgrade QEMU or omit --with-net-link-flap."

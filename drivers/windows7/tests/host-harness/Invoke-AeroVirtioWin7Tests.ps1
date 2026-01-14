@@ -5473,6 +5473,13 @@ function Try-AeroQmpSetLink {
             return @{ Ok = $false; Name = ""; Unsupported = $true; Reason = "CommandNotFound" }
           }
           if (-not [string]::IsNullOrEmpty($desc)) {
+            # Some QEMU builds report unknown QMP commands as GenericError with a descriptive message
+            # (instead of the structured CommandNotFound class). Treat those as "unsupported" so the
+            # caller can emit the stable QMP_SET_LINK_UNSUPPORTED token.
+            $msg = "QMP command 'set_link' failed: $desc"
+            if (Test-AeroQmpCommandNotFound -Message $msg -Command "set_link") {
+              return @{ Ok = $false; Name = ""; Unsupported = $true; Reason = "CommandNotFound" }
+            }
             $lastErr = $desc
           }
           continue
