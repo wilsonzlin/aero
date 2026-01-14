@@ -140,7 +140,8 @@ mod tests {
     use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionOut};
     use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
-    const EXTERNAL_HUB_ROOT_PORT: usize = aero_machine::Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize;
+    const EXTERNAL_HUB_ROOT_PORT: usize =
+        aero_machine::Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize;
     const EXTERNAL_HUB_PORT_COUNT: u8 = aero_machine::Machine::UHCI_EXTERNAL_HUB_PORT_COUNT;
 
     fn is_external_hub_attached(ctrl: &mut EhciController) -> bool {

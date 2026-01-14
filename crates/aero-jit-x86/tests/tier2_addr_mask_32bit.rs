@@ -200,7 +200,12 @@ fn tier2_masks_32bit_stack_pointer_wraps_on_push() {
     state.cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_0000_0000; // masked to 0
 
     let exit = run_function(&func, &env, &mut bus, &mut state, 8);
-    assert_eq!(exit, RunExit::SideExit { next_rip: entry + 1 });
+    assert_eq!(
+        exit,
+        RunExit::SideExit {
+            next_rip: entry + 1
+        }
+    );
     assert_eq!(state.cpu.gpr[Gpr::Rsp.as_u8() as usize], 0xffff_fffc);
 
     let mut got = [0u8; 4];
@@ -236,7 +241,12 @@ fn tier2_masks_32bit_stack_pointer_wraps_on_pop() {
     state.cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_ffff_fffc; // masked to 0xffff_fffc
 
     let exit = run_function(&func, &env, &mut bus, &mut state, 8);
-    assert_eq!(exit, RunExit::SideExit { next_rip: entry + 1 });
+    assert_eq!(
+        exit,
+        RunExit::SideExit {
+            next_rip: entry + 1
+        }
+    );
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x5566_7788);
     assert_eq!(state.cpu.gpr[Gpr::Rsp.as_u8() as usize], 0);
 }

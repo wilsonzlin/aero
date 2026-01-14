@@ -57,10 +57,7 @@ fn enabling_scanout_does_not_retroactively_catch_up_vblank_ticks() {
     clock.advance_ns(period_ns * 10);
 
     // Enable scanout. This must not retroactively catch up vblank ticks.
-    m.write_physical_u32(
-        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
-        1,
-    );
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
     m.process_aerogpu();
 
     assert_eq!(
