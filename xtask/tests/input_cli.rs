@@ -64,6 +64,9 @@ fn input_help_mentions_flags_and_steps() {
             "machine_input_batch_mouse_all_released_capped",
         ))
         .stdout(predicate::str::contains(
+            "machine_input_batch_consumer_control_backend_switch",
+        ))
+        .stdout(predicate::str::contains(
             "machine_input_batch_usb_keyboard_unconfigured",
         ))
         .stdout(predicate::str::contains(
