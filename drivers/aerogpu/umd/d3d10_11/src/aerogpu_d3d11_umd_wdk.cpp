@@ -6169,6 +6169,9 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::array<aerogpu_vertex_buffer_binding, kD3D11IaVertexInputResourceSlotCount> bindings{};
+  std::array<Resource*, kD3D11IaVertexInputResourceSlotCount> new_resources{};
+  std::array<uint32_t, kD3D11IaVertexInputResourceSlotCount> new_strides{};
+  std::array<uint32_t, kD3D11IaVertexInputResourceSlotCount> new_offsets{};
   for (UINT i = 0; i < bind_count; ++i) {
     const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
 
@@ -6176,6 +6179,10 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
     Resource* vb_res = nullptr;
     if (NumBuffers != 0) {
       vb_res = phBuffers[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[i]) : nullptr;
+      if (vb_res && vb_res->kind != ResourceKind::Buffer) {
+        SetError(dev, E_INVALIDARG);
+        return;
+      }
       b.buffer = vb_res ? vb_res->handle : 0;
       b.stride_bytes = pStrides[i];
       b.offset_bytes = pOffsets[i];
@@ -6186,17 +6193,9 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
     b.reserved0 = 0;
     bindings[i] = b;
-
-    if (slot < dev->current_vb_resources.size()) {
-      dev->current_vb_resources[slot] = vb_res;
-      dev->current_vb_strides_bytes[slot] = b.stride_bytes;
-      dev->current_vb_offsets_bytes[slot] = b.offset_bytes;
-    }
-    if (slot == 0) {
-      dev->current_vb = vb_res;
-      dev->current_vb_stride_bytes = b.stride_bytes;
-      dev->current_vb_offset_bytes = b.offset_bytes;
-    }
+    new_resources[i] = vb_res;
+    new_strides[i] = b.stride_bytes;
+    new_offsets[i] = b.offset_bytes;
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
@@ -6207,6 +6206,20 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
   cmd->start_slot = StartSlot;
   cmd->buffer_count = bind_count;
+
+  for (UINT i = 0; i < bind_count; ++i) {
+    const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
+    if (slot < dev->current_vb_resources.size()) {
+      dev->current_vb_resources[slot] = new_resources[i];
+      dev->current_vb_strides_bytes[slot] = new_strides[i];
+      dev->current_vb_offsets_bytes[slot] = new_offsets[i];
+    }
+    if (slot == 0) {
+      dev->current_vb = new_resources[i];
+      dev->current_vb_stride_bytes = new_strides[i];
+      dev->current_vb_offset_bytes = new_offsets[i];
+    }
+  }
 }
 
 void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hBuffer, DXGI_FORMAT format, UINT offset) {
