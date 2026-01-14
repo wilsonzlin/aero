@@ -25,12 +25,12 @@ pub struct ShaderTranslation {
     pub wgsl: String,
     pub entry_point: &'static str,
     pub uses_semantic_locations: bool,
-    /// Semantic→location mapping produced by shader translation when `uses_semantic_locations` is
-    /// true.
+    /// Semantic → WGSL location mapping derived from vertex shader `dcl_*` declarations (legacy
+    /// translator) when [`ShaderTranslation::uses_semantic_locations`] is true.
     ///
-    /// Some translation paths use the fixed [`crate::vertex::StandardLocationMap`] and therefore do
-    /// not need to return an explicit mapping; in those cases this vector is empty and host-side
-    /// executors should fall back to the standard map.
+    /// The strict SM3 pipeline uses [`crate::vertex::StandardLocationMap`] and does not currently
+    /// emit an explicit mapping list, so this may be empty even when
+    /// [`ShaderTranslation::uses_semantic_locations`] is true.
     pub semantic_locations: Vec<shader::SemanticLocation>,
     pub used_samplers: BTreeSet<u16>,
     pub sampler_texture_types: HashMap<u16, TextureType>,
@@ -339,8 +339,6 @@ fn try_translate_sm3(
         wgsl: wgsl_str,
         entry_point: wgsl.entry_point,
         uses_semantic_locations: ir.uses_semantic_locations,
-        // SM3 translation currently uses StandardLocationMap for semantic remapping and therefore
-        // does not need to return an explicit mapping.
         semantic_locations: Vec::new(),
         used_samplers,
         sampler_texture_types,
