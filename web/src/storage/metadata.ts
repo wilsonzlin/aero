@@ -618,11 +618,24 @@ export function createIdbMetadataStore(): DiskMetadataStore {
       const tx = db.transaction(["disks", "mounts"], "readwrite");
       tx.objectStore("disks").delete(id);
       const mountsStore = tx.objectStore("mounts");
-      const mountsRec = (await idbReq(mountsStore.get("mounts"))) as MountsRecord | undefined;
-      if (mountsRec?.value) {
-        if (mountsRec.value.hddId === id) mountsRec.value.hddId = undefined;
-        if (mountsRec.value.cdId === id) mountsRec.value.cdId = undefined;
-        mountsStore.put(mountsRec);
+      const mountsRec = (await idbReq(mountsStore.get("mounts"))) as unknown;
+      // Treat stored mounts as untrusted: never observe inherited IDs (prototype pollution).
+      const mountsRaw =
+        mountsRec && typeof mountsRec === "object" && hasOwnProp(mountsRec as object, "value")
+          ? (mountsRec as { value?: unknown }).value
+          : undefined;
+      const normalized = normalizeMountConfig(mountsRaw);
+      let changed = false;
+      if (normalized.hddId === id) {
+        normalized.hddId = undefined;
+        changed = true;
+      }
+      if (normalized.cdId === id) {
+        normalized.cdId = undefined;
+        changed = true;
+      }
+      if (changed) {
+        mountsStore.put({ key: "mounts", value: { ...normalized } } satisfies MountsRecord);
       }
       await idbTxDone(tx);
       db.close();
