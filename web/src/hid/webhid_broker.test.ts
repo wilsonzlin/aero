@@ -1155,6 +1155,81 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("buffers output ring reports received before hid.attachResult and sends them after attach completes", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    port.autoAttachResult = false;
+    let attachedId: number | null = null;
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        attachedId = (msg as { deviceId: number }).deviceId;
+      }
+    };
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(attachedId).toBeTruthy();
+    const id = attachedId!;
+
+    outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1));
+    // Let the periodic ring drain fire while attach is still pending.
+    await new Promise((r) => setTimeout(r, 40));
+    expect(device.sendReport).not.toHaveBeenCalled();
+
+    port.emit({ type: "hid.attachResult", deviceId: id, ok: true });
+    await attachPromise;
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+    expect(device.sendReport).toHaveBeenCalledWith(1, Uint8Array.of(1));
+
+    broker.destroy();
+  });
+
+  it("buffers hid.sendReport messages received before hid.attachResult and sends them after attach completes", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    port.autoAttachResult = false;
+    let attachedId: number | null = null;
+    port.onPost = (msg) => {
+      if ((msg as { type?: unknown }).type === "hid.attach") {
+        attachedId = (msg as { deviceId: number }).deviceId;
+      }
+    };
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const device = new FakeHidDevice();
+    const attachPromise = broker.attachDevice(device as unknown as HIDDevice);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(attachedId).toBeTruthy();
+    const id = attachedId!;
+
+    port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(device.sendReport).not.toHaveBeenCalled();
+
+    port.emit({ type: "hid.attachResult", deviceId: id, ok: true });
+    await attachPromise;
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+    expect(device.sendReport).toHaveBeenCalledWith(1, Uint8Array.of(1));
+
+    broker.destroy();
+  });
+
   it("does not block other devices when output ring sends are pending", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

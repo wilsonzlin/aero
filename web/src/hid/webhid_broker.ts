@@ -621,12 +621,24 @@ export class WebHidBroker {
         if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) continue;
 
         const deviceId = rec.deviceId >>> 0;
-        if (!this.#attachedToWorker.has(deviceId)) continue;
+        const pendingAttach = this.#pendingAttachResults.get(deviceId);
+        if (!this.#attachedToWorker.has(deviceId) && !pendingAttach) continue;
 
+        // If the device is still attaching, defer execution until the worker confirms via
+        // `hid.attachResult`. This avoids dropping output reports produced during the attach
+        // handshake while still ensuring we don't send reports for failed attaches.
+        const attachPromise = pendingAttach?.promise;
         const data = ensureArrayBufferBacked(rec.payload);
         const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
         const reportId = rec.reportId >>> 0;
         this.#enqueueDeviceSend(deviceId, async () => {
+          if (attachPromise) {
+            try {
+              await attachPromise;
+            } catch {
+              return;
+            }
+          }
           const device = this.#deviceById.get(deviceId);
           if (!device) return;
           try {
@@ -986,16 +998,6 @@ export class WebHidBroker {
   }
 
   #handleSendReportRequest(msg: HidSendReportMessage): void {
-    if (!this.#attachedToWorker.has(msg.deviceId)) {
-      console.warn(`[webhid] sendReport for detached deviceId=${msg.deviceId}`);
-      return;
-    }
-
-    if (!this.#deviceById.has(msg.deviceId)) {
-      console.warn(`[webhid] sendReport for unknown deviceId=${msg.deviceId}`);
-      return;
-    }
-
     // The worker prefers the SharedArrayBuffer output ring, but can fall back to structured
     // `hid.sendReport` messages when the ring is full or the payload is too large. Because the
     // ring is drained on a timer, a fallback message could otherwise overtake earlier ring
@@ -1007,10 +1009,29 @@ export class WebHidBroker {
     }
 
     const deviceId = msg.deviceId >>> 0;
+    const pendingAttach = this.#pendingAttachResults.get(deviceId);
+    if (!this.#attachedToWorker.has(deviceId) && !pendingAttach) {
+      console.warn(`[webhid] sendReport for detached deviceId=${deviceId}`);
+      return;
+    }
+
+    if (!this.#deviceById.has(deviceId)) {
+      console.warn(`[webhid] sendReport for unknown deviceId=${deviceId}`);
+      return;
+    }
+
+    const attachPromise = pendingAttach?.promise;
     const reportType = msg.reportType;
     const reportId = msg.reportId >>> 0;
     const data = ensureArrayBufferBacked(msg.data);
     this.#enqueueDeviceSend(deviceId, async () => {
+      if (attachPromise) {
+        try {
+          await attachPromise;
+        } catch {
+          return;
+        }
+      }
       const device = this.#deviceById.get(deviceId);
       if (!device) return;
       try {
@@ -1037,7 +1058,7 @@ export class WebHidBroker {
     if (ring) {
       this.#drainOutputRing({ stopAtTail: ring.debugState().tail });
     }
-
+    const attachPromise = this.#pendingAttachResults.get(deviceId)?.promise;
     const base = {
       type: "hid.featureReportResult" as const,
       requestId: msg.requestId,
@@ -1047,6 +1068,17 @@ export class WebHidBroker {
     // Use the same per-device FIFO as output/feature report sends so receiveFeatureReport
     // requests are serialized relative to any queued report I/O for that device.
     const ok = this.#enqueueDeviceSend(deviceId, async () => {
+      if (attachPromise) {
+        try {
+          await attachPromise;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const res: HidFeatureReportResultMessage = { ...base, ok: false, error: message };
+          this.#postToWorker(worker, res);
+          return;
+        }
+      }
+
       if (!this.#attachedToWorker.has(deviceId)) {
         const res: HidFeatureReportResultMessage = { ...base, ok: false, error: `DeviceId=${deviceId} is not attached.` };
         this.#postToWorker(worker, res);
