@@ -911,61 +911,6 @@ const refreshFramebufferViews = (): void => {
 const BYTES_PER_PIXEL_RGBA8 = 4;
 const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
 
-type WddmScanoutReadback = { width: number; height: number; rgba8: ArrayBuffer };
-
-const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot, guest: Uint8Array): WddmScanoutReadback | null => {
-  if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
-  if (snap.format !== SCANOUT_FORMAT_B8G8R8X8) return null;
-
-  const width = snap.width >>> 0;
-  const height = snap.height >>> 0;
-  const pitchBytes = snap.pitchBytes >>> 0;
-  if (width === 0 || height === 0) return null;
-  if (!Number.isSafeInteger(pitchBytes) || pitchBytes <= 0) return null;
-
-  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-  if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) return null;
-  if (pitchBytes < rowBytes) return null;
-
-  const basePaddr =
-    (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
-  if (basePaddr === 0n) return null;
-  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-
-  const outLen = BigInt(rowBytes) * BigInt(height);
-  if (outLen <= 0n || outLen > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  const out = new Uint8Array(Number(outLen));
-
-  const ramBytes = guest.byteLength;
-
-  for (let y = 0; y < height; y += 1) {
-    const rowPaddrBig = basePaddr + BigInt(pitchBytes) * BigInt(y);
-    if (rowPaddrBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    const rowPaddr = Number(rowPaddrBig);
-
-    try {
-      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) return null;
-    } catch {
-      return null;
-    }
-
-    const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
-    if (rowOff === null) return null;
-
-    const src = guest.subarray(rowOff, rowOff + rowBytes);
-    const dstBase = y * rowBytes;
-    for (let i = 0; i < rowBytes; i += BYTES_PER_PIXEL_RGBA8) {
-      // B8G8R8X8 -> RGBA8 (force alpha=255).
-      out[dstBase + i + 0] = src[i + 2];
-      out[dstBase + i + 1] = src[i + 1];
-      out[dstBase + i + 2] = src[i + 0];
-      out[dstBase + i + 3] = 255;
-    }
-  }
-
-  return { width, height, rgba8: out.buffer };
-};
-
 const noteWddmScanoutFallback = (): void => {
   if (scanoutState) return;
   wddmOwnsScanoutFallback = true;
