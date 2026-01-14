@@ -38,6 +38,11 @@ const TRACE_TRIANGLE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/aerogpu_cmd_triangle.aerogputrace"
 ));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_INDEXED_TRIANGLE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_indexed_triangle.aerogputrace"
+));
 
 #[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
@@ -328,6 +333,7 @@ fn build_internal_bind_group_draw_stream(draws: u32) -> Vec<GpuCmd> {
 fn bench_cmd_stream_parse(c: &mut Criterion) {
     let clear_red = extract_cmd_stream_from_trace(TRACE_CLEAR_RED);
     let triangle = extract_cmd_stream_from_trace(TRACE_TRIANGLE);
+    let indexed_triangle = extract_cmd_stream_from_trace(TRACE_INDEXED_TRIANGLE);
     let synthetic = build_synthetic_triangle_stream(1024);
     let synthetic_payloads = build_synthetic_payload_stream();
 
@@ -335,6 +341,7 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
     for (name, bytes) in [
         ("fixture_clear_red", clear_red),
         ("fixture_triangle", triangle),
+        ("fixture_indexed_triangle", indexed_triangle),
         ("synthetic_triangle_1024", synthetic),
         ("synthetic_payloads", synthetic_payloads),
     ] {
