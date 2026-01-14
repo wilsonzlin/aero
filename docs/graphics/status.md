@@ -227,7 +227,9 @@ In-process backend APIs (native/tests):
   - Test: `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_immediate_backend_completes_fence --locked`
 - `Machine::aerogpu_set_backend_wgpu()` (feature-gated, native-only: `aero-machine/aerogpu-wgpu-backend`)
   - Build sanity: `bash ./scripts/safe-run.sh cargo test -p aero-machine --features aerogpu-wgpu-backend --locked`
-  - End-to-end backend tests live in `aero-devices-gpu`:
+  - Canonical end-to-end smoke test (executes real ACMD + validates host-visible scanout):
+    `AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-machine --features aerogpu-wgpu-backend --test aerogpu_wgpu_backend_smoke --locked`
+  - Additional backend end-to-end coverage also lives in `aero-devices-gpu`:
     `bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end --locked`
 
 #### Canonical browser runtime (`crates/aero-wasm` + `web/`): submission bridge + GPU worker execution
