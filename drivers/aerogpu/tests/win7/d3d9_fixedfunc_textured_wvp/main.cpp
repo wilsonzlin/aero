@@ -574,10 +574,8 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
 
   // ---------------------------------------------------------------------------
   // Path 2: Same vertex decl path, but with identity transforms.
-  // This ensures the fixed-function WVP path is refreshed when transforms change
-  // (the center pixel should return to the clear color). In the current AeroGPU
-  // bring-up implementation, XYZ|DIFFUSE{,TEX1} fixed-function draws apply WVP on
-  // the CPU at draw time (clip-space conversion), not via a VS constant range.
+  // This ensures the fixed-function WVP constants are refreshed when transforms
+  // change (the center pixel should return to the clear color).
   // ---------------------------------------------------------------------------
   D3DMATRIX identity;
   ZeroMemory(&identity, sizeof(identity));

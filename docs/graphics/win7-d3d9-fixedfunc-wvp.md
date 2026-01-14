@@ -83,10 +83,10 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `ensure_fixedfunc_pipeline_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
 - Fixed-function shader token streams:
   - `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`)
-- Draw-time fixed-function CPU conversions:
-  - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW`/`POSITIONT` → clip-space for pre-transformed fixed-function draws)
 - Draw-time fixed-function constant upload (untransformed `D3DFVF_XYZ*` fixed-function paths):
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` (`AEROGPU_CMD_SET_SHADER_CONSTANTS_F`)
+- CPU conversions for pre-transformed `XYZRHW*` draws:
+  - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW`/`POSITIONT` → clip-space for pre-transformed fixed-function draws)
 - Existing CPU vertex processing:
   - `device_process_vertices_internal()` (`ProcessVertices` fixed-function subset: XYZ→XYZRHW transform, XYZRHW pass-through, optional diffuse fill, honors `D3DPV_DONOTCOPYDATA`)
   - `device_process_vertices()` (DDI entrypoint; falls back to a stride-aware memcpy and clamps pre-transformed `XYZRHW*` copies to 16 bytes when `D3DPV_DONOTCOPYDATA` is set)
