@@ -112,6 +112,7 @@ test("host policy: TCP_REQUIRE_DNS_NAME rejects non-canonical IPv4 literals", ()
     "010.0.0.1", // octal => 8.0.0.1
     "08.0.0.1", // decimal fallback dotted-quad
     "8.8.8.8.", // trailing dot dotted-quad
+    "8.8.8.8..", // normalized (trailing dots stripped) but still numeric
     "010.0.0.1.", // trailing dot forces decimal => 10.0.0.1
   ]) {
     const decision = evaluateTcpHostPolicy(host, policy);

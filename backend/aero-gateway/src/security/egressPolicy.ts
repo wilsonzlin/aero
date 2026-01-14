@@ -180,9 +180,19 @@ export function classifyTargetHost(rawHost: string): TargetHost {
     };
   }
 
+  const normalizedHostname = normalizeHostname(host);
+  const normalizedHostnameV4 = normalizeIpv4Literal(normalizedHostname);
+  if (normalizedHostnameV4) {
+    return {
+      kind: "ip",
+      ip: normalizedHostnameV4,
+      version: 4,
+    };
+  }
+
   return {
     kind: "hostname",
-    hostname: normalizeHostname(host),
+    hostname: normalizedHostname,
   };
 }
 
