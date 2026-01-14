@@ -32,6 +32,13 @@ use aero_shared::scanout_state::{
     ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM,
 };
 
+// Defensive cap for guest-provided command streams that are copied out of guest memory.
+//
+// Keep a tighter limit on wasm32: browser/test environments can have smaller heaps, and extremely
+// large command streams are not expected there.
+#[cfg(target_arch = "wasm32")]
+const MAX_CMD_STREAM_SIZE_BYTES: u32 = 16 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 // -----------------------------------------------------------------------------
 // Defensive caps (host readback paths)
