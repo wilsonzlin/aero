@@ -59,7 +59,7 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
         Return (Package (0x02) { Zero, Zero })
     }
 
-    Scope (\_SB_)
+    Scope (_SB)
     {
         /*
          * Motherboard resources device.
@@ -330,7 +330,7 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
     }
 
     // CPU objects (default generator config emits CPU0 only).
-    Scope (\_PR_)
+    Scope (_PR)
     {
         Device (CPU0)
         {
