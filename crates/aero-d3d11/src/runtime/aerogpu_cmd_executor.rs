@@ -724,7 +724,10 @@ impl GsScratchPool {
             &mut self.output,
             &mut self.output_allocations,
             required_size,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+            wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::VERTEX,
             "aerogpu_cmd gs scratch output vertex buffer",
         )
     }
@@ -741,7 +744,9 @@ impl GsScratchPool {
             &mut self.counter,
             &mut self.counter_allocations,
             required_size,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE,
             "aerogpu_cmd gs scratch counter buffer",
         )
     }
@@ -769,13 +774,17 @@ impl GsScratchPool {
         next_id: &mut u64,
         required_size: u64,
     ) -> &GsScratchBuffer {
+        let required_size = required_size.max(20);
         Self::ensure_buffer(
             device,
             next_id,
             &mut self.indirect_args,
             &mut self.indirect_allocations,
             required_size,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT,
             "aerogpu_cmd gs scratch indirect args buffer",
         )
     }
@@ -819,7 +828,6 @@ impl GsScratchPool {
         slot.as_ref().expect("buffer inserted above")
     }
 }
-
 #[derive(Debug, Default)]
 struct AerogpuD3d11Resources {
     buffers: HashMap<u32, BufferResource>,
