@@ -2843,6 +2843,55 @@ function handleHidPassthroughInputReport(msg: HidPassthroughInputReportMessage):
 }
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+let vmRuntime: string | null = null;
+let machineHostOnlyMode = false;
+let machineHostOnlyConsoleLogged = false;
+let machineHostOnlyEventLogged = false;
+
+function maybeAnnounceMachineHostOnlyMode(): void {
+  if (!machineHostOnlyMode) return;
+  const message =
+    "vmRuntime=machine; IO worker running in machine host-only mode (skipping boot disk open; disks owned by CPU worker)";
+  if (!machineHostOnlyConsoleLogged) {
+    machineHostOnlyConsoleLogged = true;
+    console.info(`[io.worker] ${message}`);
+  }
+  // Event-ring logging requires shared memory init; defer until `eventRing` exists.
+  if (!machineHostOnlyEventLogged && eventRing) {
+    machineHostOnlyEventLogged = true;
+    pushEvent({ kind: "log", level: "info", message });
+  }
+}
+
+function setVmRuntimeFromConfigUpdate(update: ConfigUpdateMessage): void {
+  // `vmRuntime` is supplied by the coordinator/runtime layer (not part of AeroConfig).
+  // Support both shapes:
+  // - `{ kind: "config.update", vmRuntime: "machine", ... }`
+  // - `{ kind: "config.update", config: { vmRuntime: "machine", ... }, ... }` (legacy/compat)
+  const anyUpdate = update as unknown as { vmRuntime?: unknown; config?: unknown };
+  const next =
+    typeof anyUpdate.vmRuntime === "string"
+      ? anyUpdate.vmRuntime
+      : typeof (update.config as unknown as { vmRuntime?: unknown })?.vmRuntime === "string"
+        ? ((update.config as unknown as { vmRuntime?: unknown }).vmRuntime as string)
+        : null;
+  if (!next || next === vmRuntime) return;
+  vmRuntime = next;
+
+  const nextHostOnly = vmRuntime === "machine";
+  if (nextHostOnly && !machineHostOnlyMode) {
+    machineHostOnlyMode = true;
+    // `setBootDisks` opens OPFS sync handles via runtime_disk_worker. In machine runtime the CPU
+    // worker owns disk attachment and must be able to open the same OPFS file (sync handles are
+    // exclusive), so unblock init immediately and ignore future disk opens.
+    if (bootDisksInitResolve) {
+      bootDisksInitResolve();
+      bootDisksInitResolve = null;
+    }
+    pendingBootDisks = null;
+    maybeAnnounceMachineHostOnlyMode();
+  }
+}
 
 function maybeInitWasmHidGuestBridge(): void {
   const api = wasmApi;
@@ -4240,9 +4289,23 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
 
       // Wait until the main thread provides the boot disk selection. This is required to
       // ensure the first diskRead issued by the CPU worker does not race with disk open.
-      await bootDisksInitPromise;
-      if (pendingBootDisks) {
-        await applyBootDisks(pendingBootDisks);
+      //
+      // Exception: in `vmRuntime=machine` mode the CPU worker owns disk attachment (and opens
+      // the OPFS `FileSystemSyncAccessHandle`). Sync access handles are exclusive, so the IO
+      // worker must not open the disk and must not block READY on `setBootDisks`.
+      if (!machineHostOnlyMode) {
+        await bootDisksInitPromise;
+        if (pendingBootDisks) {
+          await applyBootDisks(pendingBootDisks);
+        }
+      } else {
+        // Unblock any legacy code paths that still await `bootDisksInitPromise`.
+        if (bootDisksInitResolve) {
+          bootDisksInitResolve();
+          bootDisksInitResolve = null;
+        }
+        pendingBootDisks = null;
+        maybeAnnounceMachineHostOnlyMode();
       }
 
       pushEvent({ kind: "log", level: "info", message: "worker ready" });
@@ -4403,11 +4466,24 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const update = data as ConfigUpdateMessage;
       currentConfig = update.config;
       currentConfigVersion = update.version;
+      setVmRuntimeFromConfigUpdate(update);
+      maybeAnnounceMachineHostOnlyMode();
       ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
       return;
     }
 
     if ((data as Partial<SetBootDisksMessage>).type === "setBootDisks") {
+      if (machineHostOnlyMode) {
+        // In machine runtime, disk attachment is owned by the CPU worker. Ignore boot disk
+        // open requests here so we don't steal the exclusive OPFS sync access handle.
+        if (bootDisksInitResolve) {
+          bootDisksInitResolve();
+          bootDisksInitResolve = null;
+        }
+        pendingBootDisks = null;
+        maybeAnnounceMachineHostOnlyMode();
+        return;
+      }
       const msg = data as Partial<SetBootDisksMessage>;
       pendingBootDisks = {
         type: "setBootDisks",
