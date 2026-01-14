@@ -490,7 +490,7 @@ Guest image requirement:
 
 - Provision the guest selftest to run with `--test-input-media-keys` (or set guest env var
   `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`).
-  - The host-harness README describes one way to do this via `New-AeroWin7TestImage.ps1 -TestInputMediaKeys`.
+  - The host-harness README describes one way to do this via `New-AeroWin7TestImage.ps1 -TestInputMediaKeys` (alias: `-TestMediaKeys`).
 
 Host harness flags:
 

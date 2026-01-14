@@ -29,7 +29,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
       - (optional) extended keyboard/mouse coverage: `--test-input-events-extended`
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`)
       - (optional) Consumer Control / media keys: `--test-input-media-keys`
-        (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`)
+        (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`; if provisioning via `New-AeroWin7TestImage.ps1`, pass
+        `-TestInputMediaKeys` (alias: `-TestMediaKeys`))
       - tablet / absolute pointer: `--test-input-tablet-events` (alias: `--test-tablet-events`)
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`)
       - Pair these with host-side QMP injection flags (so the harness injects events and requires the corresponding

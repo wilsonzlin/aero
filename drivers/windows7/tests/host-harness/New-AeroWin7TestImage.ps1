@@ -130,6 +130,7 @@ param(
   # - PowerShell: `-WithInputMediaKeys`
   # - Python: `--with-input-media-keys`
   [Parameter(Mandatory = $false)]
+  [Alias("TestMediaKeys")]
   [switch]$TestInputMediaKeys,
 
   # If set, enable the guest selftest's end-to-end virtio-input tablet (absolute pointer) event delivery test
@@ -611,8 +612,8 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
     - To also enable the extended virtio-input markers (modifiers/buttons/wheel) (required when running the host harness with
       `-WithInputEventsExtended` / `-WithInputEventsExtra` / `--with-input-events-extended` / `--with-input-events-extra`), generate this media with
       `-TestInputEventsExtended` (alias: `-TestInputEventsExtra`) (adds `--test-input-events-extended` to the scheduled task, and implies `--test-input-events`).
-    - To enable Consumer Control / media key injection (required when running the host harness with `-WithInputMediaKeys` /
-      `--with-input-media-keys`), generate this media with `-TestInputMediaKeys` (adds `--test-input-media-keys` to the scheduled task).
+    - To enable Consumer Control / media keys injection (required when running the host harness with `-WithInputMediaKeys` / `--with-input-media-keys`),
+      generate this media with `-TestInputMediaKeys` (alias: `-TestMediaKeys`) (adds `--test-input-media-keys` to the scheduled task).
     - To enable tablet (absolute pointer) injection (required when running the host harness with `-WithInputTabletEvents` / `-WithTabletEvents` /
       `--with-input-tablet-events` / `--with-tablet-events`), generate this media with `-TestInputTabletEvents` (alias: `-TestTabletEvents`)
       (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
