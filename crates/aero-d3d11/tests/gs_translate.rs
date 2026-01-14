@@ -1851,3 +1851,43 @@ fn gs_translate_supports_constant_buffer_operands() {
     );
     assert_wgsl_validates(&wgsl);
 }
+
+#[test]
+fn sm4_gs_half_float_conversions_translate_via_pack_unpack() {
+    // Ensure the GS compute-prepass translator supports `f32tof16`/`f16tof32` without requiring
+    // WGSL `f16` types (use pack/unpack builtins).
+    let mut tokens = base_gs_tokens();
+
+    // mov r0.xyzw, l(1,2,3,4)
+    tokens.push(opcode_token(OPCODE_MOV, 8));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    tokens.extend_from_slice(&imm32_vec4([
+        1.0f32.to_bits(),
+        2.0f32.to_bits(),
+        3.0f32.to_bits(),
+        4.0f32.to_bits(),
+    ]));
+
+    // f32tof16 r1.xyzw, r0.xyzw
+    tokens.push(opcode_token(OPCODE_F32TOF16, 5));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 0));
+
+    // f16tof32 r2.xyzw, r1.xyzw
+    tokens.push(opcode_token(OPCODE_F16TOF32, 5));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    tokens.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, 1));
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert_wgsl_validates(&wgsl);
+    assert!(
+        wgsl.contains("pack2x16float"),
+        "expected f32tof16 lowering to use pack2x16float:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("unpack2x16float"),
+        "expected f16tof32 lowering to use unpack2x16float:\n{wgsl}"
+    );
+}
