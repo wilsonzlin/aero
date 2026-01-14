@@ -236,6 +236,46 @@ describe("net/webrtcRelaySignalingClient", () => {
     }
   });
 
+  it("fetches /webrtc/ice with cache=no-store", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalPc = g.RTCPeerConnection;
+    g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
+
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      calls.push({ url: url.toString(), init });
+
+      if (url.pathname.endsWith("/webrtc/ice")) {
+        return new Response(JSON.stringify({ iceServers: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.pathname.endsWith("/webrtc/offer")) {
+        return new Response(JSON.stringify({ sdp: { type: "answer", sdp: "fake-answer" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch url: ${url.toString()}`);
+    }) as unknown as typeof fetch;
+
+    try {
+      await connectRelaySignaling({ baseUrl: "https://relay.example.com/base", mode: "http-offer" }, () => {
+        return { readyState: "open" } as RTCDataChannel;
+      });
+
+      const iceCall = calls.find((c) => c.url.endsWith("/webrtc/ice"));
+      expect(iceCall?.init?.cache).toBe("no-store");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalPc === undefined) delete g.RTCPeerConnection;
+      else g.RTCPeerConnection = originalPc;
+    }
+  });
+
   it("preserves wss:// and base path for signaling WebSockets", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const originalPc = g.RTCPeerConnection;
