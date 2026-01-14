@@ -12,4 +12,3 @@ fn index_format_from_u32_decodes_known_values() {
     );
     assert_eq!(AerogpuIndexFormat::from_u32(2), None);
 }
-

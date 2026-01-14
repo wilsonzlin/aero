@@ -1760,16 +1760,18 @@ impl AerogpuD3d11Executor {
                     | wgpu::BufferUsages::COPY_SRC,
                 ..ExpansionScratchDescriptor::default()
             }),
-            expansion_indirect_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
-                label: Some("aero-d3d11 expansion indirect scratch"),
-                // Indirect argument buffers are tiny; keep this lightweight but allow growth.
-                per_frame_size: 64 * 1024, // 64 KiB
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::INDIRECT
-                    | wgpu::BufferUsages::COPY_DST
-                    | wgpu::BufferUsages::COPY_SRC,
-                ..ExpansionScratchDescriptor::default()
-            }),
+            expansion_indirect_scratch: ExpansionScratchAllocator::new(
+                ExpansionScratchDescriptor {
+                    label: Some("aero-d3d11 expansion indirect scratch"),
+                    // Indirect argument buffers are tiny; keep this lightweight but allow growth.
+                    per_frame_size: 64 * 1024, // 64 KiB
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::INDIRECT
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
+                    ..ExpansionScratchDescriptor::default()
+                },
+            ),
             expansion_uniform_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
                 label: Some("aero-d3d11 expansion uniform scratch"),
                 // Uniform payloads for geometry prepasses are small; keep this buffer lightweight but
@@ -10780,7 +10782,8 @@ impl AerogpuD3d11Executor {
             if dst_is_index {
                 // Copy the source bytes out of the shadow / guest backing first so we can mutably
                 // borrow the destination entry.
-                let src_bytes: Option<Vec<u8>> = if let Some(src) = self.resources.buffers.get(&src_buffer)
+                let src_bytes: Option<Vec<u8>> = if let Some(src) =
+                    self.resources.buffers.get(&src_buffer)
                 {
                     let size_usize: usize = size_bytes
                         .try_into()
@@ -10806,7 +10809,9 @@ impl AerogpuD3d11Executor {
                         let backing_offset = src_backing
                             .offset_bytes
                             .checked_add(src_offset_bytes)
-                            .ok_or_else(|| anyhow!("COPY_BUFFER: src backing offset overflows u64"))?;
+                            .ok_or_else(|| {
+                                anyhow!("COPY_BUFFER: src backing offset overflows u64")
+                            })?;
                         allocs.validate_range(src_backing.alloc_id, backing_offset, size_bytes)?;
                         let gpa = allocs
                             .gpa(src_backing.alloc_id)?

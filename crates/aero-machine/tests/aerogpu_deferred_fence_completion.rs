@@ -152,7 +152,7 @@ fn aerogpu_enable_submission_bridge_unwedges_pending_backend_fence() {
         m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI)),
     ) << 32)
         | u64::from(
-        m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
+            m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO)),
         );
     assert_eq!(completed_fence, signal_fence);
 
