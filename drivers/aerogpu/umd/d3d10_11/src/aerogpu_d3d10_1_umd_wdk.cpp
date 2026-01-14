@@ -6761,6 +6761,9 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
   // Constant buffer bindings are limited to 14 slots in D3D10/10.1, so avoid heap
   // allocations in this hot path.
   std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> bindings{};
+  std::array<AeroGpuResource*, kMaxConstantBufferSlots> new_resources{};
+  bool bindings_changed = false;
+  bool resources_changed = false;
   for (UINT i = 0; i < buffer_count; i++) {
     aerogpu_constant_buffer_binding b{};
     b.buffer = 0;
@@ -6777,11 +6780,29 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
       b.size_bytes = buf_res->size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(buf_res->size_bytes);
     }
 
-    TrackWddmAllocForSubmitLocked(dev, buf_res, /*write=*/false);
-
-    (*table)[start_slot + i] = b;
-    (*resources)[start_slot + i] = buf_res;
     bindings[i] = b;
+    new_resources[i] = buf_res;
+
+    if (!bindings_changed) {
+      const aerogpu_constant_buffer_binding& cur = (*table)[start_slot + i];
+      bindings_changed = (cur.buffer != b.buffer) || (cur.offset_bytes != b.offset_bytes) || (cur.size_bytes != b.size_bytes);
+    }
+    if (!resources_changed) {
+      resources_changed = ((*resources)[start_slot + i] != buf_res);
+    }
+  }
+
+  if (!bindings_changed) {
+    if (resources_changed) {
+      for (UINT i = 0; i < buffer_count; i++) {
+        (*resources)[start_slot + i] = new_resources[i];
+      }
+    }
+    return;
+  }
+
+  for (UINT i = 0; i < buffer_count; i++) {
+    TrackWddmAllocForSubmitLocked(dev, new_resources[i], /*write=*/false);
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
@@ -6794,6 +6815,11 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
   cmd->start_slot = static_cast<uint32_t>(start_slot);
   cmd->buffer_count = static_cast<uint32_t>(buffer_count);
   cmd->reserved0 = 0;
+
+  for (UINT i = 0; i < buffer_count; i++) {
+    (*table)[start_slot + i] = bindings[i];
+    (*resources)[start_slot + i] = new_resources[i];
+  }
 }
 
 void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
