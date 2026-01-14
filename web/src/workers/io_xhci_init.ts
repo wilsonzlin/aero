@@ -1,4 +1,5 @@
 import type { DeviceManager } from "../io/device_manager";
+import type { PciAddress } from "../io/bus/pci";
 import { XhciPciDevice } from "../io/devices/xhci";
 import type { WasmApi } from "../runtime/wasm_context";
 
@@ -52,7 +53,7 @@ export function tryInitXhciDevice(opts: {
     const dev = new XhciPciDevice({ bridge, irqSink: mgr.irqSink });
     // Prefer the canonical BDF requested by the device (see `XhciPciDevice.bdf`). If that slot is
     // occupied, fall back to auto-allocation so xHCI can still attach in test/experimental setups.
-    let addr: { bus: number; device: number; function: number };
+    let addr: PciAddress;
     try {
       addr = mgr.registerPciDevice(dev);
     } catch (err) {
