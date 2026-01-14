@@ -1000,19 +1000,29 @@ describe("runtime/coordinator", () => {
     const cpuAudio = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
     const ioAudio = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
     expect(cpuAudio?.type).toBe("setAudioRingBuffer");
-    expect(cpuAudio?.ringBuffer).toBe(audioSab);
+    // Legacy runtime requests VM mode based on the boot disk mounts, not the deprecated `activeDiskImage`
+    // config field. Even if disk metadata isn't loaded yet, mounting a boot disk should route SPSC
+    // audio to the IO worker (which owns the guest device models).
+    expect(cpuAudio?.ringBuffer).toBe(null);
     expect(ioAudio?.type).toBe("setAudioRingBuffer");
-    expect(ioAudio?.ringBuffer).toBe(null);
+    expect(ioAudio?.ringBuffer).toBe(audioSab);
 
     const micSab = new SharedArrayBuffer(256);
     coordinator.setMicrophoneRingBuffer(micSab, 48_000);
 
-    const cpuMic = lastMessageOfType(cpuWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
     const ioMic = lastMessageOfType(ioWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
-    expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
-    expect(cpuMic?.ringBuffer).toBe(micSab);
     expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
-    expect(ioMic?.ringBuffer).toBe(null);
+    expect(ioMic?.ringBuffer).toBe(micSab);
+
+    // The CPU worker must not receive the mic ring buffer in legacy VM mode.
+    expect(
+      cpuWorker.posted.some((m) => m.message?.type === "setMicrophoneRingBuffer" && m.message?.ringBuffer === micSab),
+    ).toBe(false);
+    const cpuMic = lastMessageOfType(cpuWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
+    if (cpuMic) {
+      expect(cpuMic.type).toBe("setMicrophoneRingBuffer");
+      expect(cpuMic.ringBuffer).toBe(null);
+    }
   });
 
   it("forwards audio/mic rings to IO only in legacy VM mode by default (SPSC)", () => {
