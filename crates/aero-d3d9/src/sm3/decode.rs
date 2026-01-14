@@ -841,38 +841,33 @@ fn decode_operands_and_extras(
                 });
             }
 
-            match operand_tokens.len() {
-                2 => {
-                    parse_fixed_operands(
-                        opcode,
-                        stage,
-                        major,
-                        operand_tokens,
-                        &[OperandKind::Dst, OperandKind::Src],
-                        &mut operands,
-                    )?;
-                }
-                4 => {
-                    parse_fixed_operands(
-                        opcode,
-                        stage,
-                        major,
-                        operand_tokens,
-                        &[
-                            OperandKind::Dst,
-                            OperandKind::Src,
-                            OperandKind::Src,
-                            OperandKind::Src,
-                        ],
-                        &mut operands,
-                    )?;
-                }
-                other => {
+            // The number of *operands* is variable, but the number of *tokens* per operand is also
+            // variable (e.g. relative addressing consumes an additional token). Decode sequentially
+            // instead of branching on `operand_tokens.len()`.
+            let (dst, dst_consumed) = decode_dst_operand(operand_tokens, 0, stage, major)?;
+            operands.push(Operand::Dst(dst));
+            let (src0, src0_consumed) = decode_src_operand(operand_tokens, dst_consumed, stage, major)?;
+            operands.push(Operand::Src(src0));
+            let mut token_cursor = dst_consumed + src0_consumed;
+            if token_cursor == operand_tokens.len() {
+                // 2-operand form: dst, src0
+            } else {
+                // 4-operand form: dst, src0, src1, src2
+                let (src1, src1_consumed) = decode_src_operand(operand_tokens, token_cursor, stage, major)?;
+                operands.push(Operand::Src(src1));
+                token_cursor += src1_consumed;
+                let (src2, src2_consumed) = decode_src_operand(operand_tokens, token_cursor, stage, major)?;
+                operands.push(Operand::Src(src2));
+                token_cursor += src2_consumed;
+
+                if token_cursor != operand_tokens.len() {
                     return Err(DecodeError {
-                        token_index: 0,
+                        token_index: token_cursor,
                         message: format!(
-                            "opcode {} expected 2 or 4 operand tokens but has {other}",
-                            opcode.name()
+                            "opcode {} decoded {} operand tokens but instruction has {}",
+                            opcode.name(),
+                            token_cursor,
+                            operand_tokens.len()
                         ),
                     });
                 }

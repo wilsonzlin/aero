@@ -120,6 +120,61 @@ fn decode_relative_constant_addressing() {
 }
 
 #[test]
+fn decode_sincos_with_relative_addressing_2_operands() {
+    // sincos r0, c0[a0.x]
+    let mut c0_rel = src_token(2, 0, 0xE4, 0);
+    c0_rel |= 0x0000_2000; // RELATIVE flag
+
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dst (1 token) + src0 (2 tokens) = 3 tokens after opcode.
+        opcode_token(0x0025, 3),
+        dst_token(0, 0, 0xF),     // r0
+        c0_rel,                   // c0[...]
+        src_token(3, 0, 0x00, 0), // a0.x (swizzle = xxxx)
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let sincos = &shader.instructions[0];
+    assert_eq!(sincos.opcode, Opcode::SinCos);
+    assert_eq!(sincos.operands.len(), 2);
+
+    let src = match &sincos.operands[1] {
+        Operand::Src(src) => src,
+        _ => panic!("expected src operand"),
+    };
+    let rel = src.reg.relative.as_ref().expect("expected relative addressing");
+    assert_eq!(rel.reg.file, RegisterFile::Addr);
+    assert_eq!(rel.reg.index, 0);
+    assert_eq!(rel.component, SwizzleComponent::X);
+}
+
+#[test]
+fn decode_sincos_with_relative_addressing_4_operands() {
+    // sincos r0, c0[a0.x], c1, c2
+    let mut c0_rel = src_token(2, 0, 0xE4, 0);
+    c0_rel |= 0x0000_2000; // RELATIVE flag
+
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dst (1) + src0 (2) + src1 (1) + src2 (1) = 5 tokens after opcode.
+        opcode_token(0x0025, 5),
+        dst_token(0, 0, 0xF),     // r0
+        c0_rel,                   // c0[...]
+        src_token(3, 0, 0x00, 0), // a0.x (swizzle = xxxx)
+        src_token(2, 1, 0xE4, 0), // c1
+        src_token(2, 2, 0xE4, 0), // c2
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let sincos = &shader.instructions[0];
+    assert_eq!(sincos.opcode, Opcode::SinCos);
+    assert_eq!(sincos.operands.len(), 4);
+}
+
+#[test]
 fn decode_mova_pixel_shader_dest_is_addr() {
     // ps_3_0 mova a0.x, c0
     let tokens = vec![
