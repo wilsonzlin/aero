@@ -1115,7 +1115,7 @@ function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   $parseText = {
     param([Parameter(Mandatory = $true)] [string]$Text)
     $map = @{}
-    foreach ($line in ($Text -split "`r?`n")) {
+    foreach ($line in ($Text -split "`r`n|`n|`r")) {
       if ($line -match "^\s*virtio-(.+)-irq\|(INFO|WARN)(?:\|(.*))?$") {
         $dev = $Matches[1]
         $level = $Matches[2]
