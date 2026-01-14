@@ -24321,7 +24321,10 @@ bool TestDrawRectPatchReusesTessellationCache() {
   }
 
   // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
-  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  //
+  // Include TEXCOORDSIZE bits for an unused texcoord set to validate the patch
+  // handle cache ignores garbage per-set texcoord size bits.
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x40044u);
   if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
     return false;
   }
@@ -24428,6 +24431,12 @@ bool TestDrawRectPatchReusesTessellationCache() {
     return false;
   }
   if (!Check(dev->patch_cache.size() == 1, "DrawRectPatch inserts cache entry")) {
+    return false;
+  }
+
+  // Clear the garbage TEXCOORDSIZE bits; the patch cache should still hit.
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE) (second)")) {
     return false;
   }
 
@@ -24551,7 +24560,10 @@ bool TestDrawTriPatchReusesTessellationCache() {
   }
 
   // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
-  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  //
+  // Include TEXCOORDSIZE bits for an unused texcoord set to validate the patch
+  // handle cache ignores garbage per-set texcoord size bits.
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x40044u);
   if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
     return false;
   }
@@ -24656,6 +24668,12 @@ bool TestDrawTriPatchReusesTessellationCache() {
     return false;
   }
   if (!Check(dev->patch_cache.size() == 1, "DrawTriPatch inserts cache entry")) {
+    return false;
+  }
+
+  // Clear the garbage TEXCOORDSIZE bits; the patch cache should still hit.
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE) (second)")) {
     return false;
   }
 

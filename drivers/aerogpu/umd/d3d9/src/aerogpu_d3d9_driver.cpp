@@ -20353,7 +20353,10 @@ namespace {
 
 bool patch_sig_equal(const PatchCacheSignature& a, const PatchCacheSignature& b) {
   if (a.kind != b.kind) return false;
-  if (a.fvf != b.fvf) return false;
+  // D3DFVF_TEXCOORDSIZE* bits can contain garbage for *unused* texcoord sets.
+  // Patch emulation only supports float2 TEX0 when TEX1 is present, so ignore
+  // all TEXCOORDSIZE bits when matching patch cache signatures.
+  if ((a.fvf & ~kD3dFvfTexCoordSizeMask) != (b.fvf & ~kD3dFvfTexCoordSizeMask)) return false;
   if (a.stride_bytes != b.stride_bytes) return false;
   if (a.start_vertex_offset != b.start_vertex_offset) return false;
   if (a.num_vertices != b.num_vertices) return false;
