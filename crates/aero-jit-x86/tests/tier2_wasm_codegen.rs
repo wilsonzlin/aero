@@ -1168,6 +1168,11 @@ mod random_traces {
     ) -> TraceIr {
         let mut next_value: u32 = 0;
         let mut values: Vec<ValueId> = Vec::new();
+        let kind = if rng.gen_bool(0.25) {
+            TraceKind::Loop
+        } else {
+            TraceKind::Linear
+        };
         // Keep `GuardCodeVersion` in the prologue. The verifier treats code-version guards in the
         // body of a linear trace as a loop artifact.
         let mut prologue: Vec<Instr> = Vec::new();
@@ -1387,7 +1392,10 @@ mod random_traces {
 
         // Add occasional side exits; keep the exit RIP distinct from the trace's entry RIP so we
         // can disambiguate `Returned` from `SideExit` on the WASM side.
-        if rng.gen_bool(0.25) {
+        //
+        // Loop traces must terminate (the WASM trace executes an actual `loop {}`), so always end
+        // them with a side exit.
+        if kind == TraceKind::Loop || rng.gen_bool(0.25) {
             let exit_rip = 0x2000u64 + (rng.gen::<u16>() as u64);
             body.push(Instr::SideExit { exit_rip });
         }
@@ -1395,7 +1403,7 @@ mod random_traces {
         TraceIr {
             prologue,
             body,
-            kind: TraceKind::Linear,
+            kind,
         }
     }
 
