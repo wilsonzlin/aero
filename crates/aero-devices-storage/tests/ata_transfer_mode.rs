@@ -166,6 +166,8 @@ fn ata_identify_word88_reflects_negotiated_udma_mode() {
 
     // Default is UDMA2 enabled.
     let id = drive.identify_sector();
+    let w53 = identify_word(id, 53);
+    assert_ne!(w53 & (1 << 2), 0, "word 53 bit 2 should indicate word 88 is valid");
     let w88 = identify_word(id, 88);
     // Advertise at least UDMA2 support.
     assert_ne!(w88 & (1 << 2), 0, "UDMA2 support bit should be set");

@@ -332,6 +332,12 @@ fn build_identify_sector(sector_count: u64) -> [u8; SECTOR_SIZE] {
     // Bit 9: LBA supported, Bit 8: DMA supported.
     words[49] = (1 << 9) | (1 << 8);
 
+    // Word 53: field validity.
+    //
+    // Set bit 2 to indicate word 88 (UDMA modes) is valid. Some guests consult this bit before
+    // parsing word 88.
+    words[53] = 1 << 2;
+
     // Word 60-61: total number of user addressable sectors for 28-bit.
     let lba28 = sector_count.min(u32::MAX as u64) as u32;
     words[60] = (lba28 & 0xFFFF) as u16;
