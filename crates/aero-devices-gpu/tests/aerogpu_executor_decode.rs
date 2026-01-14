@@ -811,6 +811,43 @@ fn inconsistent_cmd_stream_descriptor_sets_error_irq_and_advances_head() {
 }
 
 #[test]
+fn last_submissions_is_bounded_by_keep_last_submissions() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 2,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+    exec.set_backend(Box::new(NullAeroGpuBackend::new()));
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 3, regs.abi_version);
+
+    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    for (slot, fence) in [1u64, 2, 3].into_iter().enumerate() {
+        let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + (slot as u64) * stride;
+        write_submit_desc(&mut mem, desc_gpa, 0, 0, 0, 0, fence);
+    }
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 3);
+    assert_eq!(exec.last_submissions.len(), 2);
+
+    let records: Vec<_> = exec.last_submissions.iter().collect();
+    assert_eq!(records[0].submission.desc.signal_fence, 2);
+    assert_eq!(records[1].submission.desc.signal_fence, 3);
+    assert_eq!(records[0].ring_head, 1);
+    assert_eq!(records[1].ring_head, 2);
+}
+
+#[test]
 fn cmd_stream_descriptor_address_overflow_sets_error_irq_and_advances_head() {
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
