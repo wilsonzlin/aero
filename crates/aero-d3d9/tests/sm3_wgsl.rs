@@ -1585,7 +1585,7 @@ fn wgsl_defb_if_compiles() {
     .expect("wgsl validate");
 
     // `defb` lowering is an implementation detail (it may be lifted to a module-scope `const` or
-    // initialized in `fs_main`), but the constant value must be preserved in the output.
+    // initialized in `fs_main`). Accept either form but ensure the constant value is preserved.
     assert!(
         wgsl.contains("const b0: vec4<bool> = vec4<bool>(true, true, true, true);")
             || wgsl.contains("b0 = vec4<bool>(true, true, true, true);"),
@@ -1645,7 +1645,8 @@ fn wgsl_defi_loop_breakc_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 
-    // Like `defb`, `defi` may be emitted as a module-scope `const` or initialized in `fs_main`.
+    // Like `defb`, `defi` lowering may be emitted as a module-scope `const` or initialized in
+    // `fs_main`. Accept either form but ensure the constant value is preserved.
     assert!(
         wgsl.contains("const i0: vec4<i32> = vec4<i32>(1, 0, 0, 0);")
             || wgsl.contains("i0 = vec4<i32>(1, 0, 0, 0);"),
