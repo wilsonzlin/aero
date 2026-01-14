@@ -191,7 +191,23 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let needs_node = opts.wasm || !opts.rust_only;
     if needs_node {
         let mut cmd = tools::check_node_version(&repo_root);
-        runner.run_step("Node: check version", &mut cmd)?;
+        match runner.run_step("Node: check version", &mut cmd) {
+            Ok(()) => {}
+            Err(XtaskError::Message(msg)) if msg == "missing required command: node" => {
+                if opts.wasm {
+                    return Err(XtaskError::Message(
+                        "missing required command: node\n\nNode is required for `cargo xtask input --wasm`."
+                            .to_string(),
+                    ));
+                }
+
+                return Err(XtaskError::Message(
+                    "missing required command: node\n\nInstall Node, or run `cargo xtask input --rust-only` to skip Node/Playwright."
+                        .to_string(),
+                ));
+            }
+            Err(err) => return Err(err),
+        }
     }
 
     if opts.wasm {
@@ -244,10 +260,18 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
         "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
     ]);
-    runner.run_step(
+    match runner.run_step(
         "Web: npm -w web run test:unit -- src/input (plus WebUSB topology guards)",
         &mut cmd,
-    )?;
+    ) {
+        Ok(()) => {}
+        Err(XtaskError::Message(msg)) if msg.starts_with("missing required command: npm") => {
+            return Err(XtaskError::Message(format!(
+                "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip Node/Playwright."
+            )));
+        }
+        Err(err) => return Err(err),
+    }
 
     if opts.e2e {
         let step_desc = format!(
@@ -255,7 +279,15 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             e2e_step_detail(&opts.pw_extra_args)
         );
         let mut cmd = build_e2e_cmd(&repo_root, &opts.pw_extra_args);
-        runner.run_step(&step_desc, &mut cmd)?;
+        match runner.run_step(&step_desc, &mut cmd) {
+            Ok(()) => {}
+            Err(XtaskError::Message(msg)) if msg.starts_with("missing required command: npm") => {
+                return Err(XtaskError::Message(format!(
+                    "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip Node/Playwright."
+                )));
+            }
+            Err(err) => return Err(err),
+        }
     }
 
     println!();
