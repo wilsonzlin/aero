@@ -508,9 +508,15 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
   }
 
   function shutdown(): void {
+    if (shutdownRequested) return;
     shutdownRequested = true;
     stopTickPump();
-    rejectAllPending(new Error("gpu-worker shutdown"));
+    const shutdownErr = new Error("gpu-worker shutdown");
+    if (!readySettled) {
+      readySettled = true;
+      readyReject(shutdownErr);
+    }
+    rejectAllPending(shutdownErr);
     worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
     worker.terminate();
   }

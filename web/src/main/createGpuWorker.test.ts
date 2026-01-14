@@ -139,4 +139,25 @@ describe("main/createGpuWorker", () => {
 
     vi.useRealTimers();
   });
+
+  it("rejects ready if shutdown occurs before the worker becomes ready", async () => {
+    class NoReadyWorker extends MockWorker {
+      override postMessage(message: unknown, transfer?: unknown[]): void {
+        posted.push({ message, transfer });
+        // Intentionally do not emit `type:"ready"` in response to init.
+      }
+    }
+
+    globalThis.Worker = NoReadyWorker as unknown as typeof Worker;
+
+    const canvas = {
+      transferControlToOffscreen: () => ({}) as unknown as OffscreenCanvas,
+    } as unknown as HTMLCanvasElement;
+
+    const handle = createGpuWorker({ canvas, width: 2, height: 2, devicePixelRatio: 1 });
+    const readyPromise = handle.ready;
+    handle.shutdown();
+
+    await expect(readyPromise).rejects.toThrow(/shutdown/i);
+  });
 });
