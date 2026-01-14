@@ -3861,11 +3861,18 @@ impl XhciController {
             | context::EndpointType::InterruptOut => {}
             _ => return None,
         }
-        let dequeue_ptr = ep_ctx.tr_dequeue_pointer();
+        // TR Dequeue Pointer is 16-byte aligned with DCS in bit0. Bits 1..=3 are reserved; treat
+        // them as invalid rather than masking them away so a malformed guest context cannot alias a
+        // different aligned pointer.
+        let raw = ep_ctx.tr_dequeue_pointer_raw();
+        if (raw & 0x0e) != 0 {
+            return None;
+        }
+        let dequeue_ptr = raw & !0x0f;
         if dequeue_ptr == 0 {
             return None;
         }
-        Some((dequeue_ptr, ep_ctx.dcs()))
+        Some((dequeue_ptr, (raw & 0x01) != 0))
     }
 
     fn read_endpoint_state_from_context(
