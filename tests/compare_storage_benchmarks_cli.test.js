@@ -12,7 +12,13 @@ function writeJson(filePath, value) {
 function runCompare(args, opts = {}) {
   const result = spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "scripts/compare_storage_benchmarks.ts", ...args],
+    [
+      "--experimental-strip-types",
+      "--import",
+      "./scripts/register-ts-strip-loader.mjs",
+      "scripts/compare_storage_benchmarks.ts",
+      ...args,
+    ],
     {
       cwd: path.resolve("."),
       env: { ...process.env, ...(opts.env ?? {}) },
@@ -260,7 +266,7 @@ test("compare_storage_benchmarks CLI exits 2 (unstable) when a required metric i
 test("compare_storage_benchmarks CLI supports --help", () => {
   const res = spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "scripts/compare_storage_benchmarks.ts", "--help"],
+    ["--experimental-strip-types", "--import", "./scripts/register-ts-strip-loader.mjs", "scripts/compare_storage_benchmarks.ts", "--help"],
     {
       cwd: path.resolve("."),
       encoding: "utf8",

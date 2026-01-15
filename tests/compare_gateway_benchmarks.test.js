@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { compareGatewayBenchmarks } from "../scripts/compare_gateway_benchmarks.ts";
+import { compareGatewayBenchmarks } from "../scripts/compare_gateway_benchmarks.js";
 
 function baseGatewayPayload() {
   return {

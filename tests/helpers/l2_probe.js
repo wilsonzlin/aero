@@ -3,7 +3,7 @@ import { randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import WebSocket from "../../tools/minimal_ws.js";
-import { decodeL2Message, encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TYPE_FRAME } from "../../web/src/shared/l2TunnelProtocol.ts";
+import { decodeL2Message, encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TYPE_FRAME } from "../../web/src/shared/l2TunnelProtocol.js";
 
 import {
   TCP_FLAGS,

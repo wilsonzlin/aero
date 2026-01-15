@@ -4,7 +4,7 @@ import net from "node:net";
 
 import { runL2TunnelProbe } from "./helpers/l2_probe.js";
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
-import { L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD } from "../web/src/shared/l2TunnelProtocol.ts";
+import { L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD } from "../web/src/shared/l2TunnelProtocol.js";
 
 async function startTcpEchoServer() {
   const server = net.createServer((socket) => {

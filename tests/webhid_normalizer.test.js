@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MAX_RANGE_CONTIGUITY_CHECK_LEN, normalizeCollections } from '../web/src/hid/webhid_normalize.ts';
+import { MAX_RANGE_CONTIGUITY_CHECK_LEN, normalizeCollections } from '../web/src/hid/webhid_normalize.js';
 
 function makeItem(overrides = {}) {
   return {

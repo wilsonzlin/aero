@@ -5,7 +5,7 @@ import {
   JIT_BIGINT_ABI_WASM_BYTES,
   JIT_BLOCK_WASM_BYTES,
   JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES,
-} from "../src/workers/wasm-bytes.ts";
+} from "../src/workers/wasm-bytes.js";
 
 const HAS_SHARED_WASM_MEMORY = (() => {
   try {

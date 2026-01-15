@@ -10,10 +10,20 @@ function writeJson(filePath, value) {
 }
 
 function runCompare(args) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", "scripts/compare_gateway_benchmarks.ts", ...args], {
-    cwd: path.resolve("."),
-    encoding: "utf8",
-  });
+  return spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      "--import",
+      "./scripts/register-ts-strip-loader.mjs",
+      "scripts/compare_gateway_benchmarks.ts",
+      ...args,
+    ],
+    {
+      cwd: path.resolve("."),
+      encoding: "utf8",
+    },
+  );
 }
 
 function makeGatewayBench(overrides = {}) {

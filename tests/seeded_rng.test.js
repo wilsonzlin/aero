@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createRandomSource, deriveSeed, randomAlignedOffset, randomInt } from "../web/src/bench/seeded_rng.ts";
+import { createRandomSource, deriveSeed, randomAlignedOffset, randomInt } from "../web/src/bench/seeded_rng.js";
 
 test("deriveSeed produces stable, distinct stream seeds", () => {
   assert.equal(deriveSeed(1234, 1), deriveSeed(1234, 1));

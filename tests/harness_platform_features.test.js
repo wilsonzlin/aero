@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { detectPlatformFeatures, explainMissingRequirements } from "../src/platform/features.ts";
+import { detectPlatformFeatures, explainMissingRequirements } from "../src/platform/features.js";
 
 const GLOBALS = globalThis;
 

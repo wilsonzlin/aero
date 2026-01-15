@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { asI64, asU64, u64ToNumber } from "../src/workers/bigint.ts";
+import { asI64, asU64, u64ToNumber } from "../src/workers/bigint.js";
 
 test("bigint helpers: asU64/asI64 roundtrips", () => {
   assert.equal(asU64(-1n), 0xffff_ffff_ffff_ffffn);
