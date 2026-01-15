@@ -2,6 +2,7 @@ import dns from "node:dns/promises";
 import type { LookupAddress } from "node:dns";
 import net from "node:net";
 import ipaddr from "ipaddr.js";
+import { splitCommaSeparatedList } from "./csv";
 
 export interface ResolvedTarget {
   requestedHost: string;
@@ -149,7 +150,15 @@ function parseAllowlist(rawAllowlist: string): AllowRule[] {
   const cached = allowlistCache.get(trimmed);
   if (cached) return cached;
 
-  const parsed = trimmed.split(",").map((entry) => parseAllowRule(entry));
+  let entries: string[];
+  try {
+    entries = splitCommaSeparatedList(trimmed, { maxLen: 64 * 1024, maxItems: 4096 });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid allowlist: ${msg}`);
+  }
+
+  const parsed = entries.map((entry) => parseAllowRule(entry));
   allowlistCache.set(trimmed, parsed);
   // Avoid unbounded memory growth if callers provide lots of distinct allowlists.
   if (allowlistCache.size > 100) {

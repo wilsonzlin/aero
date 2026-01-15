@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { base64UrlPrefixForHeader, maxBase64UrlLenForBytes } from "../base64url";
+import { headerHasMimeType } from "../contentType";
 import { startProxyServer } from "../server";
 import type { ProxyConfig } from "../config";
 
@@ -133,7 +135,7 @@ test("GET /dns-query returns a DNS response with at least one A record", async (
       headers: { accept: "application/dns-message" }
     });
     assert.equal(resp.status, 200);
-    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-message");
+    assert.equal(headerHasMimeType(resp.headers.get("content-type"), "application/dns-message", 256), true);
 
     const responseBuf = Buffer.from(await resp.arrayBuffer());
     assert.equal(responseBuf.readUInt16BE(0), id);
@@ -149,11 +151,32 @@ test("GET /dns-query returns a DNS response with at least one A record", async (
   });
 });
 
+test("base64url helper bounds match Node's base64url encoding", () => {
+  for (const n of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 255, 256, 257]) {
+    const buf = Buffer.alloc(n, 0xab);
+    const encoded = buf.toString("base64url");
+    assert.equal(encoded.length, maxBase64UrlLenForBytes(n));
+  }
+});
+
+test("base64UrlPrefixForHeader never returns len%4==1", () => {
+  const raw = "a".repeat(128);
+  for (let maxChars = 0; maxChars <= 32; maxChars += 1) {
+    const prefix = base64UrlPrefixForHeader(raw, maxChars);
+    assert.ok(prefix.length <= maxChars);
+    assert.ok(prefix.length <= raw.length);
+    assert.notEqual(prefix.length % 4, 1);
+  }
+
+  // Edge case: tiny max where len%4 would be 1; ensure it trims down to empty.
+  assert.equal(base64UrlPrefixForHeader("abcd", 1), "");
+});
+
 test("GET /dns-query rejects malformed base64url input", async () => {
   await withProxyServer({ open: true }, async (baseUrl) => {
     const resp = await fetch(`${baseUrl}/dns-query?dns=not!base64`);
     assert.equal(resp.status, 400);
-    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-message");
+    assert.equal(headerHasMimeType(resp.headers.get("content-type"), "application/dns-message", 256), true);
     const body = Buffer.from(await resp.arrayBuffer());
     assert.ok(body.length >= 12);
     // FORMERR (1)
@@ -174,7 +197,7 @@ test("POST /dns-query returns a DNS response with echoed question", async () => 
       body: query
     });
     assert.equal(resp.status, 200);
-    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-message");
+    assert.equal(headerHasMimeType(resp.headers.get("content-type"), "application/dns-message", 256), true);
 
     const responseBuf = Buffer.from(await resp.arrayBuffer());
     assert.equal(responseBuf.readUInt16BE(0), id);
@@ -198,7 +221,7 @@ test("POST /dns-query rejects non-application/dns-message content-type", async (
       body: query
     });
     assert.equal(resp.status, 415);
-    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-message");
+    assert.equal(headerHasMimeType(resp.headers.get("content-type"), "application/dns-message", 256), true);
     const body = Buffer.from(await resp.arrayBuffer());
     assert.ok(body.length >= 12);
     // FORMERR (1)
@@ -310,7 +333,7 @@ test("GET /dns-json returns application/dns-json and at least one A answer for l
       headers: { accept: "application/dns-json" }
     });
     assert.equal(resp.status, 200);
-    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-json");
+    assert.equal(headerHasMimeType(resp.headers.get("content-type"), "application/dns-json", 256), true);
     const body: any = await resp.json();
     assert.equal(body.Status, 0);
     assert.deepEqual(body.Question, [{ name: "localhost", type: 1 }]);
@@ -324,7 +347,7 @@ test("GET /dns-json supports CNAME queries (Status may be SERVFAIL if no CNAME e
   await withProxyServer({ open: true }, async (baseUrl) => {
     const resp = await fetch(`${baseUrl}/dns-json?name=localhost&type=CNAME`);
     assert.equal(resp.status, 200);
-    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-json");
+    assert.equal(headerHasMimeType(resp.headers.get("content-type"), "application/dns-json", 256), true);
     const body: any = await resp.json();
     assert.deepEqual(body.Question, [{ name: "localhost", type: 5 }]);
     assert.ok(body.Status === 0 || body.Status === 2);
@@ -335,7 +358,7 @@ test("GET /dns-json rejects unsupported types", async () => {
   await withProxyServer({ open: true }, async (baseUrl) => {
     const resp = await fetch(`${baseUrl}/dns-json?name=localhost&type=TXT`);
     assert.equal(resp.status, 400);
-    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/json");
+    assert.equal(headerHasMimeType(resp.headers.get("content-type"), "application/json", 256), true);
     const body: any = await resp.json();
     assert.equal(body.error, "unsupported type");
   });
@@ -375,6 +398,18 @@ test("DoH endpoints support optional CORS allowlist (preflight + response header
     assert.equal(preflight.headers.get("access-control-allow-private-network"), "true");
     assert.ok((preflight.headers.get("access-control-expose-headers") ?? "").toLowerCase().includes("content-length"));
     assert.equal(preflight.headers.get("access-control-max-age"), "600");
+
+    const oversizedPreflight = await fetch(`${baseUrl}/dns-query`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5173",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": `content-type, ${"x".repeat(10_000)}`
+      }
+    });
+    assert.equal(oversizedPreflight.status, 204);
+    assert.equal(oversizedPreflight.headers.get("access-control-allow-origin"), "http://localhost:5173");
+    assert.equal(oversizedPreflight.headers.get("access-control-allow-headers"), "Content-Type");
 
     const jsonPreflight = await fetch(`${baseUrl}/dns-json`, {
       method: "OPTIONS",

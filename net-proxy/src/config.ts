@@ -1,3 +1,5 @@
+import { splitCommaSeparatedList } from "./csv";
+
 export interface ProxyConfig {
   listenHost: string;
   listenPort: number;
@@ -47,10 +49,13 @@ function readEnvOriginAllowlist(name: string): string[] {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return [];
 
-  const parts = raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+  let parts: string[];
+  try {
+    parts = splitCommaSeparatedList(raw, { maxLen: 64 * 1024, maxItems: 1024 });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid ${name}: ${msg}`);
+  }
 
   const out: string[] = [];
   for (const part of parts) {
@@ -73,7 +78,14 @@ function readEnvOriginAllowlist(name: string): string[] {
   }
 
   // Deduplicate while preserving order.
-  return out.filter((value, idx) => out.indexOf(value) === idx);
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const value of out) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    deduped.push(value);
+  }
+  return deduped;
 }
 
 export function loadConfigFromEnv(): ProxyConfig {

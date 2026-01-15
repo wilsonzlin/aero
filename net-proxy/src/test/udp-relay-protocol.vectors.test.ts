@@ -69,7 +69,7 @@ function decodeB64(b64: string): Uint8Array {
   return new Uint8Array(Buffer.from(b64, "base64"));
 }
 
-const vectorsPath = path.resolve("../protocol-vectors/udp-relay.json");
+const vectorsPath = path.resolve(__dirname, "../../../protocol-vectors/udp-relay.json");
 const raw = JSON.parse(fs.readFileSync(vectorsPath, "utf8")) as { schema: number; vectors: UdpRelayVector[] };
 assert.equal(raw.schema, 1);
 

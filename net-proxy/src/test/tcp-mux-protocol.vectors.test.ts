@@ -38,7 +38,7 @@ function decodeB64(b64: string): Buffer {
   return Buffer.from(b64, "base64");
 }
 
-const vectorsPath = path.resolve("../protocol-vectors/tcp-mux-v1.json");
+const vectorsPath = path.resolve(__dirname, "../../../protocol-vectors/tcp-mux-v1.json");
 const vectors = JSON.parse(fs.readFileSync(vectorsPath, "utf8")) as TcpMuxVectorsFile;
 assert.equal(vectors.schema, 1);
 
