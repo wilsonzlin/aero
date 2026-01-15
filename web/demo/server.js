@@ -3,6 +3,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
@@ -29,8 +32,33 @@ const server = http.createServer(async (req, res) => {
   try {
     withSABHeaders(res);
 
-    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-    const decodedPath = decodeURIComponent(url.pathname);
+    const rawUrl = req.url ?? "/";
+    if (typeof rawUrl !== "string") {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      res.writeHead(414);
+      res.end("URI Too Long");
+      return;
+    }
+
+    const url = new URL(rawUrl, "http://localhost");
+    if (url.pathname.length > MAX_PATHNAME_LEN) {
+      res.writeHead(414);
+      res.end("URI Too Long");
+      return;
+    }
+
+    let decodedPath;
+    try {
+      decodedPath = decodeURIComponent(url.pathname);
+    } catch {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
 
     // Serve from repo root, but prevent directory traversal.
     let filePath = path.normalize(path.join(repoRoot, decodedPath));

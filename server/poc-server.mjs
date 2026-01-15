@@ -4,6 +4,9 @@ import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -85,7 +88,12 @@ async function handleIndex(res, mode) {
 }
 
 function handleStaticFile(reqPath, res) {
-  const decodedPath = decodeURIComponent(reqPath);
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(reqPath);
+  } catch {
+    return null;
+  }
 
   // Serve built browser JS.
   if (decodedPath.startsWith('/dist/')) {
@@ -114,10 +122,30 @@ function handleStaticFile(reqPath, res) {
   return false;
 }
 
+function sendText(res, statusCode, message) {
+  withCommonHeaders(res);
+  res.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end(message);
+}
+
 const server = http.createServer(async (req, res) => {
   try {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const rawUrl = req.url ?? '/';
+    if (typeof rawUrl !== 'string') {
+      sendText(res, 400, 'Bad Request');
+      return;
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      sendText(res, 414, 'URI Too Long');
+      return;
+    }
+
+    const url = new URL(rawUrl, 'http://localhost');
     const reqPath = url.pathname;
+    if (reqPath.length > MAX_PATHNAME_LEN) {
+      sendText(res, 414, 'URI Too Long');
+      return;
+    }
 
     // CSP test entry points.
     if (reqPath === '/' || reqPath === '/index.html') {
@@ -139,7 +167,12 @@ const server = http.createServer(async (req, res) => {
     if (reqPath.startsWith('/csp/wasm-unsafe-eval')) return await handleIndex(res, 'wasm-unsafe-eval');
     if (reqPath.startsWith('/csp/unsafe-eval')) return await handleIndex(res, 'unsafe-eval');
 
-    if (handleStaticFile(reqPath, res)) return;
+    const handled = handleStaticFile(reqPath, res);
+    if (handled === null) {
+      sendText(res, 400, 'Bad Request');
+      return;
+    }
+    if (handled) return;
 
     withCommonHeaders(res);
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
