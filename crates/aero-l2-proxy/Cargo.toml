@@ -21,7 +21,7 @@ trust-dns-resolver = { version = "0.23", default-features = false, features = ["
 url = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
