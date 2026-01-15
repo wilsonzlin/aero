@@ -2,6 +2,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ipaddr from "ipaddr.js";
 
+const MAX_ENV_CSV_LEN = 64 * 1024;
+const MAX_ENV_CSV_ITEMS = 1024;
+const MAX_ENV_CSV_ITEM_LEN = 4 * 1024;
+
 const DEFAULTS = Object.freeze({
   host: "0.0.0.0",
   port: 8080,
@@ -29,12 +33,31 @@ function parseNumber(value, defaultValue) {
   return Number.isFinite(num) ? num : defaultValue;
 }
 
-function parseCsv(value) {
+function parseCsv(value, name = "CSV") {
   if (!value) return [];
-  return String(value)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const raw = String(value);
+  if (raw.length > MAX_ENV_CSV_LEN) {
+    throw new Error(`${name} is too long`);
+  }
+
+  /** @type {string[]} */
+  const out = [];
+  let start = 0;
+  for (let i = 0; i <= raw.length; i++) {
+    const ch = i === raw.length ? "," : raw[i];
+    if (ch !== ",") continue;
+    const token = raw.slice(start, i).trim();
+    start = i + 1;
+    if (!token) continue;
+    if (token.length > MAX_ENV_CSV_ITEM_LEN) {
+      throw new Error(`${name} contains an overly long item`);
+    }
+    out.push(token);
+    if (out.length > MAX_ENV_CSV_ITEMS) {
+      throw new Error(`${name} contains too many items`);
+    }
+  }
+  return out;
 }
 
 export function parseAllowPorts(value) {
@@ -42,7 +65,7 @@ export function parseAllowPorts(value) {
   const normalized = String(value).trim();
   if (normalized === "*") return [{ start: 1, end: 65535 }];
   const ranges = [];
-  for (const part of parseCsv(normalized)) {
+  for (const part of parseCsv(normalized, "AERO_PROXY_ALLOW_PORTS")) {
     const m = /^(\d+)(?:-(\d+))?$/.exec(part);
     if (!m) throw new Error(`Invalid port allowlist entry: "${part}"`);
     const start = Number.parseInt(m[1], 10);
@@ -61,7 +84,7 @@ export function parseAllowHosts(value) {
   if (normalized === "*") return [{ kind: "wildcard" }];
 
   const patterns = [];
-  for (const part of parseCsv(normalized)) {
+  for (const part of parseCsv(normalized, "AERO_PROXY_ALLOW_HOSTS")) {
     if (part === "*") {
       patterns.push({ kind: "wildcard" });
       continue;
@@ -87,7 +110,7 @@ export function resolveConfig(overrides = {}, env = process.env) {
   const staticDir = overrides.staticDir ?? env.AERO_PROXY_STATIC_DIR ?? path.join(serverRoot, "public");
   const tokensFromEnv = [
     ...(env.AERO_PROXY_TOKEN ? [String(env.AERO_PROXY_TOKEN)] : []),
-    ...parseCsv(env.AERO_PROXY_TOKENS),
+    ...parseCsv(env.AERO_PROXY_TOKENS, "AERO_PROXY_TOKENS"),
   ];
 
   const tokens = overrides.tokens ?? tokensFromEnv;
@@ -97,7 +120,8 @@ export function resolveConfig(overrides = {}, env = process.env) {
 
   const allowHosts = overrides.allowHosts ?? parseAllowHosts(env.AERO_PROXY_ALLOW_HOSTS);
   const allowPorts = overrides.allowPorts ?? parseAllowPorts(env.AERO_PROXY_ALLOW_PORTS);
-  const allowedOrigins = overrides.allowedOrigins ?? parseCsv(env.AERO_PROXY_ALLOWED_ORIGINS);
+  const allowedOrigins =
+    overrides.allowedOrigins ?? parseCsv(env.AERO_PROXY_ALLOWED_ORIGINS, "AERO_PROXY_ALLOWED_ORIGINS");
 
   return Object.freeze({
     host: overrides.host ?? env.AERO_PROXY_HOST ?? DEFAULTS.host,

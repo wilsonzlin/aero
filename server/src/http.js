@@ -6,6 +6,7 @@ import { getAuthTokenFromRequest, isOriginAllowed, isTokenAllowed } from "./auth
 import { isHostAllowed, isIpAllowed } from "./policy.js";
 
 const stat = promisify(fs.stat);
+const MAX_REQUEST_URL_LEN = 8 * 1024;
 
 function setCrossOriginIsolationHeaders(res) {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -138,7 +139,21 @@ export function createHttpHandler({ config, logger, metrics }) {
       setCommonSecurityHeaders(res);
       setContentSecurityPolicy(res);
 
-      const url = new URL(req.url ?? "/", "http://localhost");
+      const rawUrl = req.url ?? "/";
+      if (typeof rawUrl !== "string") {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Bad Request");
+        return;
+      }
+      if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+        res.statusCode = 414;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("URI Too Long");
+        return;
+      }
+
+      const url = new URL(rawUrl, "http://localhost");
 
       if (req.method === "GET" && url.pathname === "/healthz") {
         res.statusCode = 200;

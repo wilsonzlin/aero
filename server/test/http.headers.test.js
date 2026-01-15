@@ -36,3 +36,24 @@ test("serves static files with COOP/COEP headers", async () => {
   }
 });
 
+test("rejects overly long request URLs with 414 (and still applies COOP/COEP headers)", async () => {
+  const config = resolveConfig({
+    host: "127.0.0.1",
+    port: 0,
+    tokens: ["test-token"],
+  });
+  const { httpServer } = createAeroServer(config);
+
+  const port = await listen(httpServer);
+  try {
+    const qs = "a".repeat(9_000);
+    const res = await fetch(`http://127.0.0.1:${port}/?${qs}`);
+    assert.equal(res.status, 414);
+    assert.equal(res.headers.get("cross-origin-opener-policy"), "same-origin");
+    assert.equal(res.headers.get("cross-origin-embedder-policy"), "require-corp");
+    assert.equal(res.headers.get("origin-agent-cluster"), "?1");
+  } finally {
+    await closeServer(httpServer);
+  }
+});
+

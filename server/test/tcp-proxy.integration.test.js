@@ -25,6 +25,14 @@ function waitForWsOpen(ws) {
   });
 }
 
+function waitForWsFailure(ws) {
+  return new Promise((resolve) => {
+    ws.once("error", () => resolve());
+    ws.once("unexpected-response", () => resolve());
+    ws.once("close", () => resolve());
+  });
+}
+
 function nextWsMessage(ws) {
   return new Promise((resolve, reject) => {
     ws.once("message", (data, isBinary) => {
@@ -78,6 +86,80 @@ test("TCP proxy can connect to a local echo server and relay data", { timeout: 1
   } finally {
     await closeServer(httpServer);
     await new Promise((resolve) => echoServer.close(resolve));
+  }
+});
+
+test("upgrade rejects overly long request targets with 414", async () => {
+  const token = "test-token";
+  const config = resolveConfig({
+    host: "127.0.0.1",
+    port: 0,
+    tokens: [token],
+    allowPrivateRanges: true,
+    allowHosts: [{ kind: "exact", value: "127.0.0.1" }],
+    allowPorts: [{ start: 1, end: 65535 }],
+  });
+
+  const { httpServer } = createAeroServer(config);
+  const port = await listen(httpServer);
+
+  let statusCode;
+  try {
+    const huge = "a".repeat(9_000);
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}/ws/tcp?token=${encodeURIComponent(token)}&x=${huge}`,
+    );
+    ws.once("unexpected-response", (_req, res) => {
+      statusCode = res.statusCode;
+      res.resume();
+    });
+    await waitForWsFailure(ws);
+    assert.equal(statusCode, 414);
+  } finally {
+    await closeServer(httpServer);
+  }
+});
+
+test("upgrade caps oversized Origin and Authorization headers", async () => {
+  const token = "test-token";
+  const config = resolveConfig({
+    host: "127.0.0.1",
+    port: 0,
+    tokens: [token],
+    allowedOrigins: ["http://ok.example"],
+    allowPrivateRanges: true,
+    allowHosts: [{ kind: "exact", value: "127.0.0.1" }],
+    allowPorts: [{ start: 1, end: 65535 }],
+  });
+
+  const { httpServer } = createAeroServer(config);
+  const port = await listen(httpServer);
+
+  try {
+    // Oversized Origin should be treated as invalid and rejected.
+    {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/tcp?token=${encodeURIComponent(token)}`, {
+        headers: { origin: "http://" + "a".repeat(10_000) },
+      });
+      await waitForWsFailure(ws);
+      assert.notEqual(ws.readyState, WebSocket.OPEN);
+    }
+
+    // Oversized Authorization should be treated as invalid (=> 401).
+    {
+      let statusCode2;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/tcp`, {
+        headers: { origin: "http://ok.example", authorization: "Bearer " + "a".repeat(10_000) },
+      });
+      ws.once("unexpected-response", (_req, res) => {
+        statusCode2 = res.statusCode;
+        res.resume();
+      });
+      await waitForWsFailure(ws);
+      assert.equal(statusCode2, 401);
+    }
+  } finally {
+    await closeServer(httpServer);
   }
 });
 

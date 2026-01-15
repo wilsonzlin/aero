@@ -6,6 +6,8 @@ import { createMetrics } from "./metrics.js";
 import { getAuthTokenFromRequest, isOriginAllowed, isTokenAllowed } from "./auth.js";
 import { TcpProxyManager } from "./tcpProxy.js";
 
+const MAX_UPGRADE_URL_LEN = 8 * 1024;
+
 function writeUpgradeResponse(socket, statusCode, statusMessage) {
   socket.write(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n\r\n`);
   socket.destroy();
@@ -42,7 +44,17 @@ export function createAeroServer(config, { logger = createLogger({ level: config
   });
 
   httpServer.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const rawUrl = req.url ?? "/";
+    if (typeof rawUrl !== "string") {
+      writeUpgradeResponse(socket, 400, "Bad Request");
+      return;
+    }
+    if (rawUrl.length > MAX_UPGRADE_URL_LEN) {
+      writeUpgradeResponse(socket, 414, "URI Too Long");
+      return;
+    }
+
+    const url = new URL(rawUrl, "http://localhost");
     if (url.pathname !== "/ws/tcp") {
       writeUpgradeResponse(socket, 404, "Not Found");
       return;

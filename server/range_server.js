@@ -12,6 +12,14 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+const MAX_AUTH_HEADER_LEN = 4 * 1024;
+const MAX_RANGE_HEADER_LEN = 16 * 1024;
+const MAX_IF_NONE_MATCH_LEN = 16 * 1024;
+const MAX_IF_MODIFIED_SINCE_LEN = 128;
+const MAX_IF_RANGE_LEN = 256;
+
 function parseArgs(argv) {
   const args = { dir: process.cwd(), port: 8080, coopCoep: false, authToken: null };
   for (let i = 2; i < argv.length; i++) {
@@ -55,13 +63,17 @@ function stripWeakEtagPrefix(etag) {
   return etag.trim().replace(/^w\//i, "");
 }
 
-function splitCommaHeaderOutsideQuotes(value) {
-  const out = [];
+function ifNoneMatchMatches(ifNoneMatch, currentEtag) {
+  const raw = String(ifNoneMatch).trim();
+  if (!raw) return false;
+  if (raw === "*") return true;
+
+  const current = stripWeakEtagPrefix(currentEtag);
   let start = 0;
   let inQuotes = false;
   let escaped = false;
-  for (let i = 0; i < value.length; i++) {
-    const ch = value[i];
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
     if (escaped) {
       escaped = false;
       continue;
@@ -75,26 +87,15 @@ function splitCommaHeaderOutsideQuotes(value) {
       continue;
     }
     if (ch === "," && !inQuotes) {
-      out.push(value.slice(start, i));
+      const tag = raw.slice(start, i).trim();
+      if (tag === "*") return true;
+      if (tag && stripWeakEtagPrefix(tag) === current) return true;
       start = i + 1;
     }
   }
-  out.push(value.slice(start));
-  return out;
-}
-
-function ifNoneMatchMatches(ifNoneMatch, currentEtag) {
-  const raw = String(ifNoneMatch).trim();
-  if (!raw) return false;
-  if (raw === "*") return true;
-
-  const current = stripWeakEtagPrefix(currentEtag);
-  for (const part of splitCommaHeaderOutsideQuotes(raw)) {
-    const candidate = part.trim();
-    if (!candidate) continue;
-    if (candidate === "*") return true;
-    if (stripWeakEtagPrefix(candidate) === current) return true;
-  }
+  const tag = raw.slice(start).trim();
+  if (tag === "*") return true;
+  if (tag && stripWeakEtagPrefix(tag) === current) return true;
   return false;
 }
 
@@ -118,11 +119,13 @@ function isNotModified(req, stat) {
   const etag = computeEtag(stat);
   const ifNoneMatch = req.headers["if-none-match"];
   if (typeof ifNoneMatch === "string") {
+    if (ifNoneMatch.length > MAX_IF_NONE_MATCH_LEN) return false;
     return ifNoneMatchMatches(ifNoneMatch, etag);
   }
 
   const ifModifiedSince = req.headers["if-modified-since"];
   if (typeof ifModifiedSince === "string") {
+    if (ifModifiedSince.length > MAX_IF_MODIFIED_SINCE_LEN) return false;
     return ifModifiedSinceMatches(ifModifiedSince, stat);
   }
 
@@ -132,6 +135,7 @@ function isNotModified(req, stat) {
 function ifRangeAllowsRange(req, stat) {
   const ifRange = req.headers["if-range"];
   if (typeof ifRange !== "string") return true;
+  if (ifRange.length > MAX_IF_RANGE_LEN) return false;
 
   const value = ifRange.trim();
   if (!value) return false;
@@ -198,37 +202,40 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
 function requireAuth(req) {
   if (typeof args.authToken !== "string" || !args.authToken) return null;
   const auth = req.headers["authorization"];
+  if (typeof auth === "string" && auth.length > MAX_AUTH_HEADER_LEN) {
+    return { expected: args.authToken, actual: null };
+  }
   if (typeof auth !== "string" || auth.trim() !== args.authToken.trim()) {
     return { expected: args.authToken, actual: typeof auth === "string" ? auth : null };
   }
   return null;
 }
 
-function sendAuthError(req, res, { statusCode }) {
-  const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from("Unauthorized");
+function sendRequestError(req, res, { statusCode, message }) {
+  const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from(String(message), "utf8");
   res.statusCode = statusCode;
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Content-Length", String(body.length));
   res.setHeader("Content-Encoding", "identity");
-  res.setHeader("Cache-Control", "private, no-store, no-transform");
+  res.setHeader(
+    "Cache-Control",
+    args.authToken ? "private, no-store, no-transform" : "no-transform",
+  );
 
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Range, If-Range, If-None-Match, If-Modified-Since, Authorization"
+    "Range, If-Range, If-None-Match, If-Modified-Since, Authorization",
   );
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   res.setHeader(
     "Access-Control-Expose-Headers",
-    "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified"
+    "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified",
   );
   res.setHeader("Access-Control-Max-Age", "86400");
-  res.setHeader(
-    "Vary",
-    "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
-  );
+  res.setHeader("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
 
   if (args.coopCoep) {
     res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -236,6 +243,10 @@ function sendAuthError(req, res, { statusCode }) {
   }
 
   res.end(body);
+}
+
+function sendAuthError(req, res, { statusCode }) {
+  sendRequestError(req, res, { statusCode, message: "Unauthorized" });
 }
 
 function parseRange(rangeHeader, size) {
@@ -281,6 +292,16 @@ function parseRange(rangeHeader, size) {
 }
 
 const server = http.createServer((req, res) => {
+  const rawUrl = req.url ?? "/";
+  if (typeof rawUrl !== "string") {
+    sendRequestError(req, res, { statusCode: 400, message: "Bad Request" });
+    return;
+  }
+  if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+    sendRequestError(req, res, { statusCode: 414, message: "URI Too Long" });
+    return;
+  }
+
   if (req.method === "OPTIONS") {
     // CORS preflight for cross-origin Range requests.
     res.statusCode = 204;
@@ -314,7 +335,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const url = new URL(req.url ?? "/", "http://localhost");
+  let url;
+  try {
+    url = new URL(rawUrl, "http://localhost");
+  } catch {
+    sendRequestError(req, res, { statusCode: 400, message: "Bad Request" });
+    return;
+  }
+  if (url.pathname.length > MAX_PATHNAME_LEN) {
+    sendRequestError(req, res, { statusCode: 414, message: "URI Too Long" });
+    return;
+  }
   const filePath = safeJoin(root, url.pathname);
   if (!filePath) {
     res.statusCode = 404;
@@ -339,6 +370,10 @@ const server = http.createServer((req, res) => {
       const rangeHeader = req.headers["range"];
       const ifRangeOk = ifRangeAllowsRange(req, stat);
       if (typeof rangeHeader === "string" && ifRangeOk) {
+        if (rangeHeader.length > MAX_RANGE_HEADER_LEN) {
+          sendRequestError(req, res, { statusCode: 413, message: "Range header too large" });
+          return;
+        }
         const parsed = parseRange(rangeHeader, stat.size);
         if (parsed && parsed.ignore) {
           // Ignore unknown Range unit.
@@ -376,6 +411,10 @@ const server = http.createServer((req, res) => {
 
     let rangeHeader = req.headers["range"];
     if (typeof rangeHeader === "string") {
+      if (rangeHeader.length > MAX_RANGE_HEADER_LEN) {
+        sendRequestError(req, res, { statusCode: 413, message: "Range header too large" });
+        return;
+      }
       if (!ifRangeAllowsRange(req, stat)) {
         rangeHeader = undefined;
       }
