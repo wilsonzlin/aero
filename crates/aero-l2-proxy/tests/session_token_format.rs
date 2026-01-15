@@ -1,13 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_l2_proxy::auth::{
-    verify_relay_jwt_hs256, verify_session_token, JwtVerifyError, SessionVerifyError,
+    verify_relay_jwt_hs256, verify_session_token, JwtVerifyError,
 };
 
 #[test]
 fn session_token_rejects_too_many_parts() {
-    let err = verify_session_token("a.b.c", b"secret", 0).expect_err("expected invalid token");
-    assert_eq!(err, SessionVerifyError::InvalidFormat);
+    assert!(verify_session_token("a.b.c", b"secret", 0).is_none());
 }
 
 #[test]

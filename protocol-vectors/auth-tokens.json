@@ -34,6 +34,27 @@
         "expectError": true
       },
       {
+        "name": "invalidBase64urlNonCanonical.payload",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH1.lpYbKWtG31e3d6UYftC9ODV0iQJnv26UnbJY-QoMse8",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlNonCanonical.payloadLenMod4eq2",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0gIB.DKpSILivQHR2PeHzPpeSAi33ndHS4kA9a8PvMYYNUA0",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlNonCanonical.signature",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.zcesNltUxXmW1SpDGWoATMZj1GLX1LMz0TIdVRzO8l9",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
         "name": "malformed.noDot",
         "secret": "test-session-secret",
         "token": "not-a-token",
@@ -345,6 +366,27 @@
         "name": "invalidBase64urlLength.signature",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.a",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlNonCanonical.signature",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wGh",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlNonCanonical.header",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9IB.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.arIaOtlkz2xuK9JliBZpiNutsqP5m_8xa5W8DMcbcLo",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlNonCanonical.payload",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9IB.vwjLYglqyTMfp_pnOV3eP2vZXJcsTySoajXfw2B8LRU",
         "nowSec": 1700000000,
         "expectError": true
       },

@@ -17,20 +17,22 @@ pub struct VerifiedSession {
 /// - Payload JSON: `{ v: 1, sid: string, exp: number }` (`exp` is seconds since unix epoch)
 /// - Reject expired sessions (`exp*1000 <= now_ms`) and malformed tokens.
 pub fn verify_session_token(token: &str, secret: &[u8], now_ms: u64) -> Option<VerifiedSession> {
-    let claims = crate::auth::verify_session_token(token, secret, now_ms).ok()?;
+    let claims = crate::auth::verify_session_token(token, secret, now_ms)?;
     Some(VerifiedSession {
         expires_at_ms: claims.exp.checked_mul(1000)?,
         id: claims.sid,
     })
 }
 
-/// Extracts and verifies the `aero_session` cookie from a `Cookie` header.
-pub(crate) fn extract_session_cookie_value(cookie_header: &HeaderValue) -> Option<String> {
+/// Extract the raw `aero_session` cookie value from a `Cookie` header.
+pub(crate) fn extract_session_cookie_raw_value<'a>(
+    cookie_header: &'a HeaderValue,
+) -> Option<&'a str> {
     let raw = cookie_header.to_str().ok()?;
-    extract_cookie_value(raw, SESSION_COOKIE_NAME)
+    extract_cookie_value_raw(raw, SESSION_COOKIE_NAME)
 }
 
-fn extract_cookie_value(raw: &str, name: &str) -> Option<String> {
+fn extract_cookie_value_raw<'a>(raw: &'a str, name: &str) -> Option<&'a str> {
     for part in raw.split(';') {
         let trimmed = part.trim();
         if trimmed.is_empty() {
@@ -47,12 +49,12 @@ fn extract_cookie_value(raw: &str, name: &str) -> Option<String> {
             continue;
         }
         let value = trimmed[idx + 1..].trim();
-        return Some(percent_decode(value));
+        return Some(value);
     }
     None
 }
 
-fn percent_decode(input: &str) -> String {
+pub(crate) fn percent_decode(input: &str) -> String {
     let mut out = Vec::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;

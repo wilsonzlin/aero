@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     net::{IpAddr, SocketAddr},
     sync::{
@@ -379,6 +380,149 @@ async fn handle_l2_ws(socket: WebSocket, state: AppState, session_identity: Opti
     }
 }
 
+fn reject_auth_unauthorized(
+    state: &AppState,
+    headers: &HeaderMap,
+    token_present: bool,
+    cookie_present: bool,
+    client_ip: IpAddr,
+    reject_reason: AuthRejectReason,
+    message: &'static str,
+) -> Box<axum::response::Response> {
+    let missing = matches!(reject_reason, AuthRejectReason::MissingCredentials);
+    let reason = if missing { "auth_missing" } else { "auth_invalid" };
+    reject_auth_unauthorized_with_reason(
+        state,
+        headers,
+        token_present,
+        cookie_present,
+        client_ip,
+        reject_reason,
+        reason,
+        message,
+    )
+}
+
+fn reject_auth_unauthorized_with_reason(
+    state: &AppState,
+    headers: &HeaderMap,
+    token_present: bool,
+    cookie_present: bool,
+    client_ip: IpAddr,
+    reject_reason: AuthRejectReason,
+    reason: &'static str,
+    message: &'static str,
+) -> Box<axum::response::Response> {
+    state.metrics.auth_failed();
+    if matches!(reject_reason, AuthRejectReason::MissingCredentials) {
+        state.metrics.upgrade_reject_auth_missing();
+    } else {
+        state.metrics.upgrade_reject_auth_invalid();
+    }
+    state.metrics.auth_rejected(reject_reason);
+    tracing::warn!(
+        reason,
+        auth_reject_reason = reject_reason.label(),
+        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+        auth_mode = %auth_mode(state),
+        token_present,
+        cookie_present,
+        client_ip = %client_ip,
+        "rejected l2 websocket upgrade",
+    );
+    Box::new((StatusCode::UNAUTHORIZED, message.to_string()).into_response())
+}
+
+fn reject_invalid_jwt(
+    state: &AppState,
+    headers: &HeaderMap,
+    token_present: bool,
+    cookie_present: bool,
+    client_ip: IpAddr,
+    context: &'static str,
+) -> Box<axum::response::Response> {
+    state.metrics.auth_failed();
+    state.metrics.upgrade_reject_auth_invalid();
+    state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
+    tracing::warn!(
+        reason = "auth_invalid",
+        auth_reject_reason = AuthRejectReason::InvalidJwt.label(),
+        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+        auth_mode = %auth_mode(state),
+        token_present,
+        cookie_present,
+        client_ip = %client_ip,
+        "rejected l2 websocket upgrade ({context})",
+    );
+    Box::new((StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response())
+}
+
+fn session_cookie_raw_value<'a>(headers: &'a HeaderMap) -> Option<&'a str> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .find_map(gateway_session::extract_session_cookie_raw_value)
+}
+
+fn session_id_from_cookie(headers: &HeaderMap, secret: &[u8], now_ms: u64) -> Option<String> {
+    let raw = session_cookie_raw_value(headers)?;
+    let token = if raw.contains('%') {
+        Cow::Owned(gateway_session::percent_decode(raw))
+    } else {
+        Cow::Borrowed(raw)
+    };
+    gateway_session::verify_session_token(token.as_ref(), secret, now_ms).map(|session| session.id)
+}
+
+fn reject_origin_forbidden(
+    state: &AppState,
+    _headers: &HeaderMap,
+    token_present: bool,
+    cookie_present: bool,
+    client_ip: IpAddr,
+    reason: &'static str,
+    origin: &str,
+    message: String,
+    record_metric: impl FnOnce(&Metrics),
+) -> Box<axum::response::Response> {
+    record_metric(&state.metrics);
+    tracing::warn!(
+        reason,
+        origin = %origin,
+        auth_mode = %auth_mode(state),
+        token_present,
+        cookie_present,
+        client_ip = %client_ip,
+        "rejected l2 websocket upgrade",
+    );
+    Box::new((StatusCode::FORBIDDEN, message).into_response())
+}
+
+fn reject_host_forbidden(
+    state: &AppState,
+    headers: &HeaderMap,
+    token_present: bool,
+    cookie_present: bool,
+    client_ip: IpAddr,
+    reason: &'static str,
+    host: &str,
+    message: String,
+    record_metric: impl FnOnce(&Metrics),
+) -> Box<axum::response::Response> {
+    record_metric(&state.metrics);
+    tracing::warn!(
+        reason,
+        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
+        auth_mode = %auth_mode(state),
+        token_present,
+        cookie_present,
+        client_ip = %client_ip,
+        host = %host,
+        "rejected l2 websocket upgrade",
+    );
+    Box::new((StatusCode::FORBIDDEN, message).into_response())
+}
+
 fn enforce_security(
     state: &AppState,
     headers: &HeaderMap,
@@ -397,39 +541,25 @@ fn enforce_security(
         crate::config::AuthMode::None => {}
         crate::config::AuthMode::ApiKey => {
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
-            let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
+            let provided = token_from_query(uri)
+                .or_else(|| token_from_subprotocol(headers).map(Cow::Borrowed));
             let api_key_ok = provided
                 .as_deref()
                 .is_some_and(|provided| constant_time_eq(provided, expected));
             if !api_key_ok {
-                state.metrics.auth_failed();
                 let reject_reason = if token_present {
                     AuthRejectReason::InvalidApiKey
                 } else {
                     AuthRejectReason::MissingCredentials
                 };
-                if token_present {
-                    state.metrics.upgrade_reject_auth_invalid();
-                } else {
-                    state.metrics.upgrade_reject_auth_missing();
-                }
-                state.metrics.auth_rejected(reject_reason);
-                tracing::warn!(
-                    reason = if token_present {
-                        "auth_invalid"
-                    } else {
-                        "auth_missing"
-                    },
-                    auth_reject_reason = reject_reason.label(),
-                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                    auth_mode = %auth_mode(state),
+                return Err(reject_auth_unauthorized(
+                    state,
+                    headers,
                     token_present,
                     cookie_present,
-                    client_ip = %client_ip,
-                    "rejected l2 websocket upgrade",
-                );
-                return Err(Box::new(
-                    (StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response(),
+                    client_ip,
+                    reject_reason,
+                    "invalid token",
                 ));
             }
         }
@@ -441,47 +571,21 @@ fn enforce_security(
                 .as_deref()
                 .unwrap_or_default();
             let now_ms = now_ms();
-            let session_token = headers
-                .get_all(header::COOKIE)
-                .iter()
-                .find_map(gateway_session::extract_session_cookie_value);
-            let sid = session_token
-                .as_deref()
-                .and_then(|token| gateway_session::verify_session_token(token, secret, now_ms))
-                .map(|session| session.id);
+            let sid = session_id_from_cookie(headers, secret, now_ms);
             if sid.is_none() {
-                state.metrics.auth_failed();
                 let reject_reason = if cookie_present {
                     AuthRejectReason::InvalidCookie
                 } else {
                     AuthRejectReason::MissingCredentials
                 };
-                if cookie_present {
-                    state.metrics.upgrade_reject_auth_invalid();
-                } else {
-                    state.metrics.upgrade_reject_auth_missing();
-                }
-                state.metrics.auth_rejected(reject_reason);
-                tracing::warn!(
-                    reason = if cookie_present {
-                        "auth_invalid"
-                    } else {
-                        "auth_missing"
-                    },
-                    auth_reject_reason = reject_reason.label(),
-                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                    auth_mode = %auth_mode(state),
+                return Err(reject_auth_unauthorized(
+                    state,
+                    headers,
                     token_present,
                     cookie_present,
-                    client_ip = %client_ip,
-                    "rejected l2 websocket upgrade",
-                );
-                return Err(Box::new(
-                    (
-                        StatusCode::UNAUTHORIZED,
-                        "missing or expired session".to_string(),
-                    )
-                        .into_response(),
+                    client_ip,
+                    reject_reason,
+                    "missing or expired session",
                 ));
             }
             auth_sid = sid;
@@ -522,53 +626,25 @@ fn enforce_security(
                 .unwrap_or_default();
 
             let now_ms = now_ms();
-            let session_token = headers
-                .get_all(header::COOKIE)
-                .iter()
-                .find_map(gateway_session::extract_session_cookie_value);
-            let sid = session_token
-                .as_deref()
-                .and_then(|token| {
-                    gateway_session::verify_session_token(token, cookie_secret, now_ms)
-                })
-                .map(|session| session.id);
+            let sid = session_id_from_cookie(headers, cookie_secret, now_ms);
 
             if let Some(sid) = sid {
                 auth_sid = Some(sid);
             } else {
                 if !token_present {
-                    state.metrics.auth_failed();
                     let reject_reason = if cookie_present {
                         AuthRejectReason::InvalidCookie
                     } else {
                         AuthRejectReason::MissingCredentials
                     };
-                    if cookie_present {
-                        state.metrics.upgrade_reject_auth_invalid();
-                    } else {
-                        state.metrics.upgrade_reject_auth_missing();
-                    }
-                    state.metrics.auth_rejected(reject_reason);
-                    tracing::warn!(
-                        reason = if cookie_present {
-                            "auth_invalid"
-                        } else {
-                            "auth_missing"
-                        },
-                        auth_reject_reason = reject_reason.label(),
-                        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                        auth_mode = %auth_mode(state),
+                    return Err(reject_auth_unauthorized(
+                        state,
+                        headers,
                         token_present,
                         cookie_present,
-                        client_ip = %client_ip,
-                        "rejected l2 websocket upgrade",
-                    );
-                    return Err(Box::new(
-                        (
-                            StatusCode::UNAUTHORIZED,
-                            "missing or invalid auth".to_string(),
-                        )
-                            .into_response(),
+                        client_ip,
+                        reject_reason,
+                        "missing or invalid auth",
                     ));
                 }
                 let (sid, expected_origin) = verify_jwt_sid(
@@ -608,29 +684,19 @@ fn enforce_security(
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
 
             let now_ms = now_ms();
-            let session_token = headers
-                .get_all(header::COOKIE)
-                .iter()
-                .find_map(gateway_session::extract_session_cookie_value);
-            let sid = session_token
-                .as_deref()
-                .and_then(|token| {
-                    gateway_session::verify_session_token(token, cookie_secret, now_ms)
-                })
-                .map(|session| session.id);
+            let sid = session_id_from_cookie(headers, cookie_secret, now_ms);
 
             if let Some(sid) = sid {
                 auth_sid = Some(sid);
             } else {
-                let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
+                let provided = token_from_query(uri)
+                    .or_else(|| token_from_subprotocol(headers).map(Cow::Borrowed));
                 let api_key_present = provided.is_some();
                 let api_key_ok = provided
                     .as_deref()
                     .is_some_and(|provided| constant_time_eq(provided, expected));
 
                 if !api_key_ok {
-                    state.metrics.auth_failed();
-
                     let reject_reason = if api_key_present {
                         AuthRejectReason::InvalidApiKey
                     } else if cookie_present {
@@ -638,33 +704,14 @@ fn enforce_security(
                     } else {
                         AuthRejectReason::MissingCredentials
                     };
-
-                    if cookie_present || api_key_present {
-                        state.metrics.upgrade_reject_auth_invalid();
-                    } else {
-                        state.metrics.upgrade_reject_auth_missing();
-                    }
-                    state.metrics.auth_rejected(reject_reason);
-                    tracing::warn!(
-                        reason = if cookie_present || api_key_present {
-                            "auth_invalid"
-                        } else {
-                            "auth_missing"
-                        },
-                        auth_reject_reason = reject_reason.label(),
-                        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                        auth_mode = %auth_mode(state),
+                    return Err(reject_auth_unauthorized(
+                        state,
+                        headers,
                         token_present,
                         cookie_present,
-                        client_ip = %client_ip,
-                        "rejected l2 websocket upgrade",
-                    );
-                    return Err(Box::new(
-                        (
-                            StatusCode::UNAUTHORIZED,
-                            "missing or invalid auth".to_string(),
-                        )
-                            .into_response(),
+                        client_ip,
+                        reject_reason,
+                        "missing or invalid auth",
                     ));
                 }
             }
@@ -679,27 +726,17 @@ fn enforce_security(
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
 
             let now_ms = now_ms();
-            let session_token = headers
-                .get_all(header::COOKIE)
-                .iter()
-                .find_map(gateway_session::extract_session_cookie_value);
-            let sid = session_token
-                .as_deref()
-                .and_then(|token| {
-                    gateway_session::verify_session_token(token, cookie_secret, now_ms)
-                })
-                .map(|session| session.id);
+            let sid = session_id_from_cookie(headers, cookie_secret, now_ms);
             let cookie_ok = sid.is_some();
 
-            let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
+            let provided = token_from_query(uri)
+                .or_else(|| token_from_subprotocol(headers).map(Cow::Borrowed));
             let api_key_present = provided.is_some();
             let api_key_ok = provided
                 .as_deref()
                 .is_some_and(|provided| constant_time_eq(provided, expected));
 
             if !cookie_ok || !api_key_ok {
-                state.metrics.auth_failed();
-
                 let reject_reason = if api_key_present && !api_key_ok {
                     AuthRejectReason::InvalidApiKey
                 } else if cookie_present && !cookie_ok {
@@ -707,30 +744,14 @@ fn enforce_security(
                 } else {
                     AuthRejectReason::MissingCredentials
                 };
-
-                let missing = matches!(reject_reason, AuthRejectReason::MissingCredentials);
-                if missing {
-                    state.metrics.upgrade_reject_auth_missing();
-                } else {
-                    state.metrics.upgrade_reject_auth_invalid();
-                }
-                state.metrics.auth_rejected(reject_reason);
-                tracing::warn!(
-                    reason = if missing { "auth_missing" } else { "auth_invalid" },
-                    auth_reject_reason = reject_reason.label(),
-                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                    auth_mode = %auth_mode(state),
+                return Err(reject_auth_unauthorized(
+                    state,
+                    headers,
                     token_present,
                     cookie_present,
-                    client_ip = %client_ip,
-                    "rejected l2 websocket upgrade",
-                );
-                return Err(Box::new(
-                    (
-                        StatusCode::UNAUTHORIZED,
-                        "missing or invalid auth".to_string(),
-                    )
-                        .into_response(),
+                    client_ip,
+                    reject_reason,
+                    "missing or invalid auth",
                 ));
             }
 
@@ -741,37 +762,29 @@ fn enforce_security(
     if !state.cfg.security.open {
         let mut origin_values = headers.get_all(axum::http::header::ORIGIN).iter();
         let Some(origin_header) = origin_values.next() else {
-            state.metrics.upgrade_reject_origin_missing();
-            tracing::warn!(
-                reason = "origin_missing",
-                origin = "<missing>",
-                auth_mode = %auth_mode(state),
+            return Err(reject_origin_forbidden(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                "rejected l2 websocket upgrade",
-            );
-            return Err(Box::new(
-                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
+                client_ip,
+                "origin_missing",
+                "<missing>",
+                "missing Origin header".to_string(),
+                |m| m.upgrade_reject_origin_missing(),
             ));
         };
         if origin_values.next().is_some() {
-            state.metrics.upgrade_reject_origin_not_allowed();
-            tracing::warn!(
-                reason = "origin_invalid",
-                origin = "<multiple>",
-                auth_mode = %auth_mode(state),
+            return Err(reject_origin_forbidden(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                "rejected l2 websocket upgrade",
-            );
-            return Err(Box::new(
-                (
-                    StatusCode::FORBIDDEN,
-                    "invalid Origin header: multiple values".to_string(),
-                )
-                    .into_response(),
+                client_ip,
+                "origin_invalid",
+                "<multiple>",
+                "invalid Origin header: multiple values".to_string(),
+                |m| m.upgrade_reject_origin_not_allowed(),
             ));
         }
 
@@ -781,40 +794,32 @@ fn enforce_security(
             .map(str::trim)
             .filter(|v| !v.is_empty());
         let Some(origin_header) = origin_header else {
-            state.metrics.upgrade_reject_origin_missing();
-            tracing::warn!(
-                reason = "origin_missing",
-                origin = "<missing>",
-                auth_mode = %auth_mode(state),
+            return Err(reject_origin_forbidden(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                "rejected l2 websocket upgrade",
-            );
-            return Err(Box::new(
-                (StatusCode::FORBIDDEN, "missing Origin header".to_string()).into_response(),
+                client_ip,
+                "origin_missing",
+                "<missing>",
+                "missing Origin header".to_string(),
+                |m| m.upgrade_reject_origin_missing(),
             ));
         };
 
         let origin = match crate::origin::normalize_origin(origin_header) {
             Some(origin) => origin,
             None => {
-                state.metrics.upgrade_reject_origin_not_allowed();
-                tracing::warn!(
-                    reason = "origin_invalid",
-                    origin = %origin_header,
-                    auth_mode = %auth_mode(state),
+                return Err(reject_origin_forbidden(
+                    state,
+                    headers,
                     token_present,
                     cookie_present,
-                    client_ip = %client_ip,
-                    "rejected l2 websocket upgrade",
-                );
-                return Err(Box::new(
-                    (
-                        StatusCode::FORBIDDEN,
-                        format!("invalid Origin header: {origin_header}"),
-                    )
-                        .into_response(),
+                    client_ip,
+                    "origin_invalid",
+                    origin_header,
+                    format!("invalid Origin header: {origin_header}"),
+                    |m| m.upgrade_reject_origin_not_allowed(),
                 ));
             }
         };
@@ -833,22 +838,16 @@ fn enforce_security(
                 };
 
                 if !allowed {
-                    state.metrics.upgrade_reject_origin_not_allowed();
-                    tracing::warn!(
-                        reason = "origin_not_allowed",
-                        origin = %origin,
-                        auth_mode = %auth_mode(state),
+                    return Err(reject_origin_forbidden(
+                        state,
+                        headers,
                         token_present,
                         cookie_present,
-                        client_ip = %client_ip,
-                        "rejected l2 websocket upgrade",
-                    );
-                    return Err(Box::new(
-                        (
-                            StatusCode::FORBIDDEN,
-                            format!("Origin not allowed: {origin}"),
-                        )
-                            .into_response(),
+                        client_ip,
+                        "origin_not_allowed",
+                        &origin,
+                        format!("Origin not allowed: {origin}"),
+                        |m| m.upgrade_reject_origin_not_allowed(),
                     ));
                 }
             }
@@ -860,36 +859,30 @@ fn enforce_security(
         let scheme = effective_host_scheme(headers, trust_proxy);
         let raw_host = effective_host_value(headers, trust_proxy);
         let Some(raw_host) = raw_host else {
-            state.metrics.upgrade_reject_host_missing();
-            tracing::warn!(
-                reason = "host_missing",
-                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                auth_mode = %auth_mode(state),
+            return Err(reject_host_forbidden(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                host = "<missing>",
-                "rejected l2 websocket upgrade",
-            );
-            return Err(Box::new(
-                (StatusCode::FORBIDDEN, "missing Host header".to_string()).into_response(),
+                client_ip,
+                "host_missing",
+                "<missing>",
+                "missing Host header".to_string(),
+                |m| m.upgrade_reject_host_missing(),
             ));
         };
 
         let Some(host) = normalize_host_for_compare(&raw_host, scheme) else {
-            state.metrics.upgrade_reject_host_invalid();
-            tracing::warn!(
-                reason = "host_invalid",
-                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                auth_mode = %auth_mode(state),
+            return Err(reject_host_forbidden(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                host = %raw_host,
-                "rejected l2 websocket upgrade",
-            );
-            return Err(Box::new(
-                (StatusCode::FORBIDDEN, "malformed Host header".to_string()).into_response(),
+                client_ip,
+                "host_invalid",
+                &raw_host,
+                "malformed Host header".to_string(),
+                |m| m.upgrade_reject_host_invalid(),
             ));
         };
 
@@ -898,19 +891,16 @@ fn enforce_security(
         });
 
         if !is_allowed {
-            state.metrics.upgrade_reject_host_not_allowed();
-            tracing::warn!(
-                reason = "host_not_allowed",
-                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                auth_mode = %auth_mode(state),
+            return Err(reject_host_forbidden(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                host = %host,
-                "rejected l2 websocket upgrade",
-            );
-            return Err(Box::new(
-                (StatusCode::FORBIDDEN, format!("Host not allowed: {host}")).into_response(),
+                client_ip,
+                "host_not_allowed",
+                &host,
+                format!("Host not allowed: {host}"),
+                |m| m.upgrade_reject_host_not_allowed(),
             ));
         }
     }
@@ -928,99 +918,60 @@ fn verify_jwt_sid(
     client_ip: IpAddr,
 ) -> Result<(String, Option<String>), Box<axum::response::Response>> {
     let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
-    let mut tokens = Vec::new();
-    if let Some(token) = bearer_token(headers) {
-        tokens.push(token);
-    }
-    if let Some(token) = token_from_query(uri) {
-        tokens.push(token);
-    }
-    if let Some(token) = token_from_subprotocol(headers) {
-        tokens.push(token);
-    }
-
     let now_unix = now_unix_seconds();
-    let mut claims = None;
-    for token in tokens {
-        if let Ok(parsed) = crate::auth::verify_relay_jwt_hs256(&token, secret, now_unix) {
-            claims = Some(parsed);
-            break;
-        }
-    }
+    let claims = bearer_token(headers)
+        .and_then(|token| crate::auth::verify_relay_jwt_hs256(token, secret, now_unix).ok())
+        .or_else(|| {
+            token_from_query(uri)
+                .and_then(|token| crate::auth::verify_relay_jwt_hs256(token.as_ref(), secret, now_unix).ok())
+        })
+        .or_else(|| {
+            token_from_subprotocol(headers)
+                .and_then(|token| crate::auth::verify_relay_jwt_hs256(token, secret, now_unix).ok())
+        });
 
     let claims = match claims {
         Some(claims) => claims,
         None => {
-            state.metrics.auth_failed();
             let reject_reason = if token_present {
                 AuthRejectReason::InvalidJwt
             } else {
                 AuthRejectReason::MissingCredentials
             };
-            if token_present {
-                state.metrics.upgrade_reject_auth_invalid();
-            } else {
-                state.metrics.upgrade_reject_auth_missing();
-            }
-            state.metrics.auth_rejected(reject_reason);
-            tracing::warn!(
-                reason = if token_present {
-                    "auth_invalid"
-                } else {
-                    "auth_missing"
-                },
-                auth_reject_reason = reject_reason.label(),
-                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                auth_mode = %auth_mode(state),
+            return Err(reject_auth_unauthorized(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                "rejected l2 websocket upgrade",
-            );
-            return Err(Box::new(
-                (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+                client_ip,
+                reject_reason,
+                "invalid jwt",
             ));
         }
     };
 
     if let Some(expected) = state.cfg.security.jwt_audience.as_deref() {
         if claims.aud.as_deref() != Some(expected) {
-            state.metrics.auth_failed();
-            state.metrics.upgrade_reject_auth_invalid();
-            state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
-            tracing::warn!(
-                reason = "auth_invalid",
-                auth_reject_reason = AuthRejectReason::InvalidJwt.label(),
-                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                auth_mode = %auth_mode(state),
+            return Err(reject_invalid_jwt(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                "rejected l2 websocket upgrade (jwt audience mismatch)",
-            );
-            return Err(Box::new(
-                (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+                client_ip,
+                "jwt audience mismatch",
             ));
         }
     }
 
     if let Some(expected) = state.cfg.security.jwt_issuer.as_deref() {
         if claims.iss.as_deref() != Some(expected) {
-            state.metrics.auth_failed();
-            state.metrics.upgrade_reject_auth_invalid();
-            state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
-            tracing::warn!(
-                reason = "auth_invalid",
-                auth_reject_reason = AuthRejectReason::InvalidJwt.label(),
-                origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                auth_mode = %auth_mode(state),
+            return Err(reject_invalid_jwt(
+                state,
+                headers,
                 token_present,
                 cookie_present,
-                client_ip = %client_ip,
-                "rejected l2 websocket upgrade (jwt issuer mismatch)",
-            );
-            return Err(Box::new(
-                (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+                client_ip,
+                "jwt issuer mismatch",
             ));
         }
     }
@@ -1030,21 +981,13 @@ fn verify_jwt_sid(
         Some(raw) => match crate::origin::normalize_origin(raw) {
             Some(origin) => Some(origin),
             None => {
-                state.metrics.auth_failed();
-                state.metrics.upgrade_reject_auth_invalid();
-                state.metrics.auth_rejected(AuthRejectReason::InvalidJwt);
-                tracing::warn!(
-                    reason = "auth_invalid",
-                    auth_reject_reason = AuthRejectReason::InvalidJwt.label(),
-                    origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-                    auth_mode = %auth_mode(state),
+                return Err(reject_invalid_jwt(
+                    state,
+                    headers,
                     token_present,
                     cookie_present,
-                    client_ip = %client_ip,
-                    "rejected l2 websocket upgrade (jwt origin claim invalid)",
-                );
-                return Err(Box::new(
-                    (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+                    client_ip,
+                    "jwt origin claim invalid",
                 ));
             }
         },
@@ -1067,23 +1010,15 @@ fn reject_jwt_origin_mismatch(
     cookie_present: bool,
     client_ip: IpAddr,
 ) -> Result<(), Box<axum::response::Response>> {
-    state.metrics.auth_failed();
-    state.metrics.upgrade_reject_auth_invalid();
-    state
-        .metrics
-        .auth_rejected(AuthRejectReason::JwtOriginMismatch);
-    tracing::warn!(
-        reason = "jwt_origin_mismatch",
-        auth_reject_reason = AuthRejectReason::JwtOriginMismatch.label(),
-        origin = %origin_from_headers(headers).unwrap_or("<missing>"),
-        auth_mode = %auth_mode(state),
+    Err(reject_auth_unauthorized_with_reason(
+        state,
+        headers,
         token_present,
         cookie_present,
-        client_ip = %client_ip,
-        "rejected l2 websocket upgrade",
-    );
-    Err(Box::new(
-        (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+        client_ip,
+        AuthRejectReason::JwtOriginMismatch,
+        "jwt_origin_mismatch",
+        "invalid jwt",
     ))
 }
 
@@ -1293,41 +1228,34 @@ fn token_present_in_query(uri: &axum::http::Uri, key: &str) -> bool {
 }
 
 fn token_present_in_subprotocol(headers: &HeaderMap) -> bool {
-    let Some(value) = headers
-        .get(header::SEC_WEBSOCKET_PROTOCOL)
-        .and_then(|v| v.to_str().ok())
-    else {
-        return false;
-    };
-
-    value.split(',').map(str::trim).any(|proto| {
-        proto
-            .strip_prefix(aero_l2_protocol::L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX)
-            .is_some_and(|v| !v.is_empty())
-    })
+    token_from_subprotocol(headers).is_some()
 }
 
 fn session_cookie_present(headers: &HeaderMap) -> bool {
-    let value = headers
-        .get_all(header::COOKIE)
-        .iter()
-        .find_map(gateway_session::extract_session_cookie_value);
-    // Match gateway semantics: an empty cookie value is treated as missing (`if (!value) return null`).
-    matches!(value.as_deref(), Some(v) if !v.is_empty())
+    // Match gateway semantics: "first cookie wins", and an empty cookie value is treated as missing.
+    matches!(session_cookie_raw_value(headers), Some(v) if !v.is_empty())
 }
 
-fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
+fn query_param_raw<'a>(uri: &'a axum::http::Uri, key: &str) -> Option<&'a str> {
     let query = uri.query()?;
     for part in query.split('&') {
         let (k, v) = part.split_once('=').unwrap_or((part, ""));
         if k == key {
-            return (!v.is_empty()).then(|| percent_decode(v));
+            return (!v.is_empty()).then_some(v);
         }
     }
     None
 }
 
-fn bearer_token(headers: &HeaderMap) -> Option<String> {
+fn query_param<'a>(uri: &'a axum::http::Uri, key: &str) -> Option<Cow<'a, str>> {
+    let v = query_param_raw(uri, key)?;
+    if v.contains('%') {
+        return Some(Cow::Owned(gateway_session::percent_decode(v)));
+    }
+    Some(Cow::Borrowed(v))
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let mut parts = value.split_whitespace();
     let scheme = parts.next()?;
@@ -1338,10 +1266,10 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
     if parts.next().is_some() {
         return None;
     }
-    (!token.is_empty()).then(|| token.to_string())
+    (!token.is_empty()).then_some(token)
 }
 
-fn token_from_query(uri: &axum::http::Uri) -> Option<String> {
+fn token_from_query(uri: &axum::http::Uri) -> Option<Cow<'_, str>> {
     query_param(uri, "token").or_else(|| query_param(uri, "apiKey"))
 }
 
@@ -1361,36 +1289,7 @@ fn now_unix_seconds() -> u64 {
         .unwrap_or(0)
 }
 
-fn percent_decode(input: &str) -> String {
-    let mut out = Vec::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hi = from_hex(bytes[i + 1]);
-            let lo = from_hex(bytes[i + 2]);
-            if let (Some(hi), Some(lo)) = (hi, lo) {
-                out.push((hi << 4) | lo);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn from_hex(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn token_from_subprotocol(headers: &HeaderMap) -> Option<String> {
+fn token_from_subprotocol(headers: &HeaderMap) -> Option<&str> {
     let value = headers
         .get(axum::http::header::SEC_WEBSOCKET_PROTOCOL)
         .and_then(|v| v.to_str().ok())?;
@@ -1399,7 +1298,7 @@ fn token_from_subprotocol(headers: &HeaderMap) -> Option<String> {
         proto
             .strip_prefix(aero_l2_protocol::L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX)
             .filter(|v| !v.is_empty())
-            .map(|v| v.to_string())
+            .map(|v| v)
     })
 }
 

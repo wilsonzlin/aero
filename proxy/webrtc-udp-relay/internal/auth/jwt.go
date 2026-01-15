@@ -15,6 +15,18 @@ import (
 
 var ErrUnsupportedJWT = errors.New("unsupported jwt")
 
+const (
+	// HMAC-SHA256 output size in bytes.
+	hmacSHA256SigLen = 32
+	// base64url-no-pad encoding length for a 32-byte HMAC:
+	// - 32 bytes => 44 chars with one '=' padding
+	// - without padding => 43 chars
+	hmacSHA256SigB64Len = 43
+	maxJWTHeaderB64Len  = 4 * 1024
+	maxJWTPayloadB64Len = 16 * 1024
+	maxJWTLen           = maxJWTHeaderB64Len + 1 + maxJWTPayloadB64Len + 1 + hmacSHA256SigB64Len
+)
+
 type jwtVerifier struct {
 	secret []byte
 	now    func() time.Time
@@ -49,12 +61,12 @@ func (v jwtVerifier) VerifyAndExtractSID(token string) (string, error) {
 }
 
 func (v jwtVerifier) verifyAndExtractClaims(token string) (jwtClaims, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
+	headerB64, payloadB64, sigB64, ok := splitJWTParts(token)
+	if !ok {
 		return jwtClaims{}, ErrInvalidCredentials
 	}
 
-	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+	headerJSON, err := base64.RawURLEncoding.DecodeString(headerB64)
 	if err != nil {
 		return jwtClaims{}, ErrInvalidCredentials
 	}
@@ -83,22 +95,25 @@ func (v jwtVerifier) verifyAndExtractClaims(token string) (jwtClaims, error) {
 		}
 	}
 
-	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	gotSig, err := base64.RawURLEncoding.DecodeString(sigB64)
 	if err != nil {
+		return jwtClaims{}, ErrInvalidCredentials
+	}
+	if len(gotSig) != hmacSHA256SigLen {
 		return jwtClaims{}, ErrInvalidCredentials
 	}
 
 	mac := hmac.New(sha256.New, v.secret)
-	_, _ = mac.Write([]byte(parts[0]))
+	_, _ = mac.Write([]byte(headerB64))
 	_, _ = mac.Write([]byte{'.'})
-	_, _ = mac.Write([]byte(parts[1]))
+	_, _ = mac.Write([]byte(payloadB64))
 	expectedSig := mac.Sum(nil)
-
-	gotSig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
+	if !hmac.Equal(gotSig, expectedSig) {
 		return jwtClaims{}, ErrInvalidCredentials
 	}
-	if !hmac.Equal(gotSig, expectedSig) {
+
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(payloadB64)
+	if err != nil {
 		return jwtClaims{}, ErrInvalidCredentials
 	}
 
@@ -190,12 +205,92 @@ func (v jwtVerifier) Verify(token string) error {
 	return err
 }
 
+func splitJWTParts(token string) (headerB64, payloadB64, sigB64 string, ok bool) {
+	if token == "" || len(token) > maxJWTLen {
+		return "", "", "", false
+	}
+	headerB64, rest, found := strings.Cut(token, ".")
+	if !found {
+		return "", "", "", false
+	}
+	payloadB64, sigB64, found = strings.Cut(rest, ".")
+	if !found {
+		return "", "", "", false
+	}
+	if strings.Contains(sigB64, ".") {
+		return "", "", "", false
+	}
+	if headerB64 == "" || payloadB64 == "" || sigB64 == "" {
+		return "", "", "", false
+	}
+	if len(headerB64) > maxJWTHeaderB64Len || len(payloadB64) > maxJWTPayloadB64Len {
+		return "", "", "", false
+	}
+	if len(sigB64) != hmacSHA256SigB64Len {
+		return "", "", "", false
+	}
+	if !isBase64urlNoPad(headerB64, maxJWTHeaderB64Len) ||
+		!isBase64urlNoPad(payloadB64, maxJWTPayloadB64Len) ||
+		!isBase64urlNoPad(sigB64, hmacSHA256SigB64Len) {
+		return "", "", "", false
+	}
+	return headerB64, payloadB64, sigB64, true
+}
+
+func isBase64urlNoPad(raw string, maxLen int) bool {
+	if raw == "" || len(raw) > maxLen {
+		return false
+	}
+	// Base64url without padding cannot have length mod 4 == 1.
+	if len(raw)%4 == 1 {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		if _, ok := b64urlValue(raw[i]); !ok {
+			return false
+		}
+	}
+	// Tighten validation to canonical base64url-no-pad. Even when the length is syntactically
+	// valid (mod 4 != 1), the unused bits in the final base64 quantum must be zero.
+	//
+	// - len % 4 == 2 => 4 unused bits (must be zero)
+	// - len % 4 == 3 => 2 unused bits (must be zero)
+	switch len(raw) % 4 {
+	case 0:
+		return true
+	case 2:
+		last, _ := b64urlValue(raw[len(raw)-1])
+		return (last & 0x0f) == 0
+	case 3:
+		last, _ := b64urlValue(raw[len(raw)-1])
+		return (last & 0x03) == 0
+	default:
+		// len%4==1 is rejected above.
+		return false
+	}
+}
+
+func b64urlValue(b byte) (byte, bool) {
+	switch {
+	case b >= 'A' && b <= 'Z':
+		return b - 'A', true
+	case b >= 'a' && b <= 'z':
+		return b - 'a' + 26, true
+	case b >= '0' && b <= '9':
+		return b - '0' + 52, true
+	case b == '-':
+		return 62, true
+	case b == '_':
+		return 63, true
+	default:
+		return 0, false
+	}
+}
+
 func parseUnixTimestamp(v any) (int64, error) {
 	switch x := v.(type) {
 	case json.Number:
 		return x.Int64()
-	case float64:
-		return int64(x), nil
 	default:
 		return 0, fmt.Errorf("invalid timestamp %T", v)
 	}

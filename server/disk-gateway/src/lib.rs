@@ -658,6 +658,91 @@ fn scope_allows_disk_read(scope: &str) -> bool {
     scope.split_whitespace().any(|s| s == "disk:read")
 }
 
+const HMAC_SHA256_SIG_B64URL_LEN: usize = 43; // 32 bytes -> 43 chars, base64url no-pad
+const MAX_JWT_HEADER_B64URL_LEN: usize = 4 * 1024;
+const MAX_JWT_PAYLOAD_B64URL_LEN: usize = 16 * 1024;
+const MAX_JWT_LEN: usize = MAX_JWT_HEADER_B64URL_LEN
+    + 1
+    + MAX_JWT_PAYLOAD_B64URL_LEN
+    + 1
+    + HMAC_SHA256_SIG_B64URL_LEN;
+
+fn b64url_value(b: u8) -> Option<u8> {
+    match b {
+        b'A'..=b'Z' => Some(b - b'A'),
+        b'a'..=b'z' => Some(b - b'a' + 26),
+        b'0'..=b'9' => Some(b - b'0' + 52),
+        b'-' => Some(62),
+        b'_' => Some(63),
+        _ => None,
+    }
+}
+
+fn is_base64url_no_pad(raw: &str, max_len: usize) -> bool {
+    if raw.is_empty() || raw.len() > max_len {
+        return false;
+    }
+    let rem = raw.len() % 4;
+    if rem == 1 {
+        return false;
+    }
+    raw.as_bytes().iter().all(|&b| b64url_value(b).is_some())
+}
+
+fn is_canonical_base64url_no_pad(raw: &str, max_len: usize) -> bool {
+    if !is_base64url_no_pad(raw, max_len) {
+        return false;
+    }
+    let rem = raw.len() % 4;
+    if rem == 0 {
+        return true;
+    }
+
+    let Some(&last) = raw.as_bytes().last() else {
+        return false;
+    };
+    let Some(v) = b64url_value(last) else {
+        return false;
+    };
+
+    // Canonical base64 requires unused bits be zero:
+    // - len % 4 == 2 encodes 1 byte => last char has 4 unused low bits
+    // - len % 4 == 3 encodes 2 bytes => last char has 2 unused low bits
+    if rem == 2 {
+        (v & 0x0f) == 0
+    } else {
+        (v & 0x03) == 0
+    }
+}
+
+fn split_jwt_parts(token: &str) -> Option<(&str, &str, &str)> {
+    if token.is_empty() || token.len() > MAX_JWT_LEN {
+        return None;
+    }
+
+    let dot1 = token.find('.')?;
+    let dot2 = token[dot1 + 1..].find('.').map(|i| dot1 + 1 + i)?;
+    if token[dot2 + 1..].contains('.') {
+        return None;
+    }
+    let header = &token[..dot1];
+    let payload = &token[dot1 + 1..dot2];
+    let sig = &token[dot2 + 1..];
+
+    if !is_canonical_base64url_no_pad(header, MAX_JWT_HEADER_B64URL_LEN) {
+        return None;
+    }
+    if !is_canonical_base64url_no_pad(payload, MAX_JWT_PAYLOAD_B64URL_LEN) {
+        return None;
+    }
+    if sig.len() != HMAC_SHA256_SIG_B64URL_LEN
+        || !is_canonical_base64url_no_pad(sig, HMAC_SHA256_SIG_B64URL_LEN)
+    {
+        return None;
+    }
+    Some((header, payload, sig))
+}
+
 fn sign_lease(
     cfg: &Config,
     image_id: &str,
@@ -683,6 +768,12 @@ fn sign_lease(
 }
 
 fn verify_lease(cfg: &Config, token: &str) -> Result<LeaseClaims, ApiError> {
+    // Defensive: reject attacker-controlled allocations/work before invoking a JWT library decode.
+    // This is a public-facing endpoint, and the `token` parameter is user-controlled.
+    if split_jwt_parts(token).is_none() {
+        return Err(ApiError::Unauthorized);
+    }
+
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
     let data = jsonwebtoken::decode::<LeaseClaims>(
@@ -2376,5 +2467,28 @@ mod tests {
         );
 
         assert_eq!(resp.headers().get(VARY).unwrap().to_str().unwrap(), "*");
+    }
+
+    #[test]
+    fn verify_lease_rejects_non_canonical_base64url_segments() {
+        let cfg = test_config(PathBuf::from("public"), PathBuf::from("private"));
+
+        let signature_ok = "A".repeat(HMAC_SHA256_SIG_B64URL_LEN);
+
+        // Header has len%4==2, but last char has non-zero unused bits => non-canonical.
+        let token = format!("AB.AA.{signature_ok}");
+        let err = verify_lease(&cfg, &token).unwrap_err();
+        assert!(matches!(err, ApiError::Unauthorized));
+
+        // Payload has len%4==2, but last char has non-zero unused bits => non-canonical.
+        let token = format!("AA.AB.{signature_ok}");
+        let err = verify_lease(&cfg, &token).unwrap_err();
+        assert!(matches!(err, ApiError::Unauthorized));
+
+        // Signature has len%4==3, but last char has non-zero unused bits => non-canonical.
+        let signature_bad = format!("{}B", "A".repeat(HMAC_SHA256_SIG_B64URL_LEN - 1));
+        let token = format!("AA.AA.{signature_bad}");
+        let err = verify_lease(&cfg, &token).unwrap_err();
+        assert!(matches!(err, ApiError::Unauthorized));
     }
 }

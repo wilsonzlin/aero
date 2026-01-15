@@ -66,11 +66,11 @@ fn protocol_session_token_vectors() {
     for v in vf.session_tokens.vectors {
         let got = verify_session_token(&v.token, v.secret.as_bytes(), v.now_ms);
         if v.expect_error {
-            assert!(got.is_err(), "expected error for {}", v.name);
+            assert!(got.is_none(), "expected error for {}", v.name);
             continue;
         }
 
-        let got = got.unwrap_or_else(|err| panic!("expected ok for {}: {err:?}", v.name));
+        let got = got.unwrap_or_else(|| panic!("expected ok for {}", v.name));
         assert_eq!(got.sid, v.sid.expect("sid"));
         assert_eq!(got.exp, v.exp.expect("exp"));
     }
@@ -90,8 +90,14 @@ fn protocol_jwt_vectors() {
 
         let got = got.unwrap_or_else(|err| panic!("expected ok for {}: {err:?}", v.name));
         assert_eq!(got.sid, v.sid.expect("sid"));
-        assert_eq!(got.exp, v.exp.expect("exp"));
-        assert_eq!(got.iat, v.iat.expect("iat"));
+        assert_eq!(
+            got.exp,
+            i64::try_from(v.exp.expect("exp")).expect("exp i64")
+        );
+        assert_eq!(
+            got.iat,
+            i64::try_from(v.iat.expect("iat")).expect("iat i64")
+        );
         assert_eq!(got.origin, v.origin);
         assert_eq!(got.aud, v.aud);
         assert_eq!(got.iss, v.iss);

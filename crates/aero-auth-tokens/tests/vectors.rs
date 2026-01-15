@@ -1,4 +1,7 @@
-use aero_auth_tokens::{verify_gateway_session_token, verify_hs256_jwt};
+use aero_auth_tokens::{
+    mint_gateway_session_token_v1, mint_hs256_jwt, verify_gateway_session_token_checked,
+    verify_hs256_jwt_checked, Claims, MintError,
+};
 use serde::Deserialize;
 
 const VECTORS_JSON: &str = include_str!("../../conformance/test-vectors/aero-vectors-v1.json");
@@ -79,19 +82,17 @@ fn session_token_vectors() {
     let secret = vf.aero_session.secret.as_bytes();
     let now_ms = vf.aero_session.now_ms;
 
-    let valid = verify_gateway_session_token(&vf.aero_session.tokens.valid.token, secret, now_ms)
+    let valid = verify_gateway_session_token_checked(&vf.aero_session.tokens.valid.token, secret, now_ms)
         .expect("expected valid session token to verify");
     assert_eq!(valid.sid, vf.aero_session.tokens.valid.claims.sid);
     assert_eq!(valid.exp_unix, vf.aero_session.tokens.valid.claims.exp);
 
     assert!(
-        verify_gateway_session_token(&vf.aero_session.tokens.expired.token, secret, now_ms)
-            .is_none(),
+        verify_gateway_session_token_checked(&vf.aero_session.tokens.expired.token, secret, now_ms).is_err(),
         "expected expired session token to be rejected"
     );
     assert!(
-        verify_gateway_session_token(&vf.aero_session.tokens.bad_signature.token, secret, now_ms)
-            .is_none(),
+        verify_gateway_session_token_checked(&vf.aero_session.tokens.bad_signature.token, secret, now_ms).is_err(),
         "expected bad signature session token to be rejected"
     );
 }
@@ -104,7 +105,7 @@ fn jwt_vectors() {
     let secret = vf.udp_relay_jwt.secret.as_bytes();
     let now = vf.udp_relay_jwt.now_unix;
 
-    let got = verify_hs256_jwt(&vf.udp_relay_jwt.tokens.valid.token, secret, now)
+    let got = verify_hs256_jwt_checked(&vf.udp_relay_jwt.tokens.valid.token, secret, now)
         .expect("expected valid jwt to verify");
     assert_eq!(got.sid, vf.udp_relay_jwt.tokens.valid.claims.sid);
     assert_eq!(got.exp, vf.udp_relay_jwt.tokens.valid.claims.exp);
@@ -114,11 +115,31 @@ fn jwt_vectors() {
     assert_eq!(got.iss, vf.udp_relay_jwt.tokens.valid.claims.iss);
 
     assert!(
-        verify_hs256_jwt(&vf.udp_relay_jwt.tokens.expired.token, secret, now).is_none(),
+        verify_hs256_jwt_checked(&vf.udp_relay_jwt.tokens.expired.token, secret, now).is_err(),
         "expected expired jwt to be rejected"
     );
     assert!(
-        verify_hs256_jwt(&vf.udp_relay_jwt.tokens.bad_signature.token, secret, now).is_none(),
+        verify_hs256_jwt_checked(&vf.udp_relay_jwt.tokens.bad_signature.token, secret, now).is_err(),
         "expected bad signature jwt to be rejected"
     );
+}
+
+#[test]
+fn mint_rejects_oversized_tokens() {
+    let sid = "a".repeat(50_000);
+    let err = mint_gateway_session_token_v1(&sid, 123, b"secret")
+        .expect_err("expected oversized session token mint to fail");
+    assert_eq!(err, MintError::TooLong);
+
+    let claims = Claims {
+        sid,
+        exp: 2,
+        iat: 1,
+        origin: Some("b".repeat(50_000)),
+        aud: None,
+        iss: None,
+    };
+    let err = mint_hs256_jwt(&claims, b"secret")
+        .expect_err("expected oversized jwt mint to fail");
+    assert_eq!(err, MintError::TooLong);
 }

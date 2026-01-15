@@ -1,4 +1,4 @@
-use aero_auth_tokens::{verify_gateway_session_token, verify_hs256_jwt};
+use aero_auth_tokens::{verify_gateway_session_token_checked, verify_hs256_jwt_checked};
 use serde::Deserialize;
 
 const VECTORS_JSON: &str = include_str!("../../../protocol-vectors/auth-tokens.json");
@@ -62,13 +62,15 @@ fn protocol_session_token_vectors() {
     assert_eq!(vf.schema, 1);
 
     for v in vf.session_tokens.vectors {
-        let got = verify_gateway_session_token(&v.token, v.secret.as_bytes(), v.now_ms);
         if v.expect_error {
-            assert!(got.is_none(), "expected error for {}", v.name);
+            let err = verify_gateway_session_token_checked(&v.token, v.secret.as_bytes(), v.now_ms)
+                .expect_err("expected error");
+            let _ = err;
             continue;
         }
 
-        let got = got.unwrap_or_else(|| panic!("expected ok for {}", v.name));
+        let got = verify_gateway_session_token_checked(&v.token, v.secret.as_bytes(), v.now_ms)
+            .unwrap_or_else(|err| panic!("expected ok for {}: {err}", v.name));
         assert_eq!(got.sid, v.sid.expect("sid"));
         assert_eq!(got.exp_unix, v.exp.expect("exp"));
     }
@@ -80,13 +82,15 @@ fn protocol_jwt_vectors() {
     assert_eq!(vf.schema, 1);
 
     for v in vf.jwt_tokens.vectors {
-        let got = verify_hs256_jwt(&v.token, v.secret.as_bytes(), v.now_sec);
         if v.expect_error {
-            assert!(got.is_none(), "expected error for {}", v.name);
+            let err = verify_hs256_jwt_checked(&v.token, v.secret.as_bytes(), v.now_sec)
+                .expect_err("expected error");
+            let _ = err;
             continue;
         }
 
-        let got = got.unwrap_or_else(|| panic!("expected ok for {}", v.name));
+        let got = verify_hs256_jwt_checked(&v.token, v.secret.as_bytes(), v.now_sec)
+            .unwrap_or_else(|err| panic!("expected ok for {}: {err}", v.name));
         assert_eq!(got.sid, v.sid.expect("sid"));
         assert_eq!(got.exp, v.exp.expect("exp"));
         assert_eq!(got.iat, v.iat.expect("iat"));

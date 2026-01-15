@@ -487,15 +487,14 @@ dependencies = [
 name = "aero-l2-proxy"
 version = "0.1.0"
 dependencies = [
+ "aero-auth-tokens",
  "aero-l2-protocol",
  "aero-net-stack",
  "aero-pcapng",
  "anyhow",
  "axum",
- "base64 0.22.1",
  "futures-util",
  "reqwest 0.11.27",
- "ring",
  "serde",
  "serde_json",
  "tempfile",

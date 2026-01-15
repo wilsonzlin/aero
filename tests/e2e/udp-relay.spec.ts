@@ -168,7 +168,14 @@ type RelayAuthConfig =
 
 function makeJWT(secret: string): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({})).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(
+    JSON.stringify({
+      sid: crypto.randomUUID(),
+      iat: now,
+      exp: now + 60,
+    }),
+  ).toString('base64url');
   const unsigned = `${header}.${payload}`;
   const sig = crypto.createHmac('sha256', secret).update(unsigned).digest('base64url');
   return `${unsigned}.${sig}`;

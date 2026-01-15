@@ -2,7 +2,7 @@
 
 use std::sync::OnceLock;
 
-use aero_auth_tokens::{verify_gateway_session_token, verify_hs256_jwt};
+use aero_auth_tokens::{verify_gateway_session_token_checked, verify_hs256_jwt_checked};
 use aero_l2_protocol::{
     decode_message as decode_l2, decode_structured_error_payload, encode_frame as encode_l2_frame,
     encode_ping as encode_l2_ping, encode_pong as encode_l2_pong, encode_with_limits, Limits,
@@ -586,7 +586,7 @@ fn aero_vectors_v2_auth_tokens() {
 
     let session_secret = vectors.aero_session.secret.as_bytes();
     let now_ms = vectors.aero_session.now_ms;
-    let valid = verify_gateway_session_token(
+    let valid = verify_gateway_session_token_checked(
         &vectors.aero_session.tokens.valid.token,
         session_secret,
         now_ms,
@@ -596,27 +596,27 @@ fn aero_vectors_v2_auth_tokens() {
     assert_eq!(valid.exp_unix, vectors.aero_session.tokens.valid.claims.exp);
 
     assert!(
-        verify_gateway_session_token(
+        verify_gateway_session_token_checked(
             &vectors.aero_session.tokens.expired.token,
             session_secret,
             now_ms
         )
-        .is_none(),
+        .is_err(),
         "expected expired session token to be rejected"
     );
     assert!(
-        verify_gateway_session_token(
+        verify_gateway_session_token_checked(
             &vectors.aero_session.tokens.bad_signature.token,
             session_secret,
             now_ms
         )
-        .is_none(),
+        .is_err(),
         "expected bad signature session token to be rejected"
     );
 
     let jwt_secret = vectors.udp_relay_jwt.secret.as_bytes();
     let now_unix = vectors.udp_relay_jwt.now_unix;
-    let got = verify_hs256_jwt(
+    let got = verify_hs256_jwt_checked(
         &vectors.udp_relay_jwt.tokens.valid.token,
         jwt_secret,
         now_unix,
@@ -630,21 +630,21 @@ fn aero_vectors_v2_auth_tokens() {
     assert_eq!(got.iss, vectors.udp_relay_jwt.tokens.valid.claims.iss);
 
     assert!(
-        verify_hs256_jwt(
+        verify_hs256_jwt_checked(
             &vectors.udp_relay_jwt.tokens.expired.token,
             jwt_secret,
             now_unix
         )
-        .is_none(),
+        .is_err(),
         "expected expired jwt to be rejected"
     );
     assert!(
-        verify_hs256_jwt(
+        verify_hs256_jwt_checked(
             &vectors.udp_relay_jwt.tokens.bad_signature.token,
             jwt_secret,
             now_unix
         )
-        .is_none(),
+        .is_err(),
         "expected bad signature jwt to be rejected"
     );
 }

@@ -623,6 +623,17 @@ Canonical JWT (HS256) test vectors live in
 under the `aero-udp-relay-jwt-hs256` key and are consumed by both the gateway token minting logic
 and the relay verifier to prevent cross-language drift.
 
+##### JWT encoding and limits
+
+Tokens are standard JWTs:
+
+- **Format**: `<header_b64url>.<payload_b64url>.<sig_b64url>`
+- **Encoding**: base64url **without padding** (RFC 7515 / RFC 7519)
+- **Algorithm**: `HS256`
+- **Hardening**: implementations SHOULD apply conservative size caps for header/payload to avoid
+  attacker-controlled allocations and parsing work, and SHOULD reject malformed tokens early (e.g.
+  empty segments, extra dots, non-string `typ` when present).
+
 ##### JWT claims
 
 The relay currently accepts only **HS256** JWTs and enforces the following claims:

@@ -2,7 +2,7 @@
 
 use aero_l2_proxy::auth::{
     mint_relay_jwt_hs256, mint_session_token, verify_relay_jwt_hs256, verify_session_token,
-    JwtVerifyError, RelayJwtClaims, SessionClaims, SessionVerifyError,
+    JwtVerifyError, RelayJwtClaims, SessionClaims,
 };
 use serde::Deserialize;
 
@@ -89,13 +89,13 @@ fn session_cookie_vectors() {
         exp: vectors.aero_session.tokens.valid.claims.exp,
     };
     assert_eq!(
-        mint_session_token(&valid_claims, secret),
+        mint_session_token(&valid_claims, secret).expect("mint session token"),
         vectors.aero_session.tokens.valid.token,
         "mint valid token"
     );
     assert_eq!(
         verify_session_token(&vectors.aero_session.tokens.valid.token, secret, now_ms),
-        Ok(valid_claims.clone()),
+        Some(valid_claims.clone()),
         "verify valid token"
     );
 
@@ -104,28 +104,23 @@ fn session_cookie_vectors() {
         exp: vectors.aero_session.tokens.expired.claims.exp,
     };
     assert_eq!(
-        mint_session_token(&expired_claims, secret),
+        mint_session_token(&expired_claims, secret).expect("mint session token"),
         vectors.aero_session.tokens.expired.token,
         "mint expired token"
     );
-    assert_eq!(
-        verify_session_token(&vectors.aero_session.tokens.expired.token, secret, now_ms),
-        Err(SessionVerifyError::Expired),
+    assert!(
+        verify_session_token(&vectors.aero_session.tokens.expired.token, secret, now_ms).is_none(),
         "verify expired token"
     );
 
     assert_ne!(
-        mint_session_token(&valid_claims, secret),
+        mint_session_token(&valid_claims, secret).expect("mint session token"),
         vectors.aero_session.tokens.bad_signature.token,
         "bad signature token must differ from a properly minted token"
     );
-    assert_eq!(
-        verify_session_token(
-            &vectors.aero_session.tokens.bad_signature.token,
-            secret,
-            now_ms
-        ),
-        Err(SessionVerifyError::InvalidSignature),
+    assert!(
+        verify_session_token(&vectors.aero_session.tokens.bad_signature.token, secret, now_ms)
+            .is_none(),
         "verify bad signature token"
     );
 }
@@ -139,16 +134,15 @@ fn relay_jwt_vectors() {
     let now_unix = vectors.relay_jwt.now_unix;
 
     let valid_claims = RelayJwtClaims {
-        iat: vectors.relay_jwt.tokens.valid.claims.iat,
-        exp: vectors.relay_jwt.tokens.valid.claims.exp,
         sid: vectors.relay_jwt.tokens.valid.claims.sid.clone(),
+        exp: i64::try_from(vectors.relay_jwt.tokens.valid.claims.exp).expect("exp i64"),
+        iat: i64::try_from(vectors.relay_jwt.tokens.valid.claims.iat).expect("iat i64"),
         origin: Some(vectors.relay_jwt.tokens.valid.claims.origin.clone()),
         aud: Some(vectors.relay_jwt.tokens.valid.claims.aud.clone()),
         iss: Some(vectors.relay_jwt.tokens.valid.claims.iss.clone()),
-        nbf: None,
     };
     assert_eq!(
-        mint_relay_jwt_hs256(&valid_claims, secret),
+        mint_relay_jwt_hs256(&valid_claims, secret).expect("mint relay jwt"),
         vectors.relay_jwt.tokens.valid.token,
         "mint valid jwt"
     );
@@ -159,16 +153,15 @@ fn relay_jwt_vectors() {
     );
 
     let expired_claims = RelayJwtClaims {
-        iat: vectors.relay_jwt.tokens.expired.claims.iat,
-        exp: vectors.relay_jwt.tokens.expired.claims.exp,
         sid: vectors.relay_jwt.tokens.expired.claims.sid.clone(),
+        exp: i64::try_from(vectors.relay_jwt.tokens.expired.claims.exp).expect("exp i64"),
+        iat: i64::try_from(vectors.relay_jwt.tokens.expired.claims.iat).expect("iat i64"),
         origin: Some(vectors.relay_jwt.tokens.expired.claims.origin.clone()),
         aud: Some(vectors.relay_jwt.tokens.expired.claims.aud.clone()),
         iss: Some(vectors.relay_jwt.tokens.expired.claims.iss.clone()),
-        nbf: None,
     };
     assert_eq!(
-        mint_relay_jwt_hs256(&expired_claims, secret),
+        mint_relay_jwt_hs256(&expired_claims, secret).expect("mint relay jwt"),
         vectors.relay_jwt.tokens.expired.token,
         "mint expired jwt"
     );
@@ -179,7 +172,7 @@ fn relay_jwt_vectors() {
     );
 
     assert_ne!(
-        mint_relay_jwt_hs256(&valid_claims, secret),
+        mint_relay_jwt_hs256(&valid_claims, secret).expect("mint relay jwt"),
         vectors.relay_jwt.tokens.bad_signature.token,
         "bad signature token must differ from a properly minted jwt"
     );

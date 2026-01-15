@@ -153,6 +153,7 @@ fn mint_session_token(secret: &str, sid: &str, exp_secs: u64) -> String {
         },
         secret.as_bytes(),
     )
+    .expect("mint session token")
 }
 
 fn tamper_session_token(token: &str) -> String {
@@ -172,16 +173,16 @@ fn mint_jwt_token(
 ) -> String {
     auth::mint_relay_jwt_hs256(
         &auth::RelayJwtClaims {
-            iat: exp_secs.saturating_sub(60),
-            exp: exp_secs,
             sid: sid.to_string(),
+            exp: i64::try_from(exp_secs).expect("exp i64"),
+            iat: i64::try_from(exp_secs.saturating_sub(60)).expect("iat i64"),
             origin: None,
             aud: aud.map(|v| v.to_string()),
             iss: iss.map(|v| v.to_string()),
-            nbf: None,
         },
         secret.as_bytes(),
     )
+    .expect("mint relay jwt")
 }
 
 fn now_unix_seconds() -> u64 {
@@ -194,15 +195,14 @@ fn now_unix_seconds() -> u64 {
 fn make_relay_jwt(secret: &str, sid: &str, exp: u64, origin: Option<&str>) -> String {
     let now = now_unix_seconds();
     let claims = auth::RelayJwtClaims {
-        iat: now.saturating_sub(1),
-        exp,
         sid: sid.to_string(),
+        iat: i64::try_from(now.saturating_sub(1)).expect("iat i64"),
+        exp: i64::try_from(exp).expect("exp i64"),
         origin: origin.map(|s| s.to_string()),
         aud: None,
         iss: None,
-        nbf: None,
     };
-    auth::mint_relay_jwt_hs256(&claims, secret.as_bytes())
+    auth::mint_relay_jwt_hs256(&claims, secret.as_bytes()).expect("mint relay jwt")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -964,16 +964,16 @@ async fn cookie_or_jwt_accepts_either_credential() {
     // JWT credential works.
     let jwt = auth::mint_relay_jwt_hs256(
         &auth::RelayJwtClaims {
-            iat: now,
-            exp,
             sid: "sid".to_string(),
+            iat: i64::try_from(now).expect("iat i64"),
+            exp: i64::try_from(exp).expect("exp i64"),
             origin: None,
             aud: None,
             iss: None,
-            nbf: None,
         },
         b"jwt-sekrit",
-    );
+    )
+    .expect("mint relay jwt");
     let ws_url = format!("ws://{addr}/l2?token={jwt}");
     let mut req = ws_url.into_client_request().unwrap();
     req.headers_mut().insert(
