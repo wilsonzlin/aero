@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
 import { once } from "node:events";
+import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 
 import { handleTcpMuxUpgrade } from "../src/routes/tcpMux.js";
@@ -18,6 +19,7 @@ import {
   TCP_MUX_SUBPROTOCOL,
 } from "../src/protocol/tcpMux.js";
 import { SessionConnectionTracker } from "../src/session.js";
+import { TEST_WS_HANDSHAKE_HEADERS } from "./testConfig.js";
 
 async function listen(server: http.Server | net.Server, host?: string): Promise<number> {
   server.listen(0, host);
@@ -28,8 +30,27 @@ async function listen(server: http.Server | net.Server, host?: string): Promise<
 }
 
 async function closeServer(server: http.Server | net.Server): Promise<void> {
-  server.close();
+  try {
+    // Ensure tests don't hang on leaked upgrade sockets.
+    (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+    (server as unknown as { closeIdleConnections?: () => void }).closeIdleConnections?.();
+    server.close();
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (code === "ERR_SERVER_NOT_RUNNING") return;
+    throw err;
+  }
   await once(server, "close");
+}
+
+async function captureUpgradeResponse(run: (socket: PassThrough) => void): Promise<string> {
+  const socket = new PassThrough();
+  const chunks: Buffer[] = [];
+  socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+  const ended = once(socket, "end");
+  run(socket);
+  await ended;
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function openWebSocket(url: string, protocol: string): Promise<WebSocket> {
@@ -60,6 +81,50 @@ async function closeWebSocket(ws: WebSocket): Promise<void> {
 }
 
 describe("tcpMux route", () => {
+  it("rejects overly long request URLs (414)", async () => {
+    const req = {
+      url: `/tcp-mux?${"a".repeat(9000)}`,
+      headers: {},
+      socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as http.IncomingMessage;
+
+    const res = await captureUpgradeResponse((socket) => {
+      handleTcpMuxUpgrade(req, socket, Buffer.alloc(0));
+    });
+    assert.ok(res.startsWith("HTTP/1.1 414 "));
+  });
+
+  it("rejects non-WebSocket requests early (400)", async () => {
+    const req = {
+      url: "/tcp-mux",
+      headers: {},
+      socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as http.IncomingMessage;
+
+    const res = await captureUpgradeResponse((socket) => {
+      handleTcpMuxUpgrade(req, socket, Buffer.alloc(0));
+    });
+    assert.ok(res.startsWith("HTTP/1.1 400 "));
+    assert.ok(res.includes("Invalid WebSocket upgrade"));
+  });
+
+  it("rejects oversized Sec-WebSocket-Protocol headers (400)", async () => {
+    const req = {
+      url: "/tcp-mux",
+      headers: {
+        ...TEST_WS_HANDSHAKE_HEADERS,
+        "sec-websocket-protocol": `${TCP_MUX_SUBPROTOCOL}, ${"a".repeat(5_000)}`,
+      },
+      socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as http.IncomingMessage;
+
+    const res = await captureUpgradeResponse((socket) => {
+      handleTcpMuxUpgrade(req, socket, Buffer.alloc(0));
+    });
+    assert.ok(res.startsWith("HTTP/1.1 400 "));
+    assert.ok(res.includes("Invalid Sec-WebSocket-Protocol header"));
+  });
+
   it("closes the WebSocket with 1002 when a frame exceeds maxFramePayloadBytes", async () => {
     const proxyServer = http.createServer();
     proxyServer.on("upgrade", (req, socket, head) => {
@@ -67,9 +132,10 @@ describe("tcpMux route", () => {
     });
     const proxyPort = await listen(proxyServer, "127.0.0.1");
 
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
-
+    let ws: WebSocket | null = null;
     try {
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+
       const header = Buffer.alloc(TCP_MUX_HEADER_BYTES);
       header.writeUInt8(TcpMuxMsgType.DATA, 0);
       header.writeUInt32BE(1, 1);
@@ -95,58 +161,61 @@ describe("tcpMux route", () => {
       const code = await closePromise;
       assert.equal(code, 1002);
     } finally {
-      await closeWebSocket(ws);
+      if (ws) await closeWebSocket(ws);
       await closeServer(proxyServer);
     }
   });
 
   it("multiplexes multiple concurrent streams to an echo server", async () => {
     const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
-    const echoPort = await listen(echoServer, "127.0.0.1");
-
     const proxyServer = http.createServer();
-    proxyServer.on("upgrade", (req, socket, head) => {
-      handleTcpMuxUpgrade(req, socket, head, {
-        allowedTargetHosts: ["8.8.8.8"],
-        allowedTargetPorts: [echoPort],
-        maxStreams: 16,
-        createConnection: (() => net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
-      });
-    });
-    const proxyPort = await listen(proxyServer, "127.0.0.1");
-
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
-    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
-
-    const parser = new TcpMuxFrameParser();
-    const receivedLines = new Map<number, string[]>();
-    const partialByStream = new Map<number, string>();
-    let unexpectedError: Error | undefined;
-
-    function pushLine(streamId: number, line: string): void {
-      const lines = receivedLines.get(streamId) ?? [];
-      lines.push(line);
-      receivedLines.set(streamId, lines);
-    }
-
-    ws.addEventListener("message", (event) => {
-      if (!(event.data instanceof ArrayBuffer)) return;
-      const chunk = Buffer.from(event.data);
-      for (const frame of parser.push(chunk)) {
-        if (frame.msgType === TcpMuxMsgType.DATA) {
-          const previousPartial = partialByStream.get(frame.streamId) ?? "";
-          const text = previousPartial + frame.payload.toString("utf8");
-          const parts = text.split("\n");
-          for (let i = 0; i < parts.length - 1; i++) pushLine(frame.streamId, parts[i]!);
-          partialByStream.set(frame.streamId, parts.at(-1) ?? "");
-        } else if (frame.msgType === TcpMuxMsgType.ERROR) {
-          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
-          unexpectedError = new Error(`unexpected ERROR stream=${frame.streamId} code=${code} message=${message}`);
-        }
-      }
-    });
+    let ws: WebSocket | null = null;
 
     try {
+      const echoPort = await listen(echoServer, "127.0.0.1");
+
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpMuxUpgrade(req, socket, head, {
+          allowedTargetHosts: ["8.8.8.8"],
+          allowedTargetPorts: [echoPort],
+          maxStreams: 16,
+          createConnection: (() =>
+            net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+      assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+      const parser = new TcpMuxFrameParser();
+      const receivedLines = new Map<number, string[]>();
+      const partialByStream = new Map<number, string>();
+      let unexpectedError: Error | undefined;
+
+      function pushLine(streamId: number, line: string): void {
+        const lines = receivedLines.get(streamId) ?? [];
+        lines.push(line);
+        receivedLines.set(streamId, lines);
+      }
+
+      ws.addEventListener("message", (event) => {
+        if (!(event.data instanceof ArrayBuffer)) return;
+        const chunk = Buffer.from(event.data);
+        for (const frame of parser.push(chunk)) {
+          if (frame.msgType === TcpMuxMsgType.DATA) {
+            const previousPartial = partialByStream.get(frame.streamId) ?? "";
+            const text = previousPartial + frame.payload.toString("utf8");
+            const parts = text.split("\n");
+            for (let i = 0; i < parts.length - 1; i++) pushLine(frame.streamId, parts[i]!);
+            partialByStream.set(frame.streamId, parts.at(-1) ?? "");
+          } else if (frame.msgType === TcpMuxMsgType.ERROR) {
+            const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+            unexpectedError = new Error(`unexpected ERROR stream=${frame.streamId} code=${code} message=${message}`);
+          }
+        }
+      });
+
       const s1 = 1;
       const s2 = 2;
 
@@ -184,7 +253,7 @@ describe("tcpMux route", () => {
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, s1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, s2, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
     } finally {
-      await closeWebSocket(ws);
+      if (ws) await closeWebSocket(ws);
       await closeServer(proxyServer);
       await closeServer(echoServer);
     }
@@ -192,42 +261,45 @@ describe("tcpMux route", () => {
 
   it("returns ERROR for a blocked target without closing the mux connection", async () => {
     const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
-    const echoPort = await listen(echoServer, "127.0.0.1");
-
     const proxyServer = http.createServer();
-    proxyServer.on("upgrade", (req, socket, head) => {
-      handleTcpMuxUpgrade(req, socket, head, {
-        allowedTargetHosts: ["8.8.8.8"],
-        allowedTargetPorts: [echoPort],
-        maxStreams: 16,
-        createConnection: (() => net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
-      });
-    });
-    const proxyPort = await listen(proxyServer, "127.0.0.1");
-
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
-    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
-
-    const parser = new TcpMuxFrameParser();
-    const errors: Array<{ streamId: number; code: number; message: string }> = [];
-    const received = new Map<number, Buffer[]>();
-
-    ws.addEventListener("message", (event) => {
-      if (!(event.data instanceof ArrayBuffer)) return;
-      const chunk = Buffer.from(event.data);
-      for (const frame of parser.push(chunk)) {
-        if (frame.msgType === TcpMuxMsgType.ERROR) {
-          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
-          errors.push({ streamId: frame.streamId, code, message });
-        } else if (frame.msgType === TcpMuxMsgType.DATA) {
-          const list = received.get(frame.streamId) ?? [];
-          list.push(frame.payload);
-          received.set(frame.streamId, list);
-        }
-      }
-    });
+    let ws: WebSocket | null = null;
 
     try {
+      const echoPort = await listen(echoServer, "127.0.0.1");
+
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpMuxUpgrade(req, socket, head, {
+          allowedTargetHosts: ["8.8.8.8"],
+          allowedTargetPorts: [echoPort],
+          maxStreams: 16,
+          createConnection: (() =>
+            net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+      assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+      const parser = new TcpMuxFrameParser();
+      const errors: Array<{ streamId: number; code: number; message: string }> = [];
+      const received = new Map<number, Buffer[]>();
+
+      ws.addEventListener("message", (event) => {
+        if (!(event.data instanceof ArrayBuffer)) return;
+        const chunk = Buffer.from(event.data);
+        for (const frame of parser.push(chunk)) {
+          if (frame.msgType === TcpMuxMsgType.ERROR) {
+            const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+            errors.push({ streamId: frame.streamId, code, message });
+          } else if (frame.msgType === TcpMuxMsgType.DATA) {
+            const list = received.get(frame.streamId) ?? [];
+            list.push(frame.payload);
+            received.set(frame.streamId, list);
+          }
+        }
+      });
+
       const blockedStream = 10;
       ws.send(
         encodeTcpMuxFrame(
@@ -266,7 +338,7 @@ describe("tcpMux route", () => {
 
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, okStream, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
     } finally {
-      await closeWebSocket(ws);
+      if (ws) await closeWebSocket(ws);
       await closeServer(proxyServer);
       await closeServer(echoServer);
     }
@@ -274,40 +346,42 @@ describe("tcpMux route", () => {
 
   it("allows dialing loopback targets when allowPrivateIps is enabled", async () => {
     const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
-    const echoPort = await listen(echoServer, "127.0.0.1");
-
     const proxyServer = http.createServer();
-    proxyServer.on("upgrade", (req, socket, head) => {
-      handleTcpMuxUpgrade(req, socket, head, {
-        allowPrivateIps: true,
-        allowedTargetHosts: ["127.0.0.1"],
-        allowedTargetPorts: [echoPort],
-        maxStreams: 4,
-      });
-    });
-    const proxyPort = await listen(proxyServer, "127.0.0.1");
-
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
-    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
-
-    const parser = new TcpMuxFrameParser();
-    const received: Buffer[] = [];
-    const errors: Array<{ streamId: number; code: number; message: string }> = [];
-
-    ws.addEventListener("message", (event) => {
-      if (!(event.data instanceof ArrayBuffer)) return;
-      const chunk = Buffer.from(event.data);
-      for (const frame of parser.push(chunk)) {
-        if (frame.msgType === TcpMuxMsgType.DATA) {
-          received.push(frame.payload);
-        } else if (frame.msgType === TcpMuxMsgType.ERROR) {
-          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
-          errors.push({ streamId: frame.streamId, code, message });
-        }
-      }
-    });
+    let ws: WebSocket | null = null;
 
     try {
+      const echoPort = await listen(echoServer, "127.0.0.1");
+
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpMuxUpgrade(req, socket, head, {
+          allowPrivateIps: true,
+          allowedTargetHosts: ["127.0.0.1"],
+          allowedTargetPorts: [echoPort],
+          maxStreams: 4,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+      assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+      const parser = new TcpMuxFrameParser();
+      const received: Buffer[] = [];
+      const errors: Array<{ streamId: number; code: number; message: string }> = [];
+
+      ws.addEventListener("message", (event) => {
+        if (!(event.data instanceof ArrayBuffer)) return;
+        const chunk = Buffer.from(event.data);
+        for (const frame of parser.push(chunk)) {
+          if (frame.msgType === TcpMuxMsgType.DATA) {
+            received.push(frame.payload);
+          } else if (frame.msgType === TcpMuxMsgType.ERROR) {
+            const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+            errors.push({ streamId: frame.streamId, code, message });
+          }
+        }
+      });
+
       const streamId = 1;
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })));
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, Buffer.from("ping", "utf8")));
@@ -324,7 +398,7 @@ describe("tcpMux route", () => {
 
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, streamId, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
     } finally {
-      await closeWebSocket(ws);
+      if (ws) await closeWebSocket(ws);
       await closeServer(proxyServer);
       await closeServer(echoServer);
     }
@@ -332,37 +406,39 @@ describe("tcpMux route", () => {
 
   it("returns ERROR when dialing loopback targets when allowPrivateIps is disabled", async () => {
     const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
-    const echoPort = await listen(echoServer, "127.0.0.1");
-
     const proxyServer = http.createServer();
-    proxyServer.on("upgrade", (req, socket, head) => {
-      handleTcpMuxUpgrade(req, socket, head, {
-        allowPrivateIps: false,
-        allowedTargetHosts: ["127.0.0.1"],
-        allowedTargetPorts: [echoPort],
-        maxStreams: 4,
-      });
-    });
-    const proxyPort = await listen(proxyServer, "127.0.0.1");
-
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
-    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
-
-    const parser = new TcpMuxFrameParser();
-    const errors: Array<{ streamId: number; code: number; message: string }> = [];
-
-    ws.addEventListener("message", (event) => {
-      if (!(event.data instanceof ArrayBuffer)) return;
-      const chunk = Buffer.from(event.data);
-      for (const frame of parser.push(chunk)) {
-        if (frame.msgType === TcpMuxMsgType.ERROR) {
-          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
-          errors.push({ streamId: frame.streamId, code, message });
-        }
-      }
-    });
+    let ws: WebSocket | null = null;
 
     try {
+      const echoPort = await listen(echoServer, "127.0.0.1");
+
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpMuxUpgrade(req, socket, head, {
+          allowPrivateIps: false,
+          allowedTargetHosts: ["127.0.0.1"],
+          allowedTargetPorts: [echoPort],
+          maxStreams: 4,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+      assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+      const parser = new TcpMuxFrameParser();
+      const errors: Array<{ streamId: number; code: number; message: string }> = [];
+
+      ws.addEventListener("message", (event) => {
+        if (!(event.data instanceof ArrayBuffer)) return;
+        const chunk = Buffer.from(event.data);
+        for (const frame of parser.push(chunk)) {
+          if (frame.msgType === TcpMuxMsgType.ERROR) {
+            const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+            errors.push({ streamId: frame.streamId, code, message });
+          }
+        }
+      });
+
       const streamId = 1;
       ws.send(
         encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })),
@@ -379,7 +455,7 @@ describe("tcpMux route", () => {
       assert.equal(err.code, TcpMuxErrorCode.POLICY_DENIED);
       assert.equal(ws.readyState, WebSocket.OPEN);
     } finally {
-      await closeWebSocket(ws);
+      if (ws) await closeWebSocket(ws);
       await closeServer(proxyServer);
       await closeServer(echoServer);
     }
@@ -387,47 +463,49 @@ describe("tcpMux route", () => {
 
   it("enforces per-session maxConnections across multiplexed streams", async () => {
     const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
-    const echoPort = await listen(echoServer, "127.0.0.1");
-
     const sessionConnections = new SessionConnectionTracker(1);
 
     const proxyServer = http.createServer();
-    proxyServer.on("upgrade", (req, socket, head) => {
-      handleTcpMuxUpgrade(req, socket, head, {
-        allowedTargetHosts: ["8.8.8.8"],
-        allowedTargetPorts: [echoPort],
-        maxStreams: 16,
-        sessionId: "test-session",
-        sessionConnections,
-        createConnection: (() =>
-          net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
-      });
-    });
-    const proxyPort = await listen(proxyServer, "127.0.0.1");
-
-    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
-    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
-
-    const parser = new TcpMuxFrameParser();
-    const errors: Array<{ streamId: number; code: number; message: string }> = [];
-    const received = new Map<number, Buffer[]>();
-
-    ws.addEventListener("message", (event) => {
-      if (!(event.data instanceof ArrayBuffer)) return;
-      const chunk = Buffer.from(event.data);
-      for (const frame of parser.push(chunk)) {
-        if (frame.msgType === TcpMuxMsgType.ERROR) {
-          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
-          errors.push({ streamId: frame.streamId, code, message });
-        } else if (frame.msgType === TcpMuxMsgType.DATA) {
-          const list = received.get(frame.streamId) ?? [];
-          list.push(frame.payload);
-          received.set(frame.streamId, list);
-        }
-      }
-    });
+    let ws: WebSocket | null = null;
 
     try {
+      const echoPort = await listen(echoServer, "127.0.0.1");
+
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpMuxUpgrade(req, socket, head, {
+          allowedTargetHosts: ["8.8.8.8"],
+          allowedTargetPorts: [echoPort],
+          maxStreams: 16,
+          sessionId: "test-session",
+          sessionConnections,
+          createConnection: (() =>
+            net.createConnection({ host: "127.0.0.1", port: echoPort, allowHalfOpen: true })) as typeof net.createConnection,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+      assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+      const parser = new TcpMuxFrameParser();
+      const errors: Array<{ streamId: number; code: number; message: string }> = [];
+      const received = new Map<number, Buffer[]>();
+
+      ws.addEventListener("message", (event) => {
+        if (!(event.data instanceof ArrayBuffer)) return;
+        const chunk = Buffer.from(event.data);
+        for (const frame of parser.push(chunk)) {
+          if (frame.msgType === TcpMuxMsgType.ERROR) {
+            const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+            errors.push({ streamId: frame.streamId, code, message });
+          } else if (frame.msgType === TcpMuxMsgType.DATA) {
+            const list = received.get(frame.streamId) ?? [];
+            list.push(frame.payload);
+            received.set(frame.streamId, list);
+          }
+        }
+      });
+
       const s1 = 1;
       const s2 = 2;
       ws.send(
@@ -456,7 +534,7 @@ describe("tcpMux route", () => {
 
       ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, s1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.RST)));
     } finally {
-      await closeWebSocket(ws);
+      if (ws) await closeWebSocket(ws);
       await closeServer(proxyServer);
       await closeServer(echoServer);
     }

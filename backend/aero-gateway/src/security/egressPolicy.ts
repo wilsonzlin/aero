@@ -3,6 +3,9 @@ import { domainToASCII } from "node:url";
 
 import { normalizeIpv4Literal, normalizeIpv6Literal } from "./ipPolicy.js";
 
+const MAX_HOSTNAME_PATTERNS_CSV_LEN = 64 * 1024;
+const MAX_HOSTNAME_PATTERNS = 4096;
+
 export type HostnamePattern =
   | { kind: "exact"; hostname: string }
   | { kind: "wildcard"; suffix: string }
@@ -49,11 +52,30 @@ export function parseTcpHostnameEgressPolicyFromEnv(env: Record<string, string |
 
 export function parseHostnamePatterns(csv: string | undefined): HostnamePattern[] {
   if (!csv) return [];
-  const parts = csv
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  return parts.map(parseHostnamePattern);
+  if (csv.length > MAX_HOSTNAME_PATTERNS_CSV_LEN) {
+    throw new Error("Host patterns value too long");
+  }
+
+  const out: HostnamePattern[] = [];
+  let i = 0;
+  while (i < csv.length) {
+    let start = i;
+    while (i < csv.length && csv.charCodeAt(i) !== 0x2c) i += 1; // ','
+    let end = i;
+    if (i < csv.length && csv.charCodeAt(i) === 0x2c) i += 1;
+
+    while (start < end && isAsciiWhitespace(csv.charCodeAt(start))) start += 1;
+    while (end > start && isAsciiWhitespace(csv.charCodeAt(end - 1))) end -= 1;
+
+    if (end > start) {
+      out.push(parseHostnamePattern(csv.slice(start, end)));
+      if (out.length > MAX_HOSTNAME_PATTERNS) {
+        throw new Error("Too many host patterns");
+      }
+    }
+  }
+
+  return out;
 }
 
 export function parseHostnamePattern(rawPattern: string): HostnamePattern {
@@ -118,6 +140,11 @@ export function normalizeHostname(rawHost: string): string {
   const normalized = hasAsciiUppercase(ascii) ? ascii.toLowerCase() : ascii;
   assertValidAsciiHostname(normalized);
   return normalized;
+}
+
+function isAsciiWhitespace(code: number): boolean {
+  // Treat all ASCII control chars + space as “trim”.
+  return code <= 0x20;
 }
 
 function assertValidAsciiHostname(hostname: string): void {

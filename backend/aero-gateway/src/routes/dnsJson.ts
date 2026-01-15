@@ -16,7 +16,7 @@ export function setupDnsJsonRoutes(
   opts: { resolver: DnsResolver; rateLimiter: TokenBucketRateLimiter; sessions: SessionManager },
 ): void {
   app.get('/dns-json', async (request, reply) => {
-    const session = opts.sessions.verifySessionCookie(request.headers.cookie);
+    const session = opts.sessions.verifySessionRequest(request.raw);
     if (!session) {
       reply.header('cache-control', 'no-store');
       return reply.code(401).send({ error: 'unauthorized', message: 'Missing or invalid session' });

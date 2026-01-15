@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decodeBase64UrlToBuffer } from "../src/routes/doh.js";
+import { decodeBase64UrlToBuffer } from "../src/base64url.js";
 
 test("decodeBase64UrlToBuffer decodes base64url without padding", () => {
   assert.equal(decodeBase64UrlToBuffer("aGk").toString("utf8"), "hi");

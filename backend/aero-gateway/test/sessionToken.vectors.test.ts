@@ -101,4 +101,30 @@ describe('gateway session token vectors', () => {
       }
     });
   }
+
+  it('rejects oversized tokens early (DoS guard)', () => {
+    const nowMs = conformance.aero_session.nowMs;
+    const secret = Buffer.from(conformance.aero_session.secret, 'utf8');
+    const token = 'A'.repeat(20_000);
+    assert.equal(verifySessionToken(token, secret, nowMs), null);
+  });
+
+  it('rejects non-43-char signature segments', () => {
+    const nowMs = conformance.aero_session.nowMs;
+    const secret = Buffer.from(conformance.aero_session.secret, 'utf8');
+    const payloadB64 = Buffer.from(JSON.stringify({ v: 1, sid: 'sid', exp: Math.floor(nowMs / 1000) + 60 }), 'utf8').toString(
+      'base64url',
+    );
+    const token = `${payloadB64}.${'A'.repeat(42)}`;
+    assert.equal(verifySessionToken(token, secret, nowMs), null);
+  });
+
+  it('refuses to mint unverifiable oversized payloads', () => {
+    const secret = Buffer.from(conformance.aero_session.secret, 'utf8');
+    const sid = 's'.repeat(50_000);
+    assert.throws(
+      () => mintSessionToken({ v: 1, sid, exp: 1_700_000_000 }, secret),
+      /Session token payload too long/,
+    );
+  });
 });

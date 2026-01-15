@@ -14,6 +14,10 @@ function authorityHasUserinfo(raw: string): boolean {
   return at !== -1 && at < end;
 }
 
+// Conservative cap to avoid spending unbounded CPU on attacker-controlled headers.
+// Browser Origin headers are small; anything larger is almost certainly malicious.
+const MAX_ORIGIN_HEADER_LEN = 4096;
+
 function asciiStartsWithIgnoreCase(s: string, prefix: string): boolean {
   if (s.length < prefix.length) return false;
   for (let i = 0; i < prefix.length; i++) {
@@ -63,6 +67,7 @@ function isValidOriginHeaderString(trimmed: string): boolean {
 export function normalizeOriginString(origin: string): string | null {
   const trimmed = origin.trim();
   if (trimmed === '') return null;
+  if (trimmed.length > MAX_ORIGIN_HEADER_LEN) return null;
   if (trimmed === 'null') return 'null';
   if (!isValidOriginHeaderString(trimmed)) return null;
   // Require an explicit scheme://host serialization; WHATWG URL parsers accept

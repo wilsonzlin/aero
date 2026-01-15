@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getCookieValue, isRequestSecure } from "../src/cookies.js";
+import { getCookieValue, getCookieValueFromRequest, isRequestSecure } from "../src/cookies.js";
 
 function makeReq(
   opts: Readonly<{
@@ -55,10 +55,27 @@ test("getCookieValue: handles array headers", () => {
   assert.equal(getCookieValue(["a=1", "aero_session=ok"], "aero_session"), "ok");
 });
 
+test("getCookieValue: array headers preserve first cookie wins semantics", () => {
+  assert.equal(getCookieValue(["aero_session=", "aero_session=ok"], "aero_session"), "");
+  assert.equal(getCookieValue(["aero_session=%zz", "aero_session=ok"], "aero_session"), "%zz");
+});
+
 test("getCookieValue: returns raw value on decodeURIComponent failure", () => {
   assert.equal(getCookieValue("aero_session=%zz", "aero_session"), "%zz");
 });
 
 test("getCookieValue: returns undefined when missing", () => {
   assert.equal(getCookieValue("a=1; b=2", "aero_session"), undefined);
+});
+
+test("getCookieValueFromRequest: prefers rawHeaders order for repeated Cookie headers", () => {
+  const req = {
+    headers: {
+      // Simulate a merged value that would otherwise allow bypass.
+      cookie: "aero_session=ok",
+    },
+    rawHeaders: ["Cookie", "aero_session=", "Cookie", "aero_session=ok"],
+  } as unknown as import("node:http").IncomingMessage;
+
+  assert.equal(getCookieValueFromRequest(req, "aero_session"), "");
 });

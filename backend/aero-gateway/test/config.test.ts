@@ -134,3 +134,21 @@ test('loadConfig treats zero L2 payload limit env vars as unset (defaults apply)
   assert.equal(config.L2_MAX_FRAME_PAYLOAD_BYTES, L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES);
   assert.equal(config.L2_MAX_CONTROL_PAYLOAD_BYTES, L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES);
 });
+
+test('loadConfig rejects invalid TCP_ALLOWED_PORTS entries with a specific error', () => {
+  assert.throws(() => loadConfig({ TCP_ALLOWED_PORTS: '443,abc' }), /Invalid TCP_ALLOWED_PORTS number/i);
+});
+
+test('loadConfig rejects overly long ALLOWED_ORIGINS lists', () => {
+  assert.throws(
+    () => loadConfig({ ALLOWED_ORIGINS: 'http://localhost:1,'.repeat(5000) }),
+    /Invalid ALLOWED_ORIGINS/i,
+  );
+});
+
+test('loadConfig rejects overly long DNS_UPSTREAMS lists', () => {
+  assert.throws(
+    () => loadConfig({ DNS_UPSTREAMS: '1.1.1.1:53,'.repeat(5000) }),
+    /Invalid DNS_UPSTREAMS/i,
+  );
+});

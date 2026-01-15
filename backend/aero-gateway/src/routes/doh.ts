@@ -5,48 +5,12 @@ import type { DnsMetrics } from '../metrics.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsErrorResponse } from '../dns/codec.js';
 import { DnsResolver, qtypeToString, rcodeToString } from '../dns/resolver.js';
 import { TokenBucketRateLimiter } from '../dns/rateLimit.js';
+import { base64UrlPrefixForHeader, decodeBase64UrlToBuffer, maxBase64UrlLenForBytes } from '../base64url.js';
+import { headerHasMimeType } from '../contentType.js';
 import type { SessionManager } from '../session.js';
 import { setupDnsJsonRoutes } from './dnsJson.js';
 
-export function decodeBase64UrlToBuffer(base64url: string): Buffer {
-  if (!isBase64Url(base64url)) throw new Error('Invalid base64url');
-  if (base64url.length % 4 === 1) throw new Error('Invalid base64url length');
-  // Node supports "base64url" decoding without padding.
-  return Buffer.from(base64url, 'base64url');
-}
-
-function isBase64Url(raw: string): boolean {
-  if (raw.length === 0) return false;
-  for (let i = 0; i < raw.length; i += 1) {
-    const c = raw.charCodeAt(i);
-    const isUpper = c >= 0x41 /* 'A' */ && c <= 0x5a /* 'Z' */;
-    const isLower = c >= 0x61 /* 'a' */ && c <= 0x7a /* 'z' */;
-    const isDigit = c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */;
-    const isDash = c === 0x2d /* '-' */;
-    const isUnderscore = c === 0x5f /* '_' */;
-    if (!isUpper && !isLower && !isDigit && !isDash && !isUnderscore) return false;
-  }
-  return true;
-}
-
 type DohQuery = { dns?: string };
-
-function maxBase64UrlLenForBytes(byteLength: number): number {
-  const n = Math.max(0, Math.floor(byteLength));
-  const fullTriplets = Math.floor(n / 3);
-  const rem = n % 3;
-  if (rem === 0) return fullTriplets * 4;
-  if (rem === 1) return fullTriplets * 4 + 2;
-  return fullTriplets * 4 + 3;
-}
-
-function base64UrlPrefixForHeader(base64url: string, maxChars = 16): string {
-  let len = Math.min(base64url.length, maxChars);
-  // `decodeBase64UrlToBuffer` rejects lengths where `len % 4 === 1`.
-  if (len % 4 === 1) len -= 1;
-  if (len <= 0) return '';
-  return base64url.slice(0, len);
-}
 
 export type DohRouteDeps = Readonly<{
   resolver: DnsResolver;
@@ -63,6 +27,8 @@ export function setupDohRoutes(
   const resolver = deps.resolver ?? new DnsResolver(config, metrics);
   const rateLimiter = deps.rateLimiter ?? new TokenBucketRateLimiter(config.DNS_QPS_PER_IP, config.DNS_BURST_PER_IP);
   setupDnsJsonRoutes(app, config, { resolver, rateLimiter, sessions });
+
+  const MAX_CONTENT_TYPE_LEN = 256;
 
   function sendDnsMessage(reply: import('fastify').FastifyReply, statusCode: number, message: Buffer) {
     reply.code(statusCode);
@@ -94,7 +60,7 @@ export function setupDohRoutes(
     method: ['GET', 'POST'],
     url: '/dns-query',
     handler: async (request, reply) => {
-      const session = sessions.verifySessionCookie(request.headers.cookie);
+      const session = sessions.verifySessionRequest(request.raw);
       if (!session) {
         reply.header('cache-control', 'no-store');
         return reply.code(401).send({ error: 'unauthorized', message: 'Missing or invalid session' });
@@ -142,8 +108,7 @@ export function setupDohRoutes(
 
           query = decodeBase64UrlToBuffer(dns);
         } else {
-          const contentType = request.headers['content-type']?.split(';')[0]?.trim().toLowerCase();
-          if (contentType !== 'application/dns-message') {
+          if (!headerHasMimeType(request.headers["content-type"], "application/dns-message", MAX_CONTENT_TYPE_LEN)) {
             return sendDnsError(reply, 415, { id: 0, rcode: 1 });
           }
 

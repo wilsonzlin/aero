@@ -1,9 +1,19 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 
 import type { Config } from './config.js';
-import { getCookieValue } from './cookies.js';
+import { decodeBase64UrlToBuffer, encodeBase64Url } from './base64url.js';
+import { getCookieValueFromRequest } from './cookies.js';
 
 export const SESSION_COOKIE_NAME = 'aero_session';
+
+const HMAC_SHA256_SIG_LEN = 32;
+// base64url-no-pad encoding length for a 32-byte HMAC:
+// - 32 bytes => 44 chars with one '=' padding
+// - without padding => 43 chars
+const HMAC_SHA256_SIG_B64_LEN = 43;
+const MAX_SESSION_TOKEN_PAYLOAD_B64_LEN = 16 * 1024;
+const MAX_SESSION_TOKEN_LEN = MAX_SESSION_TOKEN_PAYLOAD_B64_LEN + 1 /* '.' */ + HMAC_SHA256_SIG_B64_LEN;
 
 type LoggerLike = {
   warn: (obj: unknown, msg?: string) => void;
@@ -25,36 +35,8 @@ export type SessionManager = Readonly<{
   cookieSameSite: Config['SESSION_COOKIE_SAMESITE'];
   issueSession: (existing: VerifiedSession | null) => { token: string; session: VerifiedSession };
   verifySessionToken: (token: string) => VerifiedSession | null;
-  verifySessionCookie: (cookieHeader: string | string[] | undefined) => VerifiedSession | null;
+  verifySessionRequest: (req: IncomingMessage) => VerifiedSession | null;
 }>;
-
-function encodeBase64Url(buf: Buffer): string {
-  // Node supports the "base64url" encoding, which omits padding and uses the URL-safe alphabet.
-  return buf.toString('base64url');
-}
-
-function decodeBase64Url(raw: string): Buffer {
-  if (!isBase64Url(raw)) throw new Error('Invalid base64url');
-  // Base64url inputs are unpadded; only lengths mod 4 of 0, 2, or 3 are valid.
-  // (mod 4 of 1 cannot be produced by base64 encoding.)
-  const mod = raw.length % 4;
-  if (mod === 1) throw new Error('Invalid base64url length');
-  return Buffer.from(raw, 'base64url');
-}
-
-function isBase64Url(raw: string): boolean {
-  if (raw.length === 0) return false;
-  for (let i = 0; i < raw.length; i += 1) {
-    const c = raw.charCodeAt(i);
-    const isUpper = c >= 0x41 /* 'A' */ && c <= 0x5a /* 'Z' */;
-    const isLower = c >= 0x61 /* 'a' */ && c <= 0x7a /* 'z' */;
-    const isDigit = c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */;
-    const isDash = c === 0x2d /* '-' */;
-    const isUnderscore = c === 0x5f /* '_' */;
-    if (!isUpper && !isLower && !isDigit && !isDash && !isUnderscore) return false;
-  }
-  return true;
-}
 
 function sign(payloadBase64Url: string, secret: Buffer): Buffer {
   return createHmac('sha256', secret).update(payloadBase64Url).digest();
@@ -68,31 +50,43 @@ function constantTimeEqual(a: Buffer, b: Buffer): boolean {
 export function mintSessionToken(payload: SessionTokenPayload, secret: Buffer): string {
   const payloadJson = JSON.stringify(payload);
   const payloadB64 = encodeBase64Url(Buffer.from(payloadJson, 'utf8'));
+  if (payloadB64.length > MAX_SESSION_TOKEN_PAYLOAD_B64_LEN) {
+    throw new Error('Session token payload too long');
+  }
   const sig = sign(payloadB64, secret);
   const sigB64 = encodeBase64Url(sig);
+  if (sig.length !== HMAC_SHA256_SIG_LEN || sigB64.length !== HMAC_SHA256_SIG_B64_LEN) {
+    throw new Error('Unexpected session token signature format');
+  }
   return `${payloadB64}.${sigB64}`;
 }
 
 export function verifySessionToken(token: string, secret: Buffer, nowMs = Date.now()): VerifiedSession | null {
+  // Quick coarse cap to avoid scanning attacker-controlled strings for delimiters.
+  if (token.length > MAX_SESSION_TOKEN_LEN) return null;
+
   const dot = token.indexOf('.');
   if (dot <= 0 || dot === token.length - 1) return null;
   if (token.indexOf('.', dot + 1) !== -1) return null;
   const payloadB64 = token.slice(0, dot);
   const sigB64 = token.slice(dot + 1);
+  if (payloadB64.length > MAX_SESSION_TOKEN_PAYLOAD_B64_LEN) return null;
+  if (sigB64.length !== HMAC_SHA256_SIG_B64_LEN) return null;
 
   let providedSig: Buffer;
   try {
-    providedSig = decodeBase64Url(sigB64);
+    providedSig = decodeBase64UrlToBuffer(sigB64, { canonical: true });
   } catch {
     return null;
   }
+  if (providedSig.length !== HMAC_SHA256_SIG_LEN) return null;
 
   const expectedSig = sign(payloadB64, secret);
   if (!constantTimeEqual(providedSig, expectedSig)) return null;
 
   let payloadRaw: Buffer;
   try {
-    payloadRaw = decodeBase64Url(payloadB64);
+    payloadRaw = decodeBase64UrlToBuffer(payloadB64, { canonical: true });
   } catch {
     return null;
   }
@@ -149,8 +143,8 @@ export function createSessionManager(config: Config, logger: LoggerLike): Sessio
       return { token, session: { id, expiresAtMs } };
     },
     verifySessionToken: (token) => verifySessionToken(token, secret),
-    verifySessionCookie: (cookieHeader) => {
-      const value = getCookieValue(cookieHeader, SESSION_COOKIE_NAME);
+    verifySessionRequest: (req) => {
+      const value = getCookieValueFromRequest(req, SESSION_COOKIE_NAME);
       if (!value) return null;
       return verifySessionToken(value, secret);
     },

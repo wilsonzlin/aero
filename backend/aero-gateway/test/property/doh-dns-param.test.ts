@@ -7,15 +7,12 @@ import fc from 'fast-check';
 import { loadConfig } from '../../src/config.js';
 import { decodeDnsHeader } from '../../src/dns/codec.js';
 import { setupMetrics } from '../../src/metrics.js';
-import { decodeBase64UrlToBuffer, setupDohRoutes } from '../../src/routes/doh.js';
+import { decodeBase64UrlToBuffer } from '../../src/base64url.js';
+import { setupDohRoutes } from '../../src/routes/doh.js';
 import { SESSION_COOKIE_NAME, createSessionManager } from '../../src/session.js';
 
 const FC_NUM_RUNS = process.env.FC_NUM_RUNS ? Number(process.env.FC_NUM_RUNS) : process.env.CI ? 200 : 500;
 const FC_TIME_LIMIT_MS = process.env.CI ? 2_000 : 5_000;
-
-function encodeBase64Url(buffer: Buffer): string {
-  return buffer.toString('base64').replaceAll('=', '').replaceAll('+', '-').replaceAll('/', '_');
-}
 
 describe('DoH GET dns= decoding and size limits (property)', () => {
   it(
@@ -60,7 +57,7 @@ describe('DoH GET dns= decoding and size limits (property)', () => {
              fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 513, maxLength: 600 }),
              async (arr) => {
                const query = Buffer.from(arr);
-               const dnsParam = encodeBase64Url(query);
+               const dnsParam = query.toString('base64url');
                const res = await app.inject({ method: 'GET', url: `/dns-query?dns=${dnsParam}`, headers: { cookie } });
                assert.equal(res.statusCode, 413);
 

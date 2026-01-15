@@ -5,6 +5,9 @@
  * lightweight unit tests without requiring `npm install`.
  */
 
+const MAX_IPV6_LITERAL_LEN = 128;
+const MAX_IPV4_DOTTED_DECIMAL_LEN = 15;
+
 export function isPublicIpAddress(ip: string): boolean {
   const v4 = parseIpv4(ip);
   if (v4) return isPublicIpv4(v4);
@@ -264,6 +267,8 @@ function isPublicIpv4(bytes: Uint8Array): boolean {
 }
 
 function parseIpv6(ip: string): Uint8Array | null {
+  if (ip.length > MAX_IPV6_LITERAL_LEN) return null;
+
   // Handle IPv4-mapped IPv6 like ::ffff:192.168.0.1.
   //
   // Note: the embedded IPv4 part must be in canonical dotted-decimal form
@@ -278,48 +283,33 @@ function parseIpv6(ip: string): Uint8Array | null {
     if (lastColon === -1) return null;
     v4Tail = parseIpv4DottedDecimalStrict(ip.slice(lastColon + 1));
     if (!v4Tail) return null;
-    ipHead = ip.slice(0, lastColon) + ":0:0"; // placeholder for 2 groups
+    // Preserve "::" when the IPv4 tail is preceded by a compression marker.
+    // Example: "::192.0.2.1" and "2001:db8::192.0.2.1" should keep the full "::" in the head.
+    const keepColon = lastColon > 0 && ip.charCodeAt(lastColon - 1) === 0x3a /* ':' */;
+    ipHead = ip.slice(0, keepColon ? lastColon + 1 : lastColon);
   }
 
   const doubleColon = ipHead.indexOf("::");
-  let leftPart = ipHead;
-  let rightPart = "";
   let hasCompression = false;
+  let leftStart = 0;
+  let leftEnd = ipHead.length;
+  let rightStart = ipHead.length;
+  let rightEnd = ipHead.length;
   if (doubleColon !== -1) {
     // Only one "::" is allowed.
     if (ipHead.indexOf("::", doubleColon + 2) !== -1) return null;
     hasCompression = true;
-    leftPart = ipHead.slice(0, doubleColon);
-    rightPart = ipHead.slice(doubleColon + 2);
+    leftEnd = doubleColon;
+    rightStart = doubleColon + 2;
   }
 
-  const leftGroups = leftPart === "" ? [] : leftPart.split(":");
-  const rightGroups = rightPart === "" ? [] : rightPart.split(":");
+  const leftNums = parseIpv6Hextets(ipHead, leftStart, leftEnd);
+  if (!leftNums) return null;
+  const rightNums = hasCompression ? parseIpv6Hextets(ipHead, rightStart, rightEnd) : [];
+  if (!rightNums) return null;
 
-  // Reject stray leading/trailing ":" and ":::". These create empty groups
-  // outside of the "::" compression marker.
-  for (const g of leftGroups) {
-    if (g === "") return null;
-  }
-  for (const g of rightGroups) {
-    if (g === "") return null;
-  }
-
-  const leftNums: number[] = [];
-  const rightNums: number[] = [];
-
-  for (const part of leftGroups) {
-    const n = parseHex16(part);
-    if (n === null) return null;
-    leftNums.push(n);
-  }
-  for (const part of rightGroups) {
-    const n = parseHex16(part);
-    if (n === null) return null;
-    rightNums.push(n);
-  }
-
-  const totalGroups = leftNums.length + rightNums.length;
+  const v4Groups = v4Tail ? 2 : 0;
+  const totalGroups = leftNums.length + rightNums.length + v4Groups;
   if (!hasCompression && totalGroups !== 8) return null;
   if (hasCompression) {
     if (totalGroups > 8) return null;
@@ -329,6 +319,7 @@ function parseIpv6(ip: string): Uint8Array | null {
 
   const zerosToInsert = hasCompression ? 8 - totalGroups : 0;
   const groups = [...leftNums, ...new Array(zerosToInsert).fill(0), ...rightNums];
+  if (v4Tail) groups.push(0, 0);
   if (groups.length !== 8) return null;
 
   const bytes = new Uint8Array(16);
@@ -349,10 +340,41 @@ function parseIpv6(ip: string): Uint8Array | null {
   return bytes;
 }
 
+function parseIpv6Hextets(s: string, start: number, end: number): number[] | null {
+  if (start === end) return [];
+  const out: number[] = [];
+
+  let i = start;
+  while (i < end) {
+    // Reject empty groups (leading ":" / ":::").
+    if (s.charCodeAt(i) === 0x3a /* ':' */) return null;
+
+    const groupStart = i;
+    while (i < end && s.charCodeAt(i) !== 0x3a /* ':' */) i += 1;
+    const groupEnd = i;
+
+    const n = parseHex16Span(s, groupStart, groupEnd);
+    if (n === null) return null;
+    out.push(n);
+    if (out.length > 8) return null;
+
+    if (i < end) {
+      // Skip ':'
+      i += 1;
+      // Reject trailing ":" (e.g. "1:2:") and empty groups (e.g. "1:::"; "::" is handled outside).
+      if (i >= end) return null;
+      if (s.charCodeAt(i) === 0x3a /* ':' */) return null;
+    }
+  }
+
+  return out;
+}
+
 function parseIpv4DottedDecimalStrict(ip: string): Uint8Array | null {
   // Strict dotted-decimal parser matching node:net's isIP() behavior:
   // - exactly 4 decimal components
   // - no leading zeros (except the single digit "0")
+  if (ip.length > MAX_IPV4_DOTTED_DECIMAL_LEN) return null;
   const bytes = new Uint8Array(4);
   let part = 0;
   let value = 0;
@@ -388,10 +410,11 @@ function parseIpv4DottedDecimalStrict(ip: string): Uint8Array | null {
   return part === 4 ? bytes : null;
 }
 
-function parseHex16(s: string): number | null {
-  if (s.length < 1 || s.length > 4) return null;
+function parseHex16Span(s: string, start: number, end: number): number | null {
+  const len = end - start;
+  if (len < 1 || len > 4) return null;
   let n = 0;
-  for (let i = 0; i < s.length; i++) {
+  for (let i = start; i < end; i += 1) {
     const c = s.charCodeAt(i);
     let v: number;
     if (c >= 0x30 /* '0' */ && c <= 0x39 /* '9' */) {
@@ -427,6 +450,12 @@ function isPublicIpv6(bytes: Uint8Array): boolean {
   const isV4Mapped =
     bytes.slice(0, 10).every((b) => b === 0) && bytes[10] === 0xff && bytes[11] === 0xff;
   if (isV4Mapped) {
+    return isPublicIpv4(bytes.slice(12, 16));
+  }
+
+  // IPv4-compatible ::/96 (deprecated but still accepted by some stacks) => apply IPv4 rules.
+  // This prevents bypassing IPv4 private-range checks by spelling an IPv4 address as "::10.0.0.1".
+  if (bytes.slice(0, 12).every((b) => b === 0)) {
     return isPublicIpv4(bytes.slice(12, 16));
   }
 

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { z } from 'zod';
+import { splitCommaSeparatedList } from './csv.js';
 import { normalizeAllowedOriginString } from './security/origin.js';
 import {
   L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
@@ -87,19 +88,21 @@ export type Config = Readonly<{
 
 type Env = Record<string, string | undefined>;
 
-function splitCommaList(value: string): string[] {
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+function splitCommaList(value: string, envName: string, opts?: { maxLen?: number; maxItems?: number }): string[] {
+  try {
+    return splitCommaSeparatedList(value, { maxLen: opts?.maxLen, maxItems: opts?.maxItems });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid ${envName}: ${msg}`);
+  }
 }
 
-function splitCommaListNumbers(value: string): number[] {
+function splitCommaListNumbers(value: string, envName: string): number[] {
   if (value.trim() === '') return [];
-  return splitCommaList(value).map((raw) => {
+  return splitCommaList(value, envName).map((raw) => {
     const n = Number(raw);
     if (!Number.isInteger(n)) {
-      throw new Error(`Invalid number: ${raw}`);
+      throw new Error(`Invalid ${envName} number: ${raw}`);
     }
     return n;
   });
@@ -198,7 +201,7 @@ export function loadConfig(env: Env = process.env): Config {
     assertReadableFile(tlsKeyPath, 'TLS_KEY_PATH');
   }
 
-  const tcpAllowedPorts = splitCommaListNumbers(raw.TCP_ALLOWED_PORTS);
+  const tcpAllowedPorts = splitCommaListNumbers(raw.TCP_ALLOWED_PORTS, 'TCP_ALLOWED_PORTS');
   for (const port of tcpAllowedPorts) {
     if (port < 1 || port > 65535) {
       throw new Error(`Invalid TCP_ALLOWED_PORTS entry: ${port}`);
@@ -216,7 +219,9 @@ export function loadConfig(env: Env = process.env): Config {
     throw new Error(`Invalid PUBLIC_BASE_URL "${publicBaseUrl}". Expected a URL like "https://example.com".`);
   }
 
-  const allowedOrigins = splitCommaList(raw.ALLOWED_ORIGINS).map(normalizeAllowedOriginString);
+  const allowedOrigins = splitCommaList(raw.ALLOWED_ORIGINS, 'ALLOWED_ORIGINS', { maxLen: 64 * 1024, maxItems: 1024 }).map(
+    normalizeAllowedOriginString,
+  );
   const allowedOriginsWithDefault =
     allowedOrigins.length > 0 ? allowedOrigins : [normalizeAllowedOriginString(publicBaseUrlParsed.origin)];
 
@@ -301,9 +306,9 @@ export function loadConfig(env: Env = process.env): Config {
     TLS_CERT_PATH: tlsCertPath,
     TLS_KEY_PATH: tlsKeyPath,
     TCP_ALLOW_PRIVATE_IPS: raw.TCP_ALLOW_PRIVATE_IPS === '1',
-    TCP_ALLOWED_HOSTS: splitCommaList(raw.TCP_ALLOWED_HOSTS),
+    TCP_ALLOWED_HOSTS: splitCommaList(raw.TCP_ALLOWED_HOSTS, 'TCP_ALLOWED_HOSTS'),
     TCP_ALLOWED_PORTS: tcpAllowedPorts,
-    TCP_BLOCKED_CLIENT_IPS: splitCommaList(raw.TCP_BLOCKED_CLIENT_IPS),
+    TCP_BLOCKED_CLIENT_IPS: splitCommaList(raw.TCP_BLOCKED_CLIENT_IPS, 'TCP_BLOCKED_CLIENT_IPS'),
     TCP_MUX_MAX_STREAMS: raw.TCP_MUX_MAX_STREAMS,
     TCP_MUX_MAX_STREAM_BUFFER_BYTES: raw.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
     TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: raw.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
@@ -314,7 +319,7 @@ export function loadConfig(env: Env = process.env): Config {
     TCP_PROXY_CONNECT_TIMEOUT_MS: raw.TCP_PROXY_CONNECT_TIMEOUT_MS,
     TCP_PROXY_IDLE_TIMEOUT_MS: raw.TCP_PROXY_IDLE_TIMEOUT_MS,
 
-    DNS_UPSTREAMS: splitCommaList(raw.DNS_UPSTREAMS),
+    DNS_UPSTREAMS: splitCommaList(raw.DNS_UPSTREAMS, 'DNS_UPSTREAMS'),
     DNS_UPSTREAM_TIMEOUT_MS: raw.DNS_UPSTREAM_TIMEOUT_MS,
 
     DNS_CACHE_MAX_ENTRIES: raw.DNS_CACHE_MAX_ENTRIES,

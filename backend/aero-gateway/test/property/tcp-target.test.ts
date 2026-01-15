@@ -6,7 +6,8 @@ import { describe, it } from 'node:test';
 import fc from 'fast-check';
 
 import { TcpTargetParseError, parseTcpTarget } from '../../src/protocol/tcpTarget.js';
-import { resolveTcpProxyTarget, TcpProxyTargetError, handleTcpProxyUpgrade } from '../../src/routes/tcpProxy.js';
+import { handleTcpProxyUpgrade } from '../../src/routes/tcpProxy.js';
+import { resolveTcpProxyTarget, TcpProxyTargetError } from '../../src/routes/tcpResolve.js';
 import { handleTcpMuxUpgrade } from '../../src/routes/tcpMux.js';
 import { validateTcpTargetPolicy } from '../../src/routes/tcpPolicy.js';
 import { isPublicIpAddress } from '../../src/security/ipPolicy.js';

@@ -1,9 +1,14 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
+import { corsAllowHeadersValue } from '../cors.js';
+import { hasRepeatedRawHeader } from '../rawHeaders.js';
 import { normalizeOriginString } from '../security/origin.js';
+
+const MAX_HOST_HEADER_LEN = 4096;
 
 function isValidHostHeaderString(trimmed: string): boolean {
   if (trimmed === '') return false;
+  if (trimmed.length > MAX_HOST_HEADER_LEN) return false;
   if (trimmed.charCodeAt(trimmed.length - 1) === 0x3a /* ':' */) return false;
 
   for (let i = 0; i < trimmed.length; i += 1) {
@@ -86,6 +91,15 @@ export async function originGuard(
   reply: FastifyReply,
   opts: { allowedOrigins: readonly string[] },
 ): Promise<void> {
+  const rawHeaders = (request as unknown as { raw?: { rawHeaders?: unknown } }).raw?.rawHeaders;
+
+  // Origin is a single-value header. Be strict: reject repeated headers to avoid ambiguous
+  // join/parse behavior across HTTP stacks.
+  if (hasRepeatedRawHeader(rawHeaders, 'origin')) {
+    reply.code(403).send({ error: 'forbidden', message: 'Origin not allowed' });
+    return;
+  }
+
   const originHeader = request.headers.origin;
   let origin: string | undefined;
   if (Array.isArray(originHeader)) {
@@ -104,7 +118,15 @@ export async function originGuard(
 
   const normalizedOrigin = normalizeOriginString(origin);
   const hostHeader = request.headers.host;
-  const requestHost = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader ?? '';
+  // Host is a single-value header. Be strict with repeated headers to avoid ambiguous
+  // semantics across proxies/stacks. For the default same-host policy, treat repeated
+  // hosts as invalid by passing an empty host string.
+  const requestHost =
+    hasRepeatedRawHeader(rawHeaders, 'host')
+      ? ''
+      : Array.isArray(hostHeader)
+        ? (hostHeader.length === 1 ? hostHeader[0] : '')
+        : hostHeader ?? '';
 
   if (!normalizedOrigin || !isNormalizedOriginAllowed(normalizedOrigin, opts.allowedOrigins, requestHost)) {
     reply.code(403).send({ error: 'forbidden', message: 'Origin not allowed' });
@@ -119,11 +141,9 @@ export async function originGuard(
 
   // Basic CORS preflight support for browser clients.
   if (request.method === 'OPTIONS' && request.headers['access-control-request-method']) {
-    const requestHeaders = request.headers['access-control-request-headers'];
+    const requestHeadersRaw: unknown = (request.headers as Record<string, unknown>)['access-control-request-headers'];
     reply.header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    if (requestHeaders) {
-      reply.header('access-control-allow-headers', Array.isArray(requestHeaders) ? requestHeaders.join(',') : requestHeaders);
-    }
+    reply.header('access-control-allow-headers', corsAllowHeadersValue(requestHeadersRaw));
     reply.header('access-control-allow-credentials', 'true');
     reply.header('access-control-max-age', '600');
     reply.code(204).send();

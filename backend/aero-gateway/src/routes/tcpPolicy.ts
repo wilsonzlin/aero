@@ -1,7 +1,13 @@
 import type http from "node:http";
 
 import { isOriginAllowed } from "../middleware/originGuard.js";
-import { classifyTargetHost, parseHostnamePattern, targetMatchesPattern } from "../security/egressPolicy.js";
+import {
+  classifyTargetHost,
+  parseHostnamePattern,
+  targetMatchesPattern,
+  type HostnamePattern,
+  type TargetHost,
+} from "../security/egressPolicy.js";
 
 export type TcpProxyUpgradePolicy = Readonly<{
   /**
@@ -32,26 +38,70 @@ export type TcpProxyUpgradePolicy = Readonly<{
 
 export type PolicyDecision = { ok: true } | { ok: false; status: number; message: string };
 
+type CompiledPolicy = Readonly<{
+  allowedTargetPorts?: ReadonlySet<number>;
+  allowedTargetHostPatterns?: readonly HostnamePattern[];
+}>;
+
+const compiledPolicyCache = new WeakMap<TcpProxyUpgradePolicy, CompiledPolicy>();
+
+function compilePolicy(policy: TcpProxyUpgradePolicy): CompiledPolicy {
+  const cached = compiledPolicyCache.get(policy);
+  if (cached) return cached;
+
+  const compiled: CompiledPolicy = {
+    allowedTargetPorts:
+      policy.allowedTargetPorts && policy.allowedTargetPorts.length > 0 ? new Set(policy.allowedTargetPorts) : undefined,
+    allowedTargetHostPatterns:
+      policy.allowedTargetHosts && policy.allowedTargetHosts.length > 0
+        ? policy.allowedTargetHosts.flatMap((allowedHost) => {
+            try {
+              return [parseHostnamePattern(allowedHost)];
+            } catch {
+              return [];
+            }
+          })
+        : undefined,
+  };
+
+  compiledPolicyCache.set(policy, compiled);
+  return compiled;
+}
+
+function originFromHeaders(headers: unknown): { ok: true; origin?: string } | { ok: false } {
+  const originHeader = (headers as { origin?: unknown } | undefined)?.origin;
+  if (originHeader === undefined) return { ok: true, origin: undefined };
+  if (typeof originHeader === "string") return { ok: true, origin: originHeader };
+
+  if (Array.isArray(originHeader)) {
+    if (originHeader.length === 0) return { ok: true, origin: undefined };
+    if (originHeader.length === 1) {
+      const v = originHeader[0];
+      return typeof v === "string" ? { ok: true, origin: v } : { ok: false };
+    }
+    return { ok: false };
+  }
+
+  return { ok: false };
+}
+
 export function validateWsUpgradePolicy(
   req: http.IncomingMessage,
   policy: TcpProxyUpgradePolicy,
 ): PolicyDecision {
   if (policy.blockedClientIps && policy.blockedClientIps.length > 0) {
-    const clientIp = req.socket.remoteAddress;
+    // Be defensive: some unit/property tests use minimal `IncomingMessage` shapes.
+    const clientIp = (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress;
     if (clientIp && policy.blockedClientIps.includes(clientIp)) {
       return { ok: false, status: 403, message: "Client IP blocked" };
     }
   }
 
-  const originHeader = req.headers.origin;
-  let origin: string | undefined;
-  if (Array.isArray(originHeader)) {
-    if (originHeader.length === 0) origin = undefined;
-    else if (originHeader.length === 1) origin = originHeader[0];
-    else return { ok: false, status: 403, message: "Origin not allowed" };
-  } else {
-    origin = originHeader;
+  const originResult = originFromHeaders((req as unknown as { headers?: unknown }).headers);
+  if (!originResult.ok) {
+    return { ok: false, status: 403, message: "Origin not allowed" };
   }
+  const origin = originResult.origin?.trim();
   if (origin) {
     const allowedOrigins = policy.allowedOrigins;
     if (!allowedOrigins || allowedOrigins.length === 0) {
@@ -74,30 +124,24 @@ export function validateTcpTargetPolicy(
     return { ok: false, status: 400, message: "Invalid target port" };
   }
 
-  if (policy.allowedTargetPorts && policy.allowedTargetPorts.length > 0) {
-    if (!policy.allowedTargetPorts.includes(port)) {
+  const compiled = compilePolicy(policy);
+
+  if (compiled.allowedTargetPorts) {
+    if (!compiled.allowedTargetPorts.has(port)) {
       return { ok: false, status: 403, message: "Target port not allowed" };
     }
   }
 
-  if (policy.allowedTargetHosts && policy.allowedTargetHosts.length > 0) {
-    let target;
+  const rawAllowedHosts = policy.allowedTargetHosts;
+  if (rawAllowedHosts && rawAllowedHosts.length > 0) {
+    let target: TargetHost;
     try {
       target = classifyTargetHost(host);
     } catch {
       return { ok: false, status: 400, message: "Invalid target host" };
     }
 
-    const patterns = policy.allowedTargetHosts
-      .map((allowedHost) => {
-        try {
-          return parseHostnamePattern(allowedHost);
-        } catch {
-          return null;
-        }
-      })
-      .filter((pattern): pattern is NonNullable<typeof pattern> => pattern !== null);
-
+    const patterns = compiled.allowedTargetHostPatterns ?? [];
     const allowed = patterns.some((pattern) => targetMatchesPattern(target, pattern));
     if (!allowed) {
       return { ok: false, status: 403, message: "Target host not allowed" };

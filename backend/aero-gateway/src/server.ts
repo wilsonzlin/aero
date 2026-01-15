@@ -18,6 +18,14 @@ import { setupMetrics } from './metrics.js';
 import { setupDohRoutes } from './routes/doh.js';
 import { handleTcpMuxUpgrade } from './routes/tcpMux.js';
 import { handleTcpProxyUpgrade } from './routes/tcpProxy.js';
+import {
+  MAX_REQUEST_URL_LEN,
+  enforceUpgradeRequestUrlLimit,
+  parseUpgradeRequestUrl,
+  respondUpgradeHttp,
+} from './routes/upgradeHttp.js';
+import { validateWebSocketHandshakeRequest } from './routes/wsUpgradeRequest.js';
+import { normalizeOriginString } from './security/origin.js';
 import { buildUdpRelaySessionInfo, mintUdpRelayToken } from './udpRelay.js';
 import { getVersionInfo } from './version.js';
 import {
@@ -83,39 +91,6 @@ function findFrontendDistDir(): string | null {
   return null;
 }
 
-function respondUpgradeHttp(socket: Duplex, status: number, message: string): void {
-  const body = `${message}\n`;
-  socket.end(
-    [
-      `HTTP/1.1 ${status} ${httpStatusText(status)}`,
-      'Content-Type: text/plain; charset=utf-8',
-      `Content-Length: ${Buffer.byteLength(body)}`,
-      'Connection: close',
-      '\r\n',
-      body,
-    ].join('\r\n'),
-  );
-}
-
-function httpStatusText(status: number): string {
-  switch (status) {
-    case 400:
-      return 'Bad Request';
-    case 401:
-      return 'Unauthorized';
-    case 403:
-      return 'Forbidden';
-    case 404:
-      return 'Not Found';
-    case 429:
-      return 'Too Many Requests';
-    case 503:
-      return 'Service Unavailable';
-    default:
-      return 'Error';
-  }
-}
-
 export function buildServer(config: Config): ServerBundle {
   let shuttingDown = false;
   const upgradeSockets = new Set<Duplex>();
@@ -150,6 +125,16 @@ export function buildServer(config: Config): ServerBundle {
     },
   });
 
+  // Conservative cap to avoid spending unbounded CPU/memory on attacker-controlled request targets.
+  // Many HTTP stacks enforce ~8KB request target limits; keep the gateway strict and predictable.
+  app.addHook('onRequest', async (request, reply) => {
+    const rawUrl = request.raw.url ?? '';
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      reply.code(414).send({ error: 'url_too_long', message: 'Request URL too long' });
+      return;
+    }
+  });
+
   const sessions = createSessionManager(config, app.log);
   const sessionConnections = new SessionConnectionTracker(config.TCP_PROXY_MAX_CONNECTIONS);
   const udpRelayTokenRateLimiter = new TokenBucketRateLimiter(1, 5);
@@ -179,7 +164,7 @@ export function buildServer(config: Config): ServerBundle {
     }
 
     const nowMs = Date.now();
-    const existing = sessions.verifySessionCookie(request.headers.cookie);
+    const existing = sessions.verifySessionRequest(request.raw);
     const { token, session } = sessions.issueSession(existing);
 
     const secure = isRequestSecure(request.raw, { trustProxy: config.TRUST_PROXY });
@@ -220,9 +205,14 @@ export function buildServer(config: Config): ServerBundle {
     };
 
     const originHeader = request.headers.origin;
-    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
-    const udpRelay = buildUdpRelaySessionInfo(config, { sessionId: session.id, origin, nowMs });
-    if (udpRelay) response.udpRelay = udpRelay;
+    const originRaw = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    const origin = originRaw ? normalizeOriginString(originRaw) ?? undefined : undefined;
+    try {
+      const udpRelay = buildUdpRelaySessionInfo(config, { sessionId: session.id, origin, nowMs });
+      if (udpRelay) response.udpRelay = udpRelay;
+    } catch (err) {
+      request.log.warn({ err }, 'udp_relay_token_mint_error');
+    }
 
     return response;
   };
@@ -233,12 +223,16 @@ export function buildServer(config: Config): ServerBundle {
     }
 
     const originHeader = request.headers.origin;
-    const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
-    if (!origin) {
+    const originRaw = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+    if (!originRaw) {
       return reply.code(403).send({ error: 'forbidden', message: 'Origin header required' });
     }
+    const origin = normalizeOriginString(originRaw);
+    if (!origin) {
+      return reply.code(403).send({ error: 'forbidden', message: 'Origin not allowed' });
+    }
 
-    const session = sessions.verifySessionCookie(request.headers.cookie);
+    const session = sessions.verifySessionRequest(request.raw);
     if (!session) {
       return reply.code(401).send({ error: 'unauthorized', message: 'Missing or expired session' });
     }
@@ -247,7 +241,13 @@ export function buildServer(config: Config): ServerBundle {
       return reply.code(429).send({ error: 'too_many_requests', message: 'Rate limit exceeded' });
     }
 
-    const tokenInfo = mintUdpRelayToken(config, { sessionId: session.id, origin });
+    let tokenInfo;
+    try {
+      tokenInfo = mintUdpRelayToken(config, { sessionId: session.id, origin });
+    } catch (err) {
+      request.log.warn({ err }, 'udp_relay_token_mint_error');
+      return reply.code(500).send({ error: 'internal_error', message: 'Failed to mint UDP relay token' });
+    }
     if (!tokenInfo) {
       return reply.code(404).send({ error: 'not_found', message: 'UDP relay not configured' });
     }
@@ -258,7 +258,7 @@ export function buildServer(config: Config): ServerBundle {
 
   // Helper endpoint to validate Secure cookie behaviour in local dev (TLS vs proxy TLS termination).
   const handleGetSessionHelper = async (request: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => {
-    const existing = sessions.verifySessionCookie(request.headers.cookie);
+    const existing = sessions.verifySessionRequest(request.raw);
     const { token } = sessions.issueSession(existing);
     const secure = isRequestSecure(request.raw, { trustProxy: config.TRUST_PROXY });
     appendSetCookieHeader(
@@ -330,62 +330,68 @@ export function buildServer(config: Config): ServerBundle {
       return;
     }
 
-    let url: URL;
-    try {
-      url = new URL(req.url ?? '', 'http://localhost');
-    } catch {
-      respondUpgradeHttp(socket, 400, 'Invalid request URL');
-      return;
-    }
+    const rawUrl = req.url ?? '';
+    if (!enforceUpgradeRequestUrlLimit(rawUrl, socket)) return;
+    const url = parseUpgradeRequestUrl(rawUrl, socket, { invalidUrlMessage: 'Invalid request URL' });
+    if (!url) return;
 
     // The gateway may be deployed behind a reverse proxy under a base path
     // prefix (e.g. `/aero`). Some proxies strip that prefix before forwarding
     // to the gateway, while others forward it verbatim. Support both.
-    if (url.pathname === '/tcp' || url.pathname === endpoints.tcp) {
-      const session = sessions.verifySessionCookie(req.headers.cookie);
+    const authForUpgrade = () => {
+      const handshake = validateWebSocketHandshakeRequest(req);
+      if (!handshake.ok) {
+        respondUpgradeHttp(socket, handshake.status, handshake.message);
+        return null;
+      }
+
+      const session = sessions.verifySessionRequest(req);
       if (!session) {
         respondUpgradeHttp(socket, 401, 'Unauthorized');
-        return;
+        return null;
       }
-      handleTcpProxyUpgrade(req, socket, head, {
-        expectedPathname: url.pathname,
+
+      return { session, handshakeKey: handshake.key };
+    };
+
+    const commonTcpUpgradeOptions = (sessionId: string) =>
+      ({
         allowedOrigins: config.ALLOWED_ORIGINS,
         blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
         allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
         allowedTargetPorts: config.TCP_ALLOWED_PORTS,
         allowPrivateIps: config.TCP_ALLOW_PRIVATE_IPS,
-        sessionId: session.id,
+        sessionId,
         sessionConnections,
         maxMessageBytes: config.TCP_PROXY_MAX_MESSAGE_BYTES,
         connectTimeoutMs: config.TCP_PROXY_CONNECT_TIMEOUT_MS,
         idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
         metrics: metrics.tcpProxy,
+      }) as const;
+
+    if (url.pathname === '/tcp' || url.pathname === endpoints.tcp) {
+      const auth = authForUpgrade();
+      if (!auth) return;
+
+      handleTcpProxyUpgrade(req, socket, head, {
+        ...commonTcpUpgradeOptions(auth.session.id),
+        handshakeKey: auth.handshakeKey,
+        upgradeUrl: url,
       });
       return;
     }
 
     if (url.pathname === '/tcp-mux' || url.pathname === endpoints.tcpMux) {
-      const session = sessions.verifySessionCookie(req.headers.cookie);
-      if (!session) {
-        respondUpgradeHttp(socket, 401, 'Unauthorized');
-        return;
-      }
+      const auth = authForUpgrade();
+      if (!auth) return;
+
       handleTcpMuxUpgrade(req, socket, head, {
-        expectedPathname: url.pathname,
-        allowedOrigins: config.ALLOWED_ORIGINS,
-        blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
-        allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
-        allowedTargetPorts: config.TCP_ALLOWED_PORTS,
-        allowPrivateIps: config.TCP_ALLOW_PRIVATE_IPS,
+        ...commonTcpUpgradeOptions(auth.session.id),
+        handshakeKey: auth.handshakeKey,
+        upgradeUrl: url,
         maxStreams: config.TCP_MUX_MAX_STREAMS,
         maxStreamBufferedBytes: config.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
         maxFramePayloadBytes: config.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
-        sessionId: session.id,
-        sessionConnections,
-        maxMessageBytes: config.TCP_PROXY_MAX_MESSAGE_BYTES,
-        connectTimeoutMs: config.TCP_PROXY_CONNECT_TIMEOUT_MS,
-        idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
-        metrics: metrics.tcpProxy,
       });
       return;
     }

@@ -100,6 +100,52 @@ Canonical `aero_session` token test vectors (HMAC signing + expiry semantics) li
 under the `aero_session` key. These vectors are consumed by the Node gateway, Rust L2 proxy, and
 other implementations to prevent cross-language drift.
 
+### Session cookie token format (for implementers)
+
+Clients MUST treat `aero_session` as an opaque value. This section is for anyone implementing a
+gateway-compatible verifier/minting path in another language.
+
+Token format:
+
+- `<payload_b64url>.<sig_b64url>`
+- `payload_b64url` is **base64url without padding** (URL-safe alphabet `A-Z a-z 0-9 - _`)
+- `sig_b64url` is base64url-no-pad encoding of a 32-byte HMAC-SHA256, so it MUST be **exactly 43
+  characters**
+
+Signature:
+
+- `sig = HMAC_SHA256(secret, payload_b64url_ascii_bytes)`
+- Important: the signature is computed over the **base64url string**, not over the decoded JSON
+  bytes.
+
+Payload JSON (decoded from `payload_b64url`) MUST be an object with:
+
+- `v`: JSON number equal to `1` (implementations SHOULD accept both `1` and `1.0`, matching JS
+  `number` semantics)
+- `sid`: non-empty string
+- `exp`: JSON number (seconds since unix epoch; finite)
+
+Expiry semantics:
+
+- Token is expired if \(exp * 1000 \le nowMs\).
+- I.e. an `exp` exactly equal to `floor(nowMs/1000)` is considered expired.
+
+Defensive parsing requirements (to match canonical Rust verifier behavior and avoid DoS):
+
+- MUST reject any token where:
+  - the overall token length exceeds **16KiB + 1 + 43**
+  - `payload_b64url` is not canonical base64url-no-pad (reject `len % 4 == 1`, reject invalid
+    characters, reject non-canonical encodings where unused bits are non-zero)
+  - `sig_b64url` is not canonical base64url-no-pad or is not exactly 43 chars
+- SHOULD verify HMAC signature before decoding/parsing JSON.
+
+Cookie extraction semantics:
+
+- Multiple `Cookie` headers MAY be present; the implementation MUST use the **first** `aero_session`
+  value encountered (“first cookie wins”).
+- An empty `aero_session=` value is treated as missing, but it still “wins” over later values (so a
+  later valid cookie MUST NOT bypass an earlier empty/invalid one).
+
 #### Endpoint discovery (`endpoints`)
 
 The JSON response includes an `endpoints` object with **relative paths** to the gateway’s networking surfaces.
@@ -192,6 +238,58 @@ Token rules:
 - `authMode=jwt`: `token` is a short-lived JWT minted by the gateway.
   - Claims include `iat`, `exp`, and a stable session identifier (`sid`) derived from `aero_session`.
   - Gateways may additionally bind the token to the browser origin (`origin` claim) to reduce replay.
+
+### UDP relay HS256 JWT format (for implementers)
+
+Clients MUST treat the relay JWT as an opaque secret. This section is for independent
+implementations (Rust/Go/TS) that need to mint/verify compatible tokens.
+
+Token format:
+
+- `<header_b64url>.<payload_b64url>.<sig_b64url>`
+- Each segment is **base64url without padding** (URL-safe alphabet `A-Z a-z 0-9 - _`)
+- `sig_b64url` MUST be exactly **43 characters** (HMAC-SHA256 signature, 32 bytes)
+
+Signature:
+
+- `sig = HMAC_SHA256(secret, "<header_b64url>.<payload_b64url>"_ascii_bytes)`
+
+Header JSON (decoded from `header_b64url`):
+
+- MUST be an object with `alg: "HS256"`
+- `typ` MAY be present; if present it MUST be a string (canonical minting uses `"JWT"`)
+
+Payload JSON (decoded from `payload_b64url`):
+
+- Required:
+  - `sid`: non-empty string
+  - `iat`: integer (seconds since unix epoch)
+  - `exp`: integer (seconds since unix epoch)
+- Optional:
+  - `origin`: string (bind token to browser origin)
+  - `aud`: string (audience)
+  - `iss`: string (issuer)
+  - `nbf`: integer (not-before; if present and \(nowSec < nbf\), token is not yet valid)
+
+Validity semantics:
+
+- Token is expired if \(nowSec \ge exp\).
+- If `nbf` is present, token is invalid if \(nowSec < nbf\).
+
+Defensive parsing requirements (to match canonical Rust verifier behavior and avoid DoS):
+
+- MUST reject any token where:
+  - the overall token length exceeds **4KiB + 1 + 16KiB + 1 + 43**
+  - any segment is not canonical base64url-no-pad (reject `len % 4 == 1`, reject invalid
+    characters, reject non-canonical encodings where unused bits are non-zero)
+  - `header_b64url` exceeds 4KiB, or `payload_b64url` exceeds 16KiB
+  - `sig_b64url` is not exactly 43 chars
+- SHOULD verify HMAC signature before decoding/parsing JSON.
+
+The exhaustive negative-case vectors for both token types live in
+[`protocol-vectors/auth-tokens.json`](../../protocol-vectors/auth-tokens.json).
+
+See also: [`docs/auth-tokens.md`](../auth-tokens.md) (formats + strict verification contract).
 
 Clients must treat `udpRelay.token` as a secret and must not log it.
 
@@ -294,10 +392,22 @@ If the cookie is missing/invalid, the gateway must reject the upgrade with `401 
 
 Some deployments may additionally support a non-cookie authentication mode (token auth). Because browsers cannot set arbitrary headers for `new WebSocket(...)`, any token must be passed via a WebSocket-compatible mechanism (commonly `Sec-WebSocket-Protocol`). This is deployment-specific and not required for v1 cookie-based sessions.
 
+### WebSocket handshake requirements (`/tcp`, `/tcp-mux`)
+
+The gateway only accepts a standard RFC6455 WebSocket handshake for `/tcp` and `/tcp-mux`:
+
+- `Upgrade: websocket`
+- `Connection: Upgrade`
+- `Sec-WebSocket-Version: 13`
+- `Sec-WebSocket-Key: <non-empty>`
+
+Malformed/non-WebSocket upgrade requests are rejected with `400 Bad Request` (no WebSocket). In browser APIs this typically surfaces as a generic WebSocket connection failure.
+
 ### Connection lifecycle
 
 1. Client creates a WebSocket to `/tcp?v=1&host=...&port=...` (or the legacy `target=...` form).
-2. Gateway validates:
+2. Gateway validates (rough order):
+   - WebSocket handshake headers (RFC6455)
    - Session cookie
    - Origin allowlist
    - Target parsing
@@ -339,6 +449,7 @@ Message boundaries are **not preserved** end-to-end (TCP is a byte stream). Clie
 
 Specific limit values are deployment-dependent, but clients should assume at least:
 
+- The gateway may reject overly long request targets (URL + query) for `/tcp` and `/tcp-mux` with `414 URI Too Long`.
 - The gateway may enforce **max concurrent TCP connections** per session.
 - The gateway may enforce a **max WebSocket message size**; clients should chunk large writes (e.g. ≤ 16–64 KiB).
 - The gateway may enforce **connect timeouts** and **idle timeouts**.
@@ -367,7 +478,7 @@ The client MUST negotiate the WebSocket subprotocol:
 
 - `Sec-WebSocket-Protocol: aero-tcp-mux-v1`
 
-If the subprotocol is missing, the gateway must reject the upgrade (no WebSocket).
+If the subprotocol is missing/invalid, the gateway must reject the upgrade with `400 Bad Request` (no WebSocket).
 
 ### Transport model
 

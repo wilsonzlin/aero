@@ -1,5 +1,15 @@
 import { createHmac } from 'node:crypto';
 import type { Config, UdpRelayAuthMode } from './config.js';
+import { encodeBase64Url } from './base64url.js';
+
+const HMAC_SHA256_SIG_LEN = 32;
+// base64url-no-pad encoding length for a 32-byte HMAC:
+// - 32 bytes => 44 chars with one '=' padding
+// - without padding => 43 chars
+const HMAC_SHA256_SIG_B64_LEN = 43;
+const MAX_JWT_HEADER_B64_LEN = 4 * 1024;
+const MAX_JWT_PAYLOAD_B64_LEN = 16 * 1024;
+const MAX_JWT_LEN = MAX_JWT_HEADER_B64_LEN + 1 /* '.' */ + MAX_JWT_PAYLOAD_B64_LEN + 1 /* '.' */ + HMAC_SHA256_SIG_B64_LEN;
 
 export const UDP_RELAY_ENDPOINT_PATHS = {
   webrtcSignal: '/webrtc/signal',
@@ -24,17 +34,27 @@ export type UdpRelayTokenInfo = Readonly<{
   expiresAt?: string;
 }>;
 
-function encodeBase64Url(buf: Buffer): string {
-  return buf.toString('base64').replaceAll('=', '').replaceAll('+', '-').replaceAll('/', '_');
-}
-
 function encodeJwtHS256(payload: Record<string, unknown>, secret: string): string {
   const header = { alg: 'HS256', typ: 'JWT' };
   const headerPart = encodeBase64Url(Buffer.from(JSON.stringify(header), 'utf8'));
+  if (headerPart.length > MAX_JWT_HEADER_B64_LEN) {
+    throw new Error('UDP relay JWT header too long');
+  }
   const payloadPart = encodeBase64Url(Buffer.from(JSON.stringify(payload), 'utf8'));
+  if (payloadPart.length > MAX_JWT_PAYLOAD_B64_LEN) {
+    throw new Error('UDP relay JWT payload too long');
+  }
   const signingInput = `${headerPart}.${payloadPart}`;
-  const signaturePart = encodeBase64Url(createHmac('sha256', secret).update(signingInput).digest());
-  return `${signingInput}.${signaturePart}`;
+  const signature = createHmac('sha256', secret).update(signingInput).digest();
+  const signaturePart = encodeBase64Url(signature);
+  if (signature.length !== HMAC_SHA256_SIG_LEN || signaturePart.length !== HMAC_SHA256_SIG_B64_LEN) {
+    throw new Error('Unexpected UDP relay JWT signature format');
+  }
+  const token = `${signingInput}.${signaturePart}`;
+  if (token.length > MAX_JWT_LEN) {
+    throw new Error('UDP relay JWT too long');
+  }
+  return token;
 }
 
 export function mintUdpRelayToken(

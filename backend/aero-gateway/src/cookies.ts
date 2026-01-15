@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import { iterRawHeaderValues } from './rawHeaders.js';
+
 export interface CookieOptions {
   httpOnly?: boolean;
   maxAgeSeconds?: number;
@@ -86,14 +88,22 @@ export function appendSetCookieHeader(res: ServerResponse, cookie: string): void
     return;
   }
 
-  const cookies = Array.isArray(current) ? current.map(String) : [String(current)];
-  cookies.push(cookie);
-  res.setHeader('Set-Cookie', cookies);
+  if (typeof current === 'string') {
+    res.setHeader('Set-Cookie', [current, cookie]);
+    return;
+  }
+  if (Array.isArray(current)) {
+    const cookies = current.filter((v): v is string => typeof v === 'string');
+    cookies.push(cookie);
+    res.setHeader('Set-Cookie', cookies);
+    return;
+  }
+
+  // Should not happen for Set-Cookie, but don't stringify unexpected header types.
+  res.setHeader('Set-Cookie', cookie);
 }
 
-export function getCookieValue(cookieHeader: string | string[] | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  const raw = Array.isArray(cookieHeader) ? cookieHeader.join(';') : cookieHeader;
+function getCookieValueFromHeaderString(raw: string, name: string): string | undefined {
   if (raw.length === 0 || name.length === 0) return undefined;
 
   // Scan cookie header without allocating `raw.split(';')`.
@@ -162,4 +172,31 @@ export function getCookieValue(cookieHeader: string | string[] | undefined, name
   }
 
   return undefined;
+}
+
+export function getCookieValue(cookieHeader: string | string[] | undefined, name: string): string | undefined {
+  if (!cookieHeader) return undefined;
+
+  if (Array.isArray(cookieHeader)) {
+    for (const header of cookieHeader) {
+      if (typeof header !== 'string') return undefined;
+      const value = getCookieValueFromHeaderString(header, name);
+      // Preserve "first cookie wins" semantics, even when the value is an empty string.
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
+
+  return getCookieValueFromHeaderString(cookieHeader, name);
+}
+
+export function getCookieValueFromRequest(req: IncomingMessage, name: string): string | undefined {
+  const rawHeaders = (req as unknown as { rawHeaders?: unknown }).rawHeaders;
+  for (const header of iterRawHeaderValues(rawHeaders, 'cookie')) {
+    const value = getCookieValueFromHeaderString(header, name);
+    // Preserve "first cookie wins" semantics, even when the value is an empty string.
+    if (value !== undefined) return value;
+  }
+
+  return getCookieValue(req.headers.cookie, name);
 }

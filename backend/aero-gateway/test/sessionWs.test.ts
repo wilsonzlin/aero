@@ -1,8 +1,25 @@
 import assert from 'node:assert/strict';
+import type http from 'node:http';
 import net from 'node:net';
 import test from 'node:test';
 import WebSocket from 'ws';
+import { PassThrough } from 'node:stream';
+import { once } from 'node:events';
 import { buildServer } from '../src/server.js';
+import { makeTestConfig, TEST_WS_HANDSHAKE_HEADERS } from './testConfig.js';
+
+async function captureUpgradeResponse(
+  app: import('fastify').FastifyInstance,
+  req: http.IncomingMessage,
+): Promise<string> {
+  const socket = new PassThrough();
+  const chunks: Buffer[] = [];
+  socket.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+  const ended = once(socket, 'end');
+  app.server.emit('upgrade', req, socket, Buffer.alloc(0));
+  await ended;
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 async function listenNet(server: net.Server): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -56,58 +73,73 @@ async function expectWsRejected(url: string, init: WebSocket.ClientOptions, expe
   assert.equal(status, expectedStatus);
 }
 
+test('server upgrade routing validates WebSocket handshake before auth', async () => {
+  const { app } = buildServer(makeTestConfig());
+
+  await app.ready();
+  try {
+    const reqInvalid = {
+      url: '/tcp?v=1&host=127.0.0.1&port=1',
+      headers: {},
+    } as unknown as http.IncomingMessage;
+    const resInvalid = await captureUpgradeResponse(app, reqInvalid);
+    assert.ok(resInvalid.startsWith('HTTP/1.1 400 '));
+    assert.ok(resInvalid.includes('Invalid WebSocket upgrade'));
+
+    const reqValidHandshakeNoCookie = {
+      url: '/tcp?v=1&host=127.0.0.1&port=1',
+      headers: {
+        ...TEST_WS_HANDSHAKE_HEADERS,
+      },
+    } as unknown as http.IncomingMessage;
+    const resNoCookie = await captureUpgradeResponse(app, reqValidHandshakeNoCookie);
+    assert.ok(resNoCookie.startsWith('HTTP/1.1 401 '));
+
+    const reqMuxValidHandshakeNoCookie = {
+      url: '/tcp-mux',
+      headers: {
+        ...TEST_WS_HANDSHAKE_HEADERS,
+        'sec-websocket-protocol': 'aero-tcp-mux-v1',
+      },
+    } as unknown as http.IncomingMessage;
+    const resMuxNoCookie = await captureUpgradeResponse(app, reqMuxValidHandshakeNoCookie);
+    assert.ok(resMuxNoCookie.startsWith('HTTP/1.1 401 '));
+  } finally {
+    await app.close();
+  }
+});
+
+test('server upgrade routing uses rawHeaders order for Cookie (first cookie wins)', async () => {
+  const { app } = buildServer(makeTestConfig());
+
+  await app.ready();
+  try {
+    const cookie = await createSessionCookie(app);
+
+    const req = {
+      url: '/tcp?v=1&host=127.0.0.1&port=1',
+      headers: {
+        ...TEST_WS_HANDSHAKE_HEADERS,
+        // If the server incorrectly trusted merged `req.headers.cookie`, this would be accepted.
+        cookie,
+      },
+      // Simulate repeated Cookie headers as they arrive in Node:
+      // an earlier empty `aero_session` must "win" and prevent auth bypass.
+      rawHeaders: ['Cookie', 'aero_session=', 'Cookie', cookie],
+    } as unknown as http.IncomingMessage;
+
+    const res = await captureUpgradeResponse(app, req);
+    assert.ok(res.startsWith('HTTP/1.1 401 '));
+  } finally {
+    await app.close();
+  }
+});
+
 test('WebSocket upgrades reject missing/invalid session cookies', async () => {
   const echoServer = net.createServer((socket) => socket.on('data', (data) => socket.write(data)));
   const echoPort = await listenNet(echoServer);
 
-  const { app } = buildServer({
-    HOST: '127.0.0.1',
-    PORT: 0,
-    LOG_LEVEL: 'silent',
-    ALLOWED_ORIGINS: ['http://localhost'],
-    PUBLIC_BASE_URL: 'http://localhost',
-    SHUTDOWN_GRACE_MS: 100,
-    CROSS_ORIGIN_ISOLATION: false,
-    TRUST_PROXY: false,
-    SESSION_SECRET: 'test-secret',
-    SESSION_TTL_SECONDS: 60 * 60 * 24,
-    SESSION_COOKIE_SAMESITE: 'Lax',
-    RATE_LIMIT_REQUESTS_PER_MINUTE: 0,
-    TLS_ENABLED: false,
-    TLS_CERT_PATH: '',
-    TLS_KEY_PATH: '',
-    TCP_ALLOW_PRIVATE_IPS: true,
-    TCP_ALLOWED_HOSTS: [],
-    TCP_ALLOWED_PORTS: [],
-    TCP_BLOCKED_CLIENT_IPS: [],
-    TCP_MUX_MAX_STREAMS: 1024,
-    TCP_MUX_MAX_STREAM_BUFFER_BYTES: 1024 * 1024,
-    TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: 16 * 1024 * 1024,
-    TCP_PROXY_MAX_CONNECTIONS: 1,
-    TCP_PROXY_MAX_CONNECTIONS_PER_IP: 0,
-    TCP_PROXY_MAX_MESSAGE_BYTES: 1024 * 1024,
-    TCP_PROXY_CONNECT_TIMEOUT_MS: 10_000,
-    TCP_PROXY_IDLE_TIMEOUT_MS: 300_000,
-    DNS_UPSTREAMS: [],
-    DNS_UPSTREAM_TIMEOUT_MS: 200,
-    DNS_CACHE_MAX_ENTRIES: 0,
-    DNS_CACHE_MAX_TTL_SECONDS: 0,
-    DNS_CACHE_NEGATIVE_TTL_SECONDS: 0,
-    DNS_MAX_QUERY_BYTES: 4096,
-    DNS_MAX_RESPONSE_BYTES: 4096,
-    DNS_ALLOW_ANY: true,
-    DNS_ALLOW_PRIVATE_PTR: true,
-    DNS_QPS_PER_IP: 0,
-    DNS_BURST_PER_IP: 0,
-
-    UDP_RELAY_BASE_URL: '',
-    UDP_RELAY_AUTH_MODE: 'none',
-    UDP_RELAY_API_KEY: '',
-    UDP_RELAY_JWT_SECRET: '',
-    UDP_RELAY_TOKEN_TTL_SECONDS: 300,
-    UDP_RELAY_AUDIENCE: '',
-    UDP_RELAY_ISSUER: '',
-  });
+  const { app } = buildServer(makeTestConfig());
 
   await app.ready();
   const port = await listenGateway(app);

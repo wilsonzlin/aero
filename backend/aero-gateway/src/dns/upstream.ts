@@ -1,31 +1,58 @@
 import * as dgram from "node:dgram";
 
+import { headerHasMimeType } from "../contentType.js";
+
 export type DnsUpstream =
   | { kind: "udp"; host: string; port: number; label: string }
   | { kind: "doh"; url: string; label: string };
 
+const MAX_UPSTREAM_ENTRY_LEN = 4096;
+
+function parsePortNumber(rawPort: string, input: string): number {
+  const portStr = rawPort.trim();
+  if (portStr.length < 1 || portStr.length > 5) throw new Error(`Invalid upstream port: ${input}`);
+  for (let i = 0; i < portStr.length; i += 1) {
+    const c = portStr.charCodeAt(i);
+    if (c < 0x30 || c > 0x39) throw new Error(`Invalid upstream port: ${input}`);
+  }
+  const port = Number(portStr);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Invalid upstream port: ${input}`);
+  return port;
+}
+
 function parseHostPort(input: string): { host: string; port: number } {
   const trimmed = input.trim();
+  if (trimmed.length > MAX_UPSTREAM_ENTRY_LEN) throw new Error(`Invalid upstream: ${input}`);
+
   if (trimmed.startsWith("[")) {
     const closing = trimmed.indexOf("]");
     if (closing === -1) throw new Error(`Invalid upstream: ${input}`);
-    const host = trimmed.slice(1, closing);
-    const portPart = trimmed.slice(closing + 1);
-    const port = portPart.startsWith(":") ? Number.parseInt(portPart.slice(1), 10) : 53;
-    if (!Number.isFinite(port) || port <= 0 || port > 65535) throw new Error(`Invalid upstream port: ${input}`);
+    if (closing === 1) throw new Error(`Invalid upstream: ${input}`);
+    const host = trimmed.slice(1, closing).trim();
+    if (!host) throw new Error(`Invalid upstream: ${input}`);
+
+    const rest = trimmed.slice(closing + 1).trim();
+    const port = rest === "" ? 53 : rest.startsWith(":") ? parsePortNumber(rest.slice(1), input) : NaN;
+    if (!Number.isInteger(port)) throw new Error(`Invalid upstream: ${input}`);
     return { host, port };
   }
 
-  const parts = trimmed.split(":");
-  if (parts.length === 1) return { host: trimmed, port: 53 };
-  if (parts.length === 2) {
-    const port = Number.parseInt(parts[1], 10);
-    if (!Number.isFinite(port) || port <= 0 || port > 65535) throw new Error(`Invalid upstream port: ${input}`);
-    return { host: parts[0], port };
+  const firstColon = trimmed.indexOf(":");
+  if (firstColon === -1) return { host: trimmed, port: 53 };
+
+  const lastColon = trimmed.lastIndexOf(":");
+  if (firstColon !== lastColon) {
+    // Unbracketed IPv6 is ambiguous; require brackets.
+    throw new Error(`Invalid upstream address (use [ipv6]:port): ${input}`);
   }
 
-  // Unbracketed IPv6 is ambiguous; require brackets.
-  throw new Error(`Invalid upstream address (use [ipv6]:port): ${input}`);
+  const host = trimmed.slice(0, lastColon).trim();
+  const portPart = trimmed.slice(lastColon + 1);
+  if (!host) throw new Error(`Invalid upstream: ${input}`);
+  const port = parsePortNumber(portPart, input);
+  return { host, port };
+
+  // unreachable
 }
 
 export function parseUpstreams(rawUpstreams: readonly string[]): DnsUpstream[] {
@@ -104,9 +131,10 @@ export async function queryDohUpstream(
     });
 
     if (!response.ok) throw new Error(`DoH upstream HTTP ${response.status}`);
-    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-    if (contentType !== 'application/dns-message') {
-      throw new Error(`DoH upstream returned unexpected Content-Type: ${contentType ?? 'none'}`);
+    const contentType = response.headers.get("content-type");
+    if (!headerHasMimeType(contentType, "application/dns-message", 256)) {
+      const shown = typeof contentType === "string" ? contentType.slice(0, 256) : "none";
+      throw new Error(`DoH upstream returned unexpected Content-Type: ${shown}`);
     }
 
     const body = Buffer.from(await response.arrayBuffer());
