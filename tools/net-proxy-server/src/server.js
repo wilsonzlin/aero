@@ -16,11 +16,54 @@ import {
   encodeTcpMuxFrame,
 } from "./protocol.js";
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_SUBPROTOCOL_HEADER_LEN = 4 * 1024;
+const MAX_AUTH_HEADER_LEN = 4 * 1024;
+const MAX_TOKEN_LEN = 4 * 1024;
+const MAX_SUBPROTOCOL_TOKENS = 32;
+
 function normalizeRemoteAddress(remoteAddress) {
   if (!remoteAddress) return "unknown";
   // "::ffff:127.0.0.1" -> "127.0.0.1"
   if (remoteAddress.startsWith("::ffff:")) return remoteAddress.slice("::ffff:".length);
   return remoteAddress;
+}
+
+function singleHeaderValue(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    if (value.length !== 1 || typeof value[0] !== "string") return null;
+    return value[0];
+  }
+  return undefined;
+}
+
+function headerHasSubprotocol(headerValue, required) {
+  // Avoid `.split(",")` on attacker-controlled inputs.
+  if (!headerValue) return false;
+  if (headerValue.length > MAX_SUBPROTOCOL_HEADER_LEN) return false;
+
+  let tokens = 0;
+  let start = 0;
+  for (let i = 0; i <= headerValue.length; i++) {
+    const ch = i === headerValue.length ? "," : headerValue[i];
+    if (ch !== ",") continue;
+
+    let a = start;
+    let b = i;
+    while (a < b && headerValue.charCodeAt(a) <= 0x20) a++;
+    while (b > a && headerValue.charCodeAt(b - 1) <= 0x20) b--;
+
+    if (b > a) {
+      tokens += 1;
+      if (tokens > MAX_SUBPROTOCOL_TOKENS) return false;
+      if (headerValue.slice(a, b) === required) return true;
+    }
+
+    start = i + 1;
+  }
+
+  return false;
 }
 
 function u32FromIpv4Bytes(ip) {
@@ -330,26 +373,56 @@ export async function createProxyServer(userConfig) {
 
   httpServer.on("upgrade", (req, socket, head) => {
     try {
-      const url = new URL(req.url ?? "/", "http://localhost");
+      const rawUrl = req.url ?? "/";
+      if (typeof rawUrl !== "string") {
+        rejectUpgrade(socket, 400, "Bad Request");
+        return;
+      }
+      if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+        rejectUpgrade(socket, 414, "URI Too Long");
+        return;
+      }
+
+      const url = new URL(rawUrl, "http://localhost");
       if (url.pathname !== config.path) {
         rejectUpgrade(socket, 404, "Not Found");
         return;
       }
 
-      const protocolHeader = req.headers["sec-websocket-protocol"];
-      const offered = typeof protocolHeader === "string" ? protocolHeader : "";
-      const protocols = offered
-        .split(",")
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0);
-      if (!protocols.includes(TCP_MUX_SUBPROTOCOL)) {
+      const protocolHeader = singleHeaderValue(req.headers["sec-websocket-protocol"]);
+      if (protocolHeader === null) {
+        rejectUpgrade(socket, 400, "Invalid WebSocket upgrade");
+        return;
+      }
+      if (!headerHasSubprotocol(protocolHeader ?? "", TCP_MUX_SUBPROTOCOL)) {
         rejectUpgrade(socket, 400, `Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`);
         return;
       }
 
       const tokenFromQuery = url.searchParams.get("token");
-      const authHeader = req.headers.authorization;
+      if (tokenFromQuery && tokenFromQuery.length > MAX_TOKEN_LEN) {
+        stats.authFailed += 1;
+        rejectUpgrade(socket, 401, "Unauthorized");
+        return;
+      }
+
+      const authHeader = singleHeaderValue(req.headers.authorization);
+      if (authHeader === null) {
+        stats.authFailed += 1;
+        rejectUpgrade(socket, 401, "Unauthorized");
+        return;
+      }
+      if (authHeader && authHeader.length > MAX_AUTH_HEADER_LEN) {
+        stats.authFailed += 1;
+        rejectUpgrade(socket, 401, "Unauthorized");
+        return;
+      }
       const tokenFromHeader = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : undefined;
+      if (tokenFromHeader && tokenFromHeader.length > MAX_TOKEN_LEN) {
+        stats.authFailed += 1;
+        rejectUpgrade(socket, 401, "Unauthorized");
+        return;
+      }
       const token = tokenFromQuery ?? tokenFromHeader;
 
       if (!token) {

@@ -204,6 +204,35 @@ test("integration: requires aero-tcp-mux-v1 subprotocol", async () => {
   }
 });
 
+test("integration: rejects oversized request targets with 414", async () => {
+  let proxy;
+  let ws;
+  let statusCode;
+
+  try {
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: true,
+      metricsIntervalMs: 0,
+    });
+
+    const huge = "a".repeat(9_000);
+    ws = new WebSocket(`${proxy.url}?token=test-token&x=${huge}`, TCP_MUX_SUBPROTOCOL);
+    ws.once("unexpected-response", (_req, res) => {
+      statusCode = res.statusCode;
+      res.resume();
+    });
+
+    await waitForWsFailure(ws);
+    assert.equal(statusCode, 414);
+  } finally {
+    if (ws) ws.terminate();
+    if (proxy) await proxy.close();
+  }
+});
+
 test("integration: PING -> PONG (same payload)", async () => {
   let proxy;
   let ws;
