@@ -35,6 +35,22 @@ use aero_http_range::{
     parse_range_header, resolve_ranges, RangeParseError, RangeResolveError, ResolvedByteRange,
 };
 
+const MAX_REQUEST_URI_LEN: usize = 8 * 1024;
+const MAX_VARY_HEADER_VALUE_LEN: usize = 4 * 1024;
+const MAX_CORS_ALLOWED_ORIGINS_LEN: usize = 64 * 1024;
+const MAX_CORS_ALLOWED_ORIGINS_ITEMS: usize = 1024;
+const MAX_RANGE_HEADER_LEN: usize = 16 * 1024;
+const MAX_IF_NONE_MATCH_LEN: usize = 16 * 1024;
+const MAX_IF_MODIFIED_SINCE_LEN: usize = 128;
+const MAX_IF_RANGE_LEN: usize = 256;
+
+fn is_request_target_too_long(req: &Request<Body>) -> bool {
+    let Some(pq) = req.uri().path_and_query() else {
+        return req.uri().path().len() > MAX_REQUEST_URI_LEN;
+    };
+    pq.as_str().len() > MAX_REQUEST_URI_LEN
+}
+
 fn append_vary(headers: &mut HeaderMap, tokens: &[&str]) {
     // Keep behavior consistent with `aero-storage-server`'s CORS implementation: append `Vary`
     // tokens without clobbering any preexisting values, and treat `Vary: *` as a sentinel that
@@ -47,6 +63,9 @@ fn append_vary(headers: &mut HeaderMap, tokens: &[&str]) {
         let Ok(value) = value.to_str() else {
             continue;
         };
+        if value.len() > MAX_VARY_HEADER_VALUE_LEN {
+            continue;
+        }
         for raw in value.split(',') {
             let token = raw.trim();
             if token.is_empty() {
@@ -416,12 +435,35 @@ impl AllowedOrigins {
             return Ok(Self::Any);
         }
 
-        let list: HashSet<String> = raw
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
+        if raw.len() > MAX_CORS_ALLOWED_ORIGINS_LEN {
+            return Err(ConfigError::InvalidEnv("DISK_GATEWAY_CORS_ALLOWED_ORIGINS"));
+        }
+
+        let mut list: HashSet<String> = HashSet::new();
+        let mut start = 0usize;
+        let mut count = 0usize;
+        for (i, b) in raw.as_bytes().iter().enumerate() {
+            if *b != b',' {
+                continue;
+            }
+            let token = raw[start..i].trim();
+            if !token.is_empty() {
+                count += 1;
+                if count > MAX_CORS_ALLOWED_ORIGINS_ITEMS {
+                    return Err(ConfigError::InvalidEnv("DISK_GATEWAY_CORS_ALLOWED_ORIGINS"));
+                }
+                list.insert(token.to_owned());
+            }
+            start = i + 1;
+        }
+        let token = raw[start..].trim();
+        if !token.is_empty() {
+            count += 1;
+            if count > MAX_CORS_ALLOWED_ORIGINS_ITEMS {
+                return Err(ConfigError::InvalidEnv("DISK_GATEWAY_CORS_ALLOWED_ORIGINS"));
+            }
+            list.insert(token.to_owned());
+        }
 
         if list.is_empty() {
             return Err(ConfigError::InvalidEnv("DISK_GATEWAY_CORS_ALLOWED_ORIGINS"));
@@ -514,6 +556,11 @@ async fn api_headers_middleware(
     next: axum::middleware::Next,
 ) -> Response {
     let origin = req.headers().get(ORIGIN).cloned();
+    if is_request_target_too_long(&req) {
+        let mut resp = ApiError::UriTooLong.into_response();
+        apply_cors_headers(&state.cfg, origin.as_ref(), &mut resp, false, "");
+        return resp;
+    }
     let mut resp = next.run(req).await;
     apply_cors_headers(&state.cfg, origin.as_ref(), &mut resp, false, "");
     resp
@@ -524,13 +571,34 @@ async fn disk_headers_middleware(
     req: Request<Body>,
     next: axum::middleware::Next,
 ) -> Response {
+    let origin = req.headers().get(ORIGIN).cloned();
+    if is_request_target_too_long(&req) {
+        let mut resp = ApiError::UriTooLong.into_response();
+        apply_cors_headers(&state.cfg, origin.as_ref(), &mut resp, false, "");
+        resp.headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-transform"));
+        // Disk bytes are served as raw, deterministic offsets; never allow compression transforms.
+        if !resp.headers().contains_key(CONTENT_ENCODING) {
+            resp.headers_mut()
+                .insert(CONTENT_ENCODING, HeaderValue::from_static("identity"));
+        }
+        resp.headers_mut().insert(
+            HeaderName::from_static("cross-origin-resource-policy"),
+            state.cfg.corp_policy.as_header_value(),
+        );
+        resp.headers_mut().insert(
+            HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        );
+        return resp;
+    }
+
     let has_auth = req.headers().contains_key(AUTHORIZATION)
         || req
             .uri()
             .query()
             .map(|q| q.split('&').any(|kv| kv.starts_with("token=")))
             .unwrap_or(false);
-    let origin = req.headers().get(ORIGIN).cloned();
     let mut resp = next.run(req).await;
     apply_cors_headers(&state.cfg, origin.as_ref(), &mut resp, false, "");
     resp.headers_mut().insert(
@@ -793,6 +861,7 @@ fn verify_lease(cfg: &Config, token: &str) -> Result<LeaseClaims, ApiError> {
 #[derive(Debug)]
 enum ApiError {
     BadRequest(&'static str),
+    UriTooLong,
     NotFound,
     Unauthorized,
     Forbidden,
@@ -803,6 +872,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, msg) = match self {
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            Self::UriTooLong => (StatusCode::URI_TOO_LONG, "url too long"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not found"),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
@@ -1036,6 +1106,9 @@ fn resolve_request_ranges(
     let Some(header_value) = header_value else {
         return Ok(None);
     };
+    if header_value.len() > MAX_RANGE_HEADER_LEN {
+        return Err(RangeRequestError::TooLarge);
+    }
 
     let specs = match parse_range_header(header_value) {
         Ok(specs) => specs,
@@ -1267,6 +1340,9 @@ fn is_not_modified(
         let Ok(inm) = inm.to_str() else {
             return false;
         };
+        if inm.len() > MAX_IF_NONE_MATCH_LEN {
+            return false;
+        }
         return if_none_match_matches(inm, current_etag);
     }
 
@@ -1279,6 +1355,9 @@ fn is_not_modified(
     let Ok(ims) = ims.to_str() else {
         return false;
     };
+    if ims.len() > MAX_IF_MODIFIED_SINCE_LEN {
+        return false;
+    }
     let Ok(ims_time) = httpdate::parse_http_date(ims) else {
         return false;
     };
@@ -1359,6 +1438,9 @@ fn if_range_allows_range(
     current_last_modified: Option<SystemTime>,
 ) -> bool {
     let if_range = if_range.trim();
+    if if_range.len() > MAX_IF_RANGE_LEN {
+        return false;
+    }
 
     // Entity-tag form. RFC 9110 requires strong comparison and disallows weak validators.
     if if_range.starts_with('"') || if_range.starts_with("W/") || if_range.starts_with("w/") {
@@ -1602,6 +1684,86 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(&body[..], b"abcdef");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disk_rejects_overly_long_request_urls_with_414() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let qs = "a".repeat(MAX_REQUEST_URI_LEN + 1);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/disk/win7?{qs}"))
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::URI_TOO_LONG);
+        assert_eq!(
+            resp.headers()
+                .get("cross-origin-resource-policy")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "same-site"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn api_rejects_overly_long_request_urls_with_414() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir, private_dir);
+
+        let app = app(cfg);
+        let qs = "a".repeat(MAX_REQUEST_URI_LEN + 1);
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/images/win7/lease?{qs}"))
+            .header(ORIGIN, "https://app.example")
+            .header("X-Debug-User", "alice")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::URI_TOO_LONG);
+        assert_eq!(
+            resp.headers()
+                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "https://app.example"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oversized_range_header_returns_413() {
+        let tmp = tempfile::tempdir().unwrap();
+        let public_dir = tmp.path().join("public");
+        let private_dir = tmp.path().join("private");
+        let cfg = test_config(public_dir.clone(), private_dir);
+        write_file(&public_image_path(&cfg, "win7"), b"abcdef").await;
+
+        let app = app(cfg);
+        let range = "x".repeat(MAX_RANGE_HEADER_LEN + 1);
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/disk/win7")
+            .header(RANGE, range)
+            .header(ORIGIN, "https://app.example")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
