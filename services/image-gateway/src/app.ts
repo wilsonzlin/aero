@@ -37,6 +37,69 @@ export interface BuildAppDeps {
 
 const S3_MULTIPART_MAX_PARTS = 10_000;
 const CHUNK_INDEX_WIDTH = 8;
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_CORS_REQUEST_HEADERS_LEN = 4 * 1024;
+const MAX_RANGE_HEADER_LEN = 16 * 1024;
+const MAX_IF_NONE_MATCH_LEN = 16 * 1024;
+const MAX_IF_MODIFIED_SINCE_LEN = 128;
+const MAX_IF_RANGE_LEN = 256;
+const MAX_FORWARD_VALUE_LEN = 4 * 1024;
+const MAX_PROTO_VALUE_LEN = 64;
+
+function isRequestUrlTooLong(req: FastifyRequest): boolean {
+  // `req.raw.url` is the path + query string (no scheme/host).
+  return typeof req.raw.url === "string" && req.raw.url.length > MAX_REQUEST_URL_LEN;
+}
+
+function firstCommaSeparatedValue(raw: string): string {
+  const idx = raw.indexOf(",");
+  return (idx === -1 ? raw : raw.slice(0, idx)).trim();
+}
+
+function headerValueString(raw: unknown, maxLen: number): string | undefined {
+  if (typeof raw === "string") return raw.length <= maxLen ? raw : undefined;
+  if (Array.isArray(raw) && raw.length === 1 && typeof raw[0] === "string") {
+    return raw[0].length <= maxLen ? raw[0] : undefined;
+  }
+  return undefined;
+}
+
+function isSafeHeaderListValue(value: string): boolean {
+  // Conservative: allow RFC7230 token characters, commas, and whitespace.
+  //
+  // token = 1*tchar
+  // tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
+  //         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    // whitespace: HTAB or SP
+    if (c === 0x09 || c === 0x20 || c === 0x2c) continue; // \t, space, comma
+    if (c >= 0x30 && c <= 0x39) continue; // 0-9
+    if (c >= 0x41 && c <= 0x5a) continue; // A-Z
+    if (c >= 0x61 && c <= 0x7a) continue; // a-z
+    if (
+      c === 0x21 || // !
+      c === 0x23 || // #
+      c === 0x24 || // $
+      c === 0x25 || // %
+      c === 0x26 || // &
+      c === 0x27 || // '
+      c === 0x2a || // *
+      c === 0x2b || // +
+      c === 0x2d || // -
+      c === 0x2e || // .
+      c === 0x5e || // ^
+      c === 0x5f || // _
+      c === 0x60 || // `
+      c === 0x7c || // |
+      c === 0x7e // ~
+    ) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
 
 function assertBodyObject(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,6 +128,8 @@ function normalizeOpaqueTag(value: string): string {
 function ensureNoTransformCacheControl(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "no-transform";
+  // Defensive: avoid unbounded parsing on unexpected huge metadata values.
+  if (trimmed.length > 4 * 1024) return "no-transform";
   const directives = trimmed.split(",").map((directive) => directive.trim().toLowerCase());
   if (directives.includes("no-transform")) return trimmed;
   return `${trimmed}, no-transform`;
@@ -79,39 +144,30 @@ function isWeakEtag(value: string): boolean {
   return value.trim().toLowerCase().startsWith("w/");
 }
 
-function splitCommaHeaderOutsideQuotes(value: string): string[] {
-  // `If-None-Match` is a comma-separated list of entity-tags, but commas are allowed inside a
-  // quoted entity-tag value. Split only on commas that occur outside quotes.
-  const out: string[] = [];
-  let start = 0;
-  let inQuotes = false;
-  for (let i = 0; i < value.length; i++) {
-    const ch = value[i];
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (ch === "," && !inQuotes) {
-      out.push(value.slice(start, i));
-      start = i + 1;
-    }
-  }
-  out.push(value.slice(start));
-  return out;
-}
-
 function ifNoneMatchMatches(ifNoneMatch: string, currentEtag: string): boolean {
   const raw = ifNoneMatch.trim();
   if (!raw) return false;
   if (raw === "*") return true;
 
   const current = stripWeakEtagPrefix(normalizeEtag(currentEtag));
-  for (const part of splitCommaHeaderOutsideQuotes(raw)) {
-    const candidate = part.trim();
-    if (!candidate) continue;
-    if (candidate === "*") return true;
-    if (stripWeakEtagPrefix(normalizeEtag(candidate)) === current) return true;
+  let start = 0;
+  let inQuotes = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      const tag = raw.slice(start, i).trim();
+      if (tag === "*") return true;
+      if (tag && stripWeakEtagPrefix(normalizeEtag(tag)) === current) return true;
+      start = i + 1;
+    }
   }
+  const tag = raw.slice(start).trim();
+  if (tag === "*") return true;
+  if (tag && stripWeakEtagPrefix(normalizeEtag(tag)) === current) return true;
   return false;
 }
 
@@ -355,44 +411,74 @@ function applyCorsHeaders(reply: FastifyReply, config: Config): void {
     );
 
   if (allowOrigin !== "*") {
-    reply.header("access-control-allow-credentials", "true").header("vary", "origin");
+    const existing = headerValueString(reply.getHeader("vary"), MAX_FORWARD_VALUE_LEN);
+    const tokens = new Set<string>();
+    if (existing) {
+      for (const raw of existing.split(",")) {
+        const t = raw.trim();
+        if (!t) continue;
+        if (t === "*") {
+          reply.header("vary", "*");
+          reply.header("access-control-allow-credentials", "true");
+          return;
+        }
+        tokens.add(t.toLowerCase());
+      }
+    }
+    if (!tokens.has("origin")) {
+      const next = existing ? `${existing}, Origin` : "Origin";
+      reply.header("vary", next);
+    }
+    reply.header("access-control-allow-credentials", "true");
   }
 }
 
 function applyCorsPreflight(req: FastifyRequest, reply: FastifyReply): void {
-  const requestedHeaders = req.headers["access-control-request-headers"];
+  const requestedHeaders = headerValueString(
+    req.headers["access-control-request-headers"],
+    MAX_CORS_REQUEST_HEADERS_LEN
+  );
   reply
     .header("access-control-allow-methods", "GET,HEAD,POST,OPTIONS")
     .header(
       "access-control-allow-headers",
-      typeof requestedHeaders === "string"
+      requestedHeaders && isSafeHeaderListValue(requestedHeaders)
         ? requestedHeaders
         : "range,if-range,content-type,x-user-id"
     )
     .header("access-control-max-age", "86400");
 
-  reply.header("vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
+  const existing = headerValueString(reply.getHeader("vary"), MAX_FORWARD_VALUE_LEN);
+  if (existing && existing.trim() === "*") return;
+  const next = [
+    ...(existing ? [existing] : []),
+    "Origin",
+    "Access-Control-Request-Method",
+    "Access-Control-Request-Headers",
+  ].join(", ");
+  reply.header("vary", next);
 }
 
 function buildSelfUrl(req: FastifyRequest, path: string): string {
-  const rawHost = req.headers["x-forwarded-host"] ?? req.headers.host;
-  const host =
-    typeof rawHost === "string"
-      ? rawHost.split(",")[0].trim()
-      : Array.isArray(rawHost)
-        ? rawHost[0]
-        : undefined;
+  const rawHost = headerValueString(
+    req.headers["x-forwarded-host"] ?? req.headers.host,
+    MAX_FORWARD_VALUE_LEN
+  );
+  const host = rawHost ? firstCommaSeparatedValue(rawHost) : undefined;
 
-  const rawProto = req.headers["x-forwarded-proto"];
-  const proto =
-    typeof rawProto === "string"
-      ? rawProto.split(",")[0].trim()
-      : Array.isArray(rawProto)
-        ? rawProto[0]
-        : req.protocol;
+  const rawProto = headerValueString(req.headers["x-forwarded-proto"], MAX_PROTO_VALUE_LEN);
+  const protoCandidate = rawProto ? firstCommaSeparatedValue(rawProto).toLowerCase() : undefined;
+  const proto = protoCandidate === "http" || protoCandidate === "https" ? protoCandidate : req.protocol;
 
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   if (!host) return normalizedPath;
+  // Defensive: avoid emitting obviously malformed absolute URLs when forwarded headers are junk.
+  for (let i = 0; i < host.length; i++) {
+    const c = host.charCodeAt(i);
+    if (c <= 0x20 || c === 0x2f || c === 0x5c) {
+      return normalizedPath;
+    }
+  }
   return `${proto}://${host}${normalizedPath}`;
 }
 
@@ -403,6 +489,10 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
   app.addHook("onRequest", async (req, reply) => {
     applyCorsHeaders(reply, deps.config);
+
+    if (isRequestUrlTooLong(req)) {
+      return reply.status(414).send({ error: { code: "URL_TOO_LONG", message: "URL too long" } });
+    }
 
     if (req.method === "OPTIONS") {
       applyCorsPreflight(req, reply);
@@ -1068,14 +1158,28 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
-    const ifNoneMatch =
+    const ifNoneMatchRaw =
       typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : undefined;
+    const ifNoneMatch =
+      ifNoneMatchRaw && ifNoneMatchRaw.length <= MAX_IF_NONE_MATCH_LEN ? ifNoneMatchRaw : undefined;
     const ifModifiedSince =
       typeof req.headers["if-modified-since"] === "string"
-        ? req.headers["if-modified-since"]
+        ? req.headers["if-modified-since"].slice(0, MAX_IF_MODIFIED_SINCE_LEN + 1)
+        : undefined;
+    const ifModifiedSinceSafe =
+      ifModifiedSince && ifModifiedSince.length <= MAX_IF_MODIFIED_SINCE_LEN
+        ? ifModifiedSince
         : undefined;
 
     const rawRange = typeof req.headers.range === "string" ? req.headers.range : undefined;
+    if (rawRange && rawRange.length > MAX_RANGE_HEADER_LEN) {
+      const headers = buildRangeProxyHeaders({
+        contentType: DISK_BYTES_CONTENT_TYPE,
+        crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
+      });
+      reply.status(413).headers(headers).send();
+      return;
+    }
     const parsedRange = rawRange ? parseSingleByteRangeHeader(rawRange) : undefined;
     let requestedRange = parsedRange?.normalized;
     if (rawRange && !requestedRange) {
@@ -1090,10 +1194,13 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       return;
     }
 
+    const ifRangeRaw =
+      requestedRange && typeof req.headers["if-range"] === "string" ? req.headers["if-range"] : undefined;
     const ifRange =
-      requestedRange && typeof req.headers["if-range"] === "string"
-        ? req.headers["if-range"]
-        : undefined;
+      ifRangeRaw && ifRangeRaw.length <= MAX_IF_RANGE_LEN ? ifRangeRaw : undefined;
+    if (ifRangeRaw && !ifRange) {
+      requestedRange = undefined;
+    }
 
     let ifMatch: string | undefined;
     let ifUnmodifiedSince: Date | undefined;
@@ -1178,12 +1285,12 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     }
 
     // Conditional requests (RFC 9110): If-None-Match dominates If-Modified-Since.
-    if (ifNoneMatch || ifModifiedSince) {
+    if (ifNoneMatch || ifModifiedSinceSafe) {
       let currentEtag = record.etag;
       let currentLastModified = record.lastModified ? new Date(record.lastModified) : undefined;
       let currentCacheControl: string | undefined;
 
-      if (!currentEtag || (ifModifiedSince && !currentLastModified)) {
+      if (!currentEtag || (ifModifiedSinceSafe && !currentLastModified)) {
         let head: HeadObjectCommandOutput;
         try {
           head = await deps.s3.send(
@@ -1226,9 +1333,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
       if (
         !ifNoneMatch &&
-        ifModifiedSince &&
+        ifModifiedSinceSafe &&
         currentLastModified &&
-        ifModifiedSinceAllowsNotModified(ifModifiedSince, currentLastModified)
+        ifModifiedSinceAllowsNotModified(ifModifiedSinceSafe, currentLastModified)
       ) {
         sendNotModified({
           reply,
@@ -1258,7 +1365,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       return;
     }
 
-    let s3Res: GetObjectCommandOutput;
+    let s3Res: GetObjectCommandOutput | undefined;
     try {
       s3Res = await deps.s3.send(
         new GetObjectCommand({
@@ -1317,6 +1424,10 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       if (!handled) throw err;
     }
 
+    if (!s3Res) {
+      throw new ApiError(502, "S3 did not return a response", "S3_ERROR");
+    }
+
     if (!s3Res.Body) {
       throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
     }
@@ -1357,11 +1468,17 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
-    const ifNoneMatch =
+    const ifNoneMatchRaw =
       typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : undefined;
+    const ifNoneMatch =
+      ifNoneMatchRaw && ifNoneMatchRaw.length <= MAX_IF_NONE_MATCH_LEN ? ifNoneMatchRaw : undefined;
     const ifModifiedSince =
       typeof req.headers["if-modified-since"] === "string"
-        ? req.headers["if-modified-since"]
+        ? req.headers["if-modified-since"].slice(0, MAX_IF_MODIFIED_SINCE_LEN + 1)
+        : undefined;
+    const ifModifiedSinceSafe =
+      ifModifiedSince && ifModifiedSince.length <= MAX_IF_MODIFIED_SINCE_LEN
+        ? ifModifiedSince
         : undefined;
 
     let head: HeadObjectCommandOutput;
@@ -1394,9 +1511,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     }
     if (
       !ifNoneMatch &&
-      ifModifiedSince &&
+      ifModifiedSinceSafe &&
       head.LastModified instanceof Date &&
-      ifModifiedSinceAllowsNotModified(ifModifiedSince, head.LastModified)
+      ifModifiedSinceAllowsNotModified(ifModifiedSinceSafe, head.LastModified)
     ) {
       sendNotModified({
         reply,

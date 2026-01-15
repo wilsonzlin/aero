@@ -1162,4 +1162,100 @@ describe("app", () => {
     expect(res.headers["access-control-allow-headers"]).toBe("content-type,x-user-id");
     expect(res.headers["access-control-allow-credentials"]).toBe("true");
   });
+
+  it("rejects overly long request URLs with 414 (and still applies CORS headers)", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadBucketCommand) return {};
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const qs = "a".repeat(9_000);
+    const res = await app.inject({
+      method: "GET",
+      url: `/healthz?${qs}`,
+      headers: { origin: "http://localhost:5173" },
+    });
+
+    expect(res.statusCode).toBe(414);
+    expect(res.json()).toMatchObject({ error: { code: "URL_TOO_LONG" } });
+    expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(res.headers["access-control-allow-credentials"]).toBe("true");
+  });
+
+  it("does not reflect oversized Access-Control-Request-Headers", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadBucketCommand) return {};
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const huge = "a".repeat(5_000);
+    const res = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/images",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": huge,
+      },
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(res.headers["access-control-allow-headers"]).toBe("range,if-range,content-type,x-user-id");
+  });
+
+  it("rejects oversized Range headers without calling S3", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      size: 123,
+    });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called for oversized Range headers");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: `bytes=0-${"0".repeat(20_000)}`,
+      },
+    });
+
+    expect(res.statusCode).toBe(413);
+    expect(res.headers["cache-control"]).toBe("no-transform");
+    expect(res.headers["content-encoding"]).toBe("identity");
+    expect(res.headers["content-type"]).toBe("application/octet-stream");
+  });
 });

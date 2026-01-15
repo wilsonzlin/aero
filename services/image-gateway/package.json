@@ -25,5 +25,11 @@
     "@aws-sdk/cloudfront-signer": "^3.540.0",
     "@aws-sdk/s3-request-presigner": "^3.540.0",
     "fastify": "^4.26.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4",
+    "vitest": "^1.6.0"
   }
 }

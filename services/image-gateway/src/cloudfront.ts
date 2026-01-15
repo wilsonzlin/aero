@@ -57,7 +57,7 @@ export function createSignedCookies(params: {
     ],
   });
 
-  const cookies = getSignedCookies({
+  const rawCookies = getSignedCookies({
     policy,
     keyPairId: params.keyPairId,
     privateKey: params.privateKeyPem,
@@ -80,11 +80,21 @@ export function createSignedCookies(params: {
   // Use an explicit Expires attribute so browsers drop the cookie when the CloudFront policy expires.
   baseAttributes.push(`Expires=${params.expiresAt.toUTCString()}`);
 
-  return Object.entries(cookies).map(([name, value]) => ({
-    name,
-    value,
-    attributes: [...baseAttributes],
-  }));
+  if (!rawCookies || typeof rawCookies !== "object") {
+    throw new ApiError(500, "CloudFront signer did not return cookies", "INTERNAL");
+  }
+
+  const entries = Object.entries(rawCookies as unknown as Record<string, unknown>);
+  return entries.map(([name, value]) => {
+    if (typeof value !== "string" || !value) {
+      throw new ApiError(500, "CloudFront signer returned an invalid cookie", "INTERNAL");
+    }
+    return {
+      name,
+      value,
+      attributes: [...baseAttributes],
+    };
+  });
 }
 
 export function formatSetCookie(cookie: SignedCookie): string {
