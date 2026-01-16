@@ -3,9 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { formatOneLineUtf8 } from './src/text.js';
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
+const MAX_ERROR_BODY_BYTES = 512;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -94,6 +96,13 @@ function handleStaticFile(reqPath, res) {
   } catch {
     return null;
   }
+  // `reqPath` is already capped, but percent-decoding can expand it.
+  if (decodedPath.length > MAX_PATHNAME_LEN) {
+    return null;
+  }
+  if (decodedPath.includes('\0')) {
+    return null;
+  }
 
   // Serve built browser JS.
   if (decodedPath.startsWith('/dist/')) {
@@ -125,7 +134,8 @@ function handleStaticFile(reqPath, res) {
 function sendText(res, statusCode, message) {
   withCommonHeaders(res);
   res.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end(message);
+  const safeMessage = formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || 'Error';
+  res.end(safeMessage);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -140,7 +150,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const url = new URL(rawUrl, 'http://localhost');
+    let url;
+    try {
+      url = new URL(rawUrl, 'http://localhost');
+    } catch {
+      sendText(res, 400, 'Bad Request');
+      return;
+    }
     const reqPath = url.pathname;
     if (reqPath.length > MAX_PATHNAME_LEN) {
       sendText(res, 414, 'URI Too Long');
@@ -180,7 +196,10 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     withCommonHeaders(res);
     res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end(`Internal server error: ${err instanceof Error ? err.message : String(err)}`);
+    // Avoid echoing internal error details back to the client.
+    // eslint-disable-next-line no-console
+    console.error(err?.stack || err);
+    res.end('Internal server error');
   }
 });
 

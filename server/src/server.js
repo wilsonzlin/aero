@@ -5,11 +5,14 @@ import { createLogger } from "./logger.js";
 import { createMetrics } from "./metrics.js";
 import { getAuthTokenFromRequest, isOriginAllowed, isTokenAllowed } from "./auth.js";
 import { TcpProxyManager } from "./tcpProxy.js";
+import { formatOneLineUtf8 } from "./text.js";
 
 const MAX_UPGRADE_URL_LEN = 8 * 1024;
+const MAX_UPGRADE_STATUS_MESSAGE_BYTES = 64;
 
 function writeUpgradeResponse(socket, statusCode, statusMessage) {
-  socket.write(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n\r\n`);
+  const safeStatusMessage = formatOneLineUtf8(statusMessage, MAX_UPGRADE_STATUS_MESSAGE_BYTES) || "Error";
+  socket.write(`HTTP/1.1 ${statusCode} ${safeStatusMessage}\r\n\r\n`);
   socket.destroy();
 }
 
@@ -54,7 +57,13 @@ export function createAeroServer(config, { logger = createLogger({ level: config
       return;
     }
 
-    const url = new URL(rawUrl, "http://localhost");
+    let url;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      writeUpgradeResponse(socket, 400, "Bad Request");
+      return;
+    }
     if (url.pathname !== "/ws/tcp") {
       writeUpgradeResponse(socket, 404, "Not Found");
       return;

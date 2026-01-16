@@ -10,15 +10,18 @@ import {
   encodeServerEndFrame,
 } from "./protocol.js";
 import { PolicyError, resolveAndValidateTarget } from "./policy.js";
+import { formatOneLineUtf8 } from "./text.js";
 
 const WS_CLOSE_POLICY_VIOLATION = 1008;
 const WS_CLOSE_UNSUPPORTED_DATA = 1003;
 
 let nextSessionId = 1;
 
+const MAX_WS_CLOSE_REASON_BYTES = 123;
+
 function closeWebSocket(ws, code, reason) {
   try {
-    ws.close(code, reason);
+    ws.close(code, formatOneLineUtf8(reason, MAX_WS_CLOSE_REASON_BYTES));
   } catch {
     // ignore
   }
@@ -79,7 +82,8 @@ class TcpProxySession {
       }
       this.metrics.increment("bytesInTotal", buf.length);
       this.#handleFrame(buf).catch((err) => {
-        this.logger.warn("ws_frame_error", { sessionId: this.sessionId, err: err?.message ?? String(err) });
+        const errForLog = formatOneLineUtf8(err instanceof Error ? err.message : err, 512) || "Error";
+        this.logger.warn("ws_frame_error", { sessionId: this.sessionId, err: errForLog });
         closeWebSocket(this.ws, WS_CLOSE_POLICY_VIOLATION, "Protocol error");
       });
     });
@@ -199,11 +203,16 @@ class TcpProxySession {
       });
 
       socket.once("error", (err) => {
-        conn.lastErrorMessage = err.message;
-        this.logger.warn("tcp_socket_error", { sessionId: this.sessionId, connId, err: err.message });
+        const clientMessage = formatConnectErrorForClient(err);
+        conn.lastErrorMessage = clientMessage;
+        this.logger.warn("tcp_socket_error", {
+          sessionId: this.sessionId,
+          connId,
+          code: typeof err?.code === "string" ? err.code : undefined,
+        });
         if (!conn.openResponseSent && this.ws.readyState === this.ws.OPEN) {
           conn.openResponseSent = true;
-          this.#sendOpened(connId, OpenStatus.CONNECT, err.message);
+          this.#sendOpened(connId, OpenStatus.CONNECT, clientMessage);
         }
       });
 
@@ -219,10 +228,11 @@ class TcpProxySession {
     } catch (err) {
       this.metrics.increment("tcpRejectedTotal");
       if (err instanceof PolicyError) {
-        this.#sendOpened(connId, OpenStatus.POLICY, err.message);
+        // Keep policy failures stable and non-leaky.
+        this.#sendOpened(connId, OpenStatus.POLICY, "Target is not allowed");
         return;
       }
-      this.#sendOpened(connId, OpenStatus.CONNECT, err?.message ?? "Connect failed");
+      this.#sendOpened(connId, OpenStatus.CONNECT, formatConnectErrorForClient(err));
     }
   }
 
@@ -257,5 +267,20 @@ class ProxyTcpConnection {
     this.openResponseSent = false;
     this.openOk = false;
     this.lastErrorMessage = null;
+  }
+}
+
+function formatConnectErrorForClient(err) {
+  const code = typeof err?.code === "string" ? err.code : "";
+  switch (code) {
+    case "ECONNREFUSED":
+      return "connection refused";
+    case "ETIMEDOUT":
+      return "connection timed out";
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+      return "host unreachable";
+    default:
+      return "connect failed";
   }
 }

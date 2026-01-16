@@ -1,4 +1,5 @@
 import ipaddr from "ipaddr.js";
+import { formatOneLineUtf8 } from "./text.js";
 
 export const FrameType = Object.freeze({
   CONNECT: 0x01,
@@ -36,6 +37,8 @@ export const CloseReason = Object.freeze({
   RATE_LIMIT: 5,
 });
 
+const MAX_PROTOCOL_MESSAGE_BYTES = 1024;
+
 function u32be(value) {
   const b = Buffer.alloc(4);
   b.writeUInt32BE(value >>> 0, 0);
@@ -49,8 +52,8 @@ function u16be(value) {
 }
 
 function encodeStringWithLength(str) {
-  const encoded = Buffer.from(str, "utf8");
-  if (encoded.length > 0xffff) throw new Error("String too long");
+  const safe = formatOneLineUtf8(str, MAX_PROTOCOL_MESSAGE_BYTES);
+  const encoded = Buffer.from(safe, "utf8");
   return Buffer.concat([u16be(encoded.length), encoded]);
 }
 

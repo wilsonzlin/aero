@@ -11,6 +11,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { formatOneLineUtf8 } from "./src/text.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -19,6 +20,7 @@ const MAX_RANGE_HEADER_LEN = 16 * 1024;
 const MAX_IF_NONE_MATCH_LEN = 16 * 1024;
 const MAX_IF_MODIFIED_SINCE_LEN = 128;
 const MAX_IF_RANGE_LEN = 256;
+const MAX_ERROR_BODY_BYTES = 512;
 
 function parseArgs(argv) {
   const args = { dir: process.cwd(), port: 8080, coopCoep: false, authToken: null };
@@ -50,6 +52,9 @@ function safeJoin(rootDir, requestPath) {
   } catch {
     return null;
   }
+  // `requestPath` is already capped, but percent-decoding can expand it.
+  if (decoded.length > MAX_PATHNAME_LEN) return null;
+  if (decoded.includes("\0")) return null;
   const full = path.resolve(path.join(rootDir, "." + decoded));
   if (!full.startsWith(rootDir + path.sep) && full !== rootDir) return null;
   return full;
@@ -212,7 +217,8 @@ function requireAuth(req) {
 }
 
 function sendRequestError(req, res, { statusCode, message }) {
-  const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from(String(message), "utf8");
+  const safeMessage = formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || "Error";
+  const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from(safeMessage, "utf8");
   res.statusCode = statusCode;
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -348,15 +354,13 @@ const server = http.createServer((req, res) => {
   }
   const filePath = safeJoin(root, url.pathname);
   if (!filePath) {
-    res.statusCode = 404;
-    res.end("Not found");
+    sendRequestError(req, res, { statusCode: 404, message: "Not found" });
     return;
   }
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) {
-      res.statusCode = 404;
-      res.end("Not found");
+      sendRequestError(req, res, { statusCode: 404, message: "Not found" });
       return;
     }
 
@@ -404,8 +408,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.method !== "GET") {
-      res.statusCode = 405;
-      res.end("Method not allowed");
+      sendRequestError(req, res, { statusCode: 405, message: "Method not allowed" });
       return;
     }
 

@@ -4,9 +4,11 @@ import { promisify } from "node:util";
 import dns from "node:dns/promises";
 import { getAuthTokenFromRequest, isOriginAllowed, isTokenAllowed } from "./auth.js";
 import { isHostAllowed, isIpAllowed } from "./policy.js";
+import { formatOneLineUtf8 } from "./text.js";
 
 const stat = promisify(fs.stat);
 const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
 
 function setCrossOriginIsolationHeaders(res) {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -153,7 +155,21 @@ export function createHttpHandler({ config, logger, metrics }) {
         return;
       }
 
-      const url = new URL(rawUrl, "http://localhost");
+      let url;
+      try {
+        url = new URL(rawUrl, "http://localhost");
+      } catch {
+        res.statusCode = 400;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Bad Request");
+        return;
+      }
+      if (url.pathname.length > MAX_PATHNAME_LEN) {
+        res.statusCode = 414;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("URI Too Long");
+        return;
+      }
 
       if (req.method === "GET" && url.pathname === "/healthz") {
         res.statusCode = 200;
@@ -176,7 +192,8 @@ export function createHttpHandler({ config, logger, metrics }) {
 
       await handleStatic(req, res, url, { config });
     })().catch((err) => {
-      logger.error("http_error", { err: err?.message ?? String(err) });
+      const errForLog = formatOneLineUtf8(err instanceof Error ? err.message : err, 512) || "Error";
+      logger.error("http_error", { err: errForLog });
       if (!res.headersSent) res.statusCode = 500;
       res.end("Internal Server Error");
     });
