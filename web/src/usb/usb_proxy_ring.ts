@@ -1,5 +1,7 @@
 import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
 import { MAX_USB_PROXY_BYTES, type UsbProxyActionOptions } from "./usb_proxy_protocol";
+import { DEFAULT_ERROR_BYTE_LIMITS } from "../errors/serialize";
+import { formatOneLineUtf8 } from "../text";
 
 // SharedArrayBuffer-backed SPSC ring buffer for variable-length USB proxy records.
 //
@@ -100,6 +102,8 @@ function decodeSetupPacket(view: DataView, offset: number): SetupPacket {
 const TRUNCATION_MARKER = " [truncated]";
 const TRUNCATION_MARKER_BYTES = textEncoder.encode(TRUNCATION_MARKER);
 
+// Wire cap for diagnostic messages sent through the ring. Encoding/decoding additionally clamps
+// messages to `DEFAULT_ERROR_BYTE_LIMITS` so oversized/multi-line strings never escape the ring.
 const MAX_USB_PROXY_ERROR_MESSAGE_BYTES = 16 * 1024;
 
 function encodeUtf8TruncatedString(input: string, maxBytes: number): Uint8Array {
@@ -116,8 +120,8 @@ function encodeUtf8TruncatedString(input: string, maxBytes: number): Uint8Array 
   if (maxBytes <= TRUNCATION_MARKER_BYTES.byteLength) return TRUNCATION_MARKER_BYTES.slice(0, maxBytes);
 
   // Truncate and append a marker so callers can distinguish "truncated due to limit" vs
-  // "message naturally ended here". Preserve the previous `truncateUtf8` semantics (byte-based
-  // truncation; may cut through UTF-8 sequences).
+  // "message naturally ended here". Preserve `truncateUtf8` semantics: cap by UTF-8 bytes while
+  // avoiding invalid trailing partial code points.
   const headMax = maxBytes - TRUNCATION_MARKER_BYTES.byteLength;
   const headLen = Math.min(headMax, written);
   const out = new Uint8Array(headLen + TRUNCATION_MARKER_BYTES.byteLength);
@@ -656,7 +660,8 @@ export class UsbProxyRing {
       const fixed = USB_PROXY_COMPLETION_HEADER_BYTES + 4;
       const ringMax = this.#cap > fixed ? this.#cap - fixed : 0;
       const maxBytes = Math.min(ringMax, MAX_USB_PROXY_ERROR_MESSAGE_BYTES);
-      payload = encodeUtf8TruncatedString(completion.message, maxBytes);
+      const safeMessage = formatOneLineUtf8(completion.message, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Error";
+      payload = encodeUtf8TruncatedString(safeMessage, maxBytes);
       recordSize += 4 + payload.byteLength;
     }
 
@@ -791,7 +796,8 @@ export class UsbProxyRing {
       const payloadStart = headIndex + fixed;
       const payloadEnd = payloadStart + msgLen;
       const msgBytes = this.#data.slice(payloadStart, payloadEnd);
-      const message = textDecoder.decode(msgBytes);
+      const rawMessage = textDecoder.decode(msgBytes);
+      const message = formatOneLineUtf8(rawMessage, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Error";
       Atomics.store(this.#ctrl, CtrlIndex.Head, u32(head + total) | 0);
       return { kind, id, status: "error", message };
     }

@@ -155,6 +155,36 @@ describe("usb/UsbProxyRing", () => {
     expect(ring.popCompletion()).toBeNull();
   });
 
+  it("sanitizes and byte-bounds error completion messages", () => {
+    const sab = createUsbProxyRingBuffer(64 * 1024);
+    const ring = new UsbProxyRing(sab);
+
+    const multiline: UsbHostCompletion = {
+      kind: "controlOut",
+      id: 1,
+      status: "error",
+      message: "hello\n\tworld",
+    };
+    expect(ring.pushCompletion(multiline)).toBe(true);
+    const popped1 = ring.popCompletion();
+    if (!popped1 || popped1.status !== "error") throw new Error("unreachable");
+    expect(popped1.message).toBe("hello world");
+
+    const huge: UsbHostCompletion = {
+      kind: "controlOut",
+      id: 2,
+      status: "error",
+      message: "x".repeat(600),
+    };
+    expect(ring.pushCompletion(huge)).toBe(true);
+    const popped2 = ring.popCompletion();
+    if (!popped2 || popped2.status !== "error") throw new Error("unreachable");
+    expect(popped2.message).toBe("x".repeat(512));
+    expect(new TextEncoder().encode(popped2.message).byteLength).toBeLessThanOrEqual(512);
+
+    expect(ring.popCompletion()).toBeNull();
+  });
+
   it("handles wraparound and preserves ordering", () => {
     const sab = createUsbProxyRingBuffer(64);
     const ring = new UsbProxyRing(sab);
