@@ -2,6 +2,7 @@
 import { randomInt } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { formatOneLineUtf8 } from '../../src/text.js';
 
 /**
  * Range Harness
@@ -29,6 +30,8 @@ const DEFAULT_ACCEPT_ENCODING = 'identity';
 // Use this when you want to detect CDN/object-store compression behavior that would affect real
 // browser disk streaming clients.
 const BROWSER_ACCEPT_ENCODING = 'gzip, deflate, br, zstd';
+
+const MAX_LOG_ERROR_MESSAGE_BYTES = 512;
 
 function printUsage(exitCode = 0) {
   const lines = [
@@ -211,36 +214,74 @@ function median(values) {
 
 function classifyXCache(value) {
   if (!value) return 'missing';
+  if (value.length > 1024) return 'other';
   const lower = value.toLowerCase();
   if (lower.includes('miss')) return 'miss';
   if (lower.includes('hit')) return 'hit';
   return 'other';
 }
 
+const MAX_CONTENT_RANGE_HEADER_VALUE_LEN = 256;
+const MAX_CONTENT_ENCODING_HEADER_VALUE_LEN = 256;
+const MAX_CONTENT_LENGTH_HEADER_VALUE_LEN = 32;
+const MAX_ETAG_HEADER_VALUE_LEN = 4 * 1024;
+const MAX_ACCEPT_RANGES_HEADER_VALUE_LEN = 256;
+const MAX_X_CACHE_HEADER_VALUE_LEN = 1024;
+
+function formatHeaderValueForLog(value, maxLen, missing = '(missing)') {
+  if (!value) return missing;
+  if (value.length <= maxLen) return value;
+  return `${value.slice(0, maxLen)}...(truncated)`;
+}
+
+function getHeaderBounded(headers, name, maxLen) {
+  const value = headers.get(name);
+  if (!value) return null;
+  if (value.length > maxLen) return null;
+  return value;
+}
+
+function parseSafeDecimal(s) {
+  // `\d+` from regex ensures ASCII digits only, but still bound size and safe-int range.
+  if (!s || s.length > 16) return null;
+  const n = Number(s);
+  if (!Number.isSafeInteger(n) || n < 0) return null;
+  return n;
+}
+
 export function parseContentRange(value) {
   if (!value) return null;
+  if (value.length > MAX_CONTENT_RANGE_HEADER_VALUE_LEN) return null;
   const trimmed = value.trim();
+  if (trimmed.length > MAX_CONTENT_RANGE_HEADER_VALUE_LEN) return null;
   // Examples:
   //   bytes 0-1023/1048576
   //   bytes 0-1023/*
   //   bytes */1048576 (for 416)
   let m = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(trimmed);
   if (m) {
+    const start = parseSafeDecimal(m[1]);
+    const end = parseSafeDecimal(m[2]);
+    const total = m[3] === '*' ? null : parseSafeDecimal(m[3]);
+    if (start == null || end == null) return null;
+    if (m[3] !== '*' && total == null) return null;
     return {
       unit: 'bytes',
-      start: Number(m[1]),
-      end: Number(m[2]),
-      total: m[3] === '*' ? null : Number(m[3]),
+      start,
+      end,
+      total,
       isUnsatisfied: false,
     };
   }
   m = /^bytes\s+\*\/(\d+)$/i.exec(trimmed);
   if (m) {
+    const total = parseSafeDecimal(m[1]);
+    if (total == null) return null;
     return {
       unit: 'bytes',
       start: null,
       end: null,
-      total: Number(m[1]),
+      total,
       isUnsatisfied: true,
     };
   }
@@ -346,9 +387,11 @@ async function getResourceInfo(url, extraHeaders, acceptEncoding) {
     headRes = null;
   }
 
-  let etag = headRes?.headers?.get('etag') ?? null;
-  let contentLength = headRes?.headers?.get('content-length') ?? null;
-  let acceptRanges = headRes?.headers?.get('accept-ranges') ?? null;
+  let etag = headRes?.headers ? getHeaderBounded(headRes.headers, 'etag', MAX_ETAG_HEADER_VALUE_LEN) : null;
+  const contentLengthRaw = headRes?.headers?.get('content-length') ?? null;
+  const contentLength =
+    contentLengthRaw && contentLengthRaw.length <= MAX_CONTENT_LENGTH_HEADER_VALUE_LEN ? contentLengthRaw : null;
+  let acceptRanges = headRes?.headers ? getHeaderBounded(headRes.headers, 'accept-ranges', MAX_ACCEPT_RANGES_HEADER_VALUE_LEN) : null;
 
   if (headRes && headRes.ok && contentLength && /^\d+$/.test(contentLength)) {
     return {
@@ -369,11 +412,13 @@ async function getResourceInfo(url, extraHeaders, acceptEncoding) {
   };
 
   const res = await fetch(url, { method: 'GET', headers: rangeHeaders, signal: controller.signal });
-  etag = res.headers.get('etag') ?? etag;
-  acceptRanges = res.headers.get('accept-ranges') ?? acceptRanges;
+  etag = getHeaderBounded(res.headers, 'etag', MAX_ETAG_HEADER_VALUE_LEN) ?? etag;
+  acceptRanges = getHeaderBounded(res.headers, 'accept-ranges', MAX_ACCEPT_RANGES_HEADER_VALUE_LEN) ?? acceptRanges;
   const contentRange = res.headers.get('content-range');
   const parsed = parseContentRange(contentRange);
-  const resContentLength = res.headers.get('content-length');
+  const resContentLengthRaw = res.headers.get('content-length');
+  const resContentLength =
+    resContentLengthRaw && resContentLengthRaw.length <= MAX_CONTENT_LENGTH_HEADER_VALUE_LEN ? resContentLengthRaw : null;
 
   // Avoid downloading the full object if the server ignores our range.
   await readBodyAndCount(res.body, { byteLimit: 1, abortController: controller });
@@ -403,8 +448,10 @@ async function getResourceInfo(url, extraHeaders, acceptEncoding) {
   const headStatusStr = headRes ? `${headRes.status}` : 'n/a';
   throw new Error(
     `Unable to determine Content-Length. HEAD status=${headStatusStr} ` +
-      `content-length=${contentLength ?? 'n/a'}; range probe status=${res.status} ` +
-      `content-range=${contentRange ?? 'n/a'} content-length=${resContentLength ?? 'n/a'}`,
+      `content-length=${formatHeaderValueForLog(contentLengthRaw, MAX_CONTENT_LENGTH_HEADER_VALUE_LEN, 'n/a')}; range probe status=${res.status} ` +
+      `content-range=${formatHeaderValueForLog(contentRange, MAX_CONTENT_RANGE_HEADER_VALUE_LEN, 'n/a')} content-length=${
+        formatHeaderValueForLog(resContentLengthRaw, MAX_CONTENT_LENGTH_HEADER_VALUE_LEN, 'n/a')
+      }`,
   );
 }
 
@@ -556,9 +603,10 @@ async function main() {
   const info = await getResourceInfo(opts.url, opts.headers, opts.acceptEncoding);
   log(`HEAD: status=${info.headStatus ?? 'n/a'} ok=${info.headOk} usedFallback=${info.usedFallback}`);
   log(
-    `Resource: size=${formatBytes(info.size)} (${info.size} bytes) etag=${info.etag ?? '(missing)'} accept-ranges=${
-      info.acceptRanges ?? '(missing)'
-    }`,
+    `Resource: size=${formatBytes(info.size)} (${info.size} bytes) etag=${formatHeaderValueForLog(
+      info.etag,
+      MAX_ETAG_HEADER_VALUE_LEN,
+    )} accept-ranges=${formatHeaderValueForLog(info.acceptRanges, MAX_ACCEPT_RANGES_HEADER_VALUE_LEN)}`,
   );
 
   const plan = buildPlan({
@@ -612,7 +660,8 @@ async function main() {
             signal: controller.signal,
           });
         } catch (err) {
-          fetchError = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
+          const rawFetchError = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
+          fetchError = formatOneLineUtf8(rawFetchError, MAX_LOG_ERROR_MESSAGE_BYTES) || 'Error';
           const endNs = nowNs();
           passFinishedNs = endNs;
           finishedNs = endNs;
@@ -632,10 +681,15 @@ async function main() {
         }
 
         const status = response.status;
-        const contentRangeHeader = response.headers.get('content-range');
-        const xCache = response.headers.get('x-cache');
+        const contentRangeHeaderRaw = response.headers.get('content-range');
+        const contentRangeHeader =
+          contentRangeHeaderRaw && contentRangeHeaderRaw.length <= MAX_CONTENT_RANGE_HEADER_VALUE_LEN ? contentRangeHeaderRaw : null;
+        const xCacheRaw = response.headers.get('x-cache');
+        const xCache = xCacheRaw && xCacheRaw.length <= MAX_X_CACHE_HEADER_VALUE_LEN ? xCacheRaw : null;
         const resContentLength = response.headers.get('content-length');
-        const contentEncoding = response.headers.get('content-encoding');
+        const contentEncodingRaw = response.headers.get('content-encoding');
+        const contentEncoding =
+          contentEncodingRaw && contentEncodingRaw.length <= MAX_CONTENT_ENCODING_HEADER_VALUE_LEN ? contentEncodingRaw : null;
 
         // If the server ignored our Range and returns 200, avoid pulling an entire
         // disk image into memory by aborting after expectedLen bytes. This still
@@ -656,9 +710,12 @@ async function main() {
         const warnings = [];
         let ok = true;
 
-        if (contentEncoding && contentEncoding.trim().toLowerCase() !== 'identity') {
+        const contentEncodingTrimmed = contentEncoding ? contentEncoding.trim() : null;
+        if (contentEncodingTrimmed && contentEncodingTrimmed.toLowerCase() !== 'identity') {
           ok = false;
-          warnings.push(`unexpected Content-Encoding: ${contentEncoding}`);
+          warnings.push(
+            `unexpected Content-Encoding: ${formatHeaderValueForLog(contentEncodingTrimmed, MAX_CONTENT_ENCODING_HEADER_VALUE_LEN)}`,
+          );
         }
 
         if (status === 206) {
@@ -666,11 +723,18 @@ async function main() {
 
           if (!parsed) {
             ok = false;
-            warnings.push(`invalid Content-Range: ${contentRangeHeader ?? '(missing)'}`);
+            warnings.push(
+              `invalid Content-Range: ${formatHeaderValueForLog(contentRangeHeaderRaw, MAX_CONTENT_RANGE_HEADER_VALUE_LEN)}`,
+            );
           } else {
             if (parsed.isUnsatisfied || parsed.start == null || parsed.end == null) {
               ok = false;
-              warnings.push(`unexpected Content-Range for 206: ${contentRangeHeader ?? '(missing)'}`);
+              warnings.push(
+                `unexpected Content-Range for 206: ${formatHeaderValueForLog(
+                  contentRangeHeaderRaw,
+                  MAX_CONTENT_RANGE_HEADER_VALUE_LEN,
+                )}`,
+              );
             }
 
             if (
@@ -725,7 +789,10 @@ async function main() {
         log(
           `${label} ${rangeValue} status=${status} bytes=${bytes} time=${formatMs(latencyMs)} rate=${formatRate(
             perReqRate,
-          )} content-range=${contentRangeHeader ?? '(missing)'} x-cache=${xCache ?? '(missing)'}${
+          )} content-range=${formatHeaderValueForLog(
+            contentRangeHeaderRaw,
+            MAX_CONTENT_RANGE_HEADER_VALUE_LEN,
+          )} x-cache=${formatHeaderValueForLog(xCacheRaw, MAX_X_CACHE_HEADER_VALUE_LEN)}${
             warnings.length ? ` WARN=${warnings[0]}` : ''
           }`,
         );

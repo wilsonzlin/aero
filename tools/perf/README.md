@@ -70,7 +70,7 @@ Run locally against a built/previewed app (closer to CI behavior):
 # One-time setup (per machine): install Playwright browsers.
 # (Install deps first so `npx playwright` uses the repo-pinned version.)
 npm ci
-npx playwright install chromium
+node scripts/playwright_install.mjs chromium
 
 # Build + start `vite preview`, wait for readiness, run tools/perf/run.mjs, and clean up.
 node scripts/ci/run_browser_perf.mjs --preview --out-dir perf-results/local --iterations 7

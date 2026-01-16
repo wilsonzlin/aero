@@ -5,9 +5,48 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+const MAX_SPAWN_ERROR_MESSAGE_BYTES = 512;
+const MAX_ERROR_BODY_BYTES = 512;
+
 const PUBLIC_IMAGE_ID = 'win7';
 const PRIVATE_IMAGE_ID = 'secret';
 const PRIVATE_USER_ID = 'alice';
+
+function sanitizeOneLine(input) {
+  let out = '';
+  let pendingSpace = false;
+  for (const ch of String(input ?? '')) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) {
+      pendingSpace = out.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      out += ' ';
+      pendingSpace = false;
+    }
+    out += ch;
+  }
+  return out.trim();
+}
+
+function truncateUtf8(input, maxBytes) {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
+  const s = String(input ?? '');
+  const buf = Buffer.from(s, 'utf8');
+  if (buf.length <= maxBytes) return s;
+  let cut = maxBytes;
+  while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut -= 1;
+  if (cut <= 0) return '';
+  return buf.subarray(0, cut).toString('utf8');
+}
+
+function formatOneLineUtf8(input, maxBytes) {
+  return truncateUtf8(sanitizeOneLine(input), maxBytes);
+}
 
 function withCommonAppHeaders(res) {
   // Required for `window.crossOriginIsolated === true`.
@@ -105,6 +144,16 @@ async function getFreePort() {
 }
 
 async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
+  function formatUrlForError(u) {
+    try {
+      const parsed = new URL(String(u));
+      return `${parsed.origin}${parsed.pathname}`;
+    } catch {
+      const s = String(u);
+      return s.length > 128 ? `${s.slice(0, 128)}…(${s.length} chars)` : s;
+    }
+  }
+
   const start = Date.now();
   // Poll until the server is listening. This has to tolerate a cold `cargo run --locked`
   // which may compile the binary first.
@@ -129,9 +178,9 @@ async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
     // We successfully connected to the server, so it is "up" but not returning
     // the expected response. That's almost always a configuration/boot failure,
     // so fail fast instead of waiting for the full timeout.
-    throw new Error(`Unexpected HTTP ${res.status} from ${url} while waiting for readiness`);
+    throw new Error(`Unexpected HTTP ${res.status} while waiting for readiness (${formatUrlForError(url)})`);
   }
-  throw new Error(`Timed out waiting for ${url}`);
+  throw new Error(`Timed out waiting for ${formatUrlForError(url)}`);
 }
 
 async function killChildProcess(child) {
@@ -298,11 +347,39 @@ function renderIndexHtml() {
 `;
 }
 
+function sendText(res, statusCode, text) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  const safeText = formatOneLineUtf8(text, MAX_ERROR_BODY_BYTES) || 'Error';
+  res.end(safeText);
+}
+
 async function startAppServer() {
   const server = http.createServer((req, res) => {
     withCommonAppHeaders(res);
 
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    const rawUrl = req.url ?? '/';
+    if (typeof rawUrl !== 'string') {
+      sendText(res, 400, 'Bad Request');
+      return;
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      sendText(res, 414, 'URI Too Long');
+      return;
+    }
+
+    let url;
+    try {
+      // Never use attacker-controlled Host header as a URL parsing base.
+      url = new URL(rawUrl, 'http://localhost');
+    } catch {
+      sendText(res, 400, 'Bad Request');
+      return;
+    }
+    if (url.pathname.length > MAX_PATHNAME_LEN) {
+      sendText(res, 414, 'URI Too Long');
+      return;
+    }
 
     if (req.method === 'GET' && url.pathname === '/') {
       const html = renderIndexHtml();
@@ -314,9 +391,7 @@ async function startAppServer() {
 
     // Browsers often probe for /favicon.ico, etc. Ensure COOP/COEP are still
     // present on these responses to keep the surface area realistic.
-    res.statusCode = 404;
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.end('not found');
+    sendText(res, 404, 'not found');
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -454,7 +529,8 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   child.stderr?.on('data', appendOutput);
   child.on('error', (err) => {
     spawnError = err;
-    appendOutput(`\n[disk-gateway spawn error] ${err.message}\n`);
+    const msg = formatOneLineUtf8(err?.message ?? err, MAX_SPAWN_ERROR_MESSAGE_BYTES) || 'Error';
+    appendOutput(`\n[disk-gateway spawn error] ${msg}\n`);
   });
 
   try {
@@ -462,7 +538,8 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
       timeoutMs: 120_000,
       shouldAbort: () => {
         if (spawnError) {
-          return `disk-gateway failed to spawn: ${spawnError.message}\n\nOutput:\n${output}`;
+          const msg = formatOneLineUtf8(spawnError?.message ?? spawnError, MAX_SPAWN_ERROR_MESSAGE_BYTES) || 'Error';
+          return `disk-gateway failed to spawn: ${msg}\n\nOutput:\n${output}`;
         }
         if (child.exitCode !== null) {
           return `disk-gateway exited early (exit ${child.exitCode}). Output:\n${output}`;
@@ -474,10 +551,11 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
     await killChildProcess(child);
     await fs.rm(tmpRoot, { recursive: true, force: true });
     const exitCode = child.exitCode;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('Output:\n')) {
+    const rawMsg = typeof err?.message === 'string' ? err.message : String(err);
+    if (rawMsg.includes('Output:\n')) {
       throw err;
     }
+    const msg = formatOneLineUtf8(rawMsg, MAX_SPAWN_ERROR_MESSAGE_BYTES) || 'Error';
     const prefix =
       exitCode === null
         ? 'disk-gateway failed to become ready.'

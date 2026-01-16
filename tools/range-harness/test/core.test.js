@@ -29,6 +29,11 @@ test('parseContentRange returns null for invalid strings', () => {
   assert.equal(parseContentRange('bytes 0-0/'), null);
 });
 
+test('parseContentRange returns null for oversized/unsafe values', () => {
+  assert.equal(parseContentRange(`bytes 0-0/${'1'.repeat(300)}`), null);
+  assert.equal(parseContentRange(`bytes 0-0/${'1'.repeat(32)}`), null);
+});
+
 test('buildPlan produces a sequential aligned plan', () => {
   const plan = buildPlan({
     size: 10,

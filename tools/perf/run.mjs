@@ -8,10 +8,13 @@ import { performance } from "node:perf_hooks";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 import { summarize } from "./lib/stats.mjs";
+import { formatOneLineUtf8 } from "../../src/text.js";
 
 const execFile = promisify(execFileCb);
 const require = createRequire(import.meta.url);
 const playwrightCoreVersion = require("playwright-core/package.json").version;
+
+const MAX_ERROR_MESSAGE_BYTES = 512;
 
 function usage(exitCode) {
   const msg = `
@@ -114,7 +117,8 @@ async function withRetries(label, attempts, fn) {
       return await fn();
     } catch (err) {
       lastErr = err;
-      console.warn(`[perf] ${label} failed (attempt ${attempt}/${attempts}): ${err?.message ?? err}`);
+      const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+      console.warn(`[perf] ${label} failed (attempt ${attempt}/${attempts}): ${msg}`);
       if (attempt < attempts) {
         await sleep(250 * attempt);
       }
@@ -218,11 +222,12 @@ async function tryCaptureAeroPerfExport(page) {
       json: typeof res?.json === "string" ? res.json : null,
     };
   } catch (err) {
+    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
     return {
       available: false,
       apiTimedOut,
       json: null,
-      error: err?.message ?? String(err),
+      error: msg,
     };
   }
 }
@@ -303,7 +308,7 @@ async function tryCaptureAeroTrace(page, opts) {
       res.captured = true;
     }
   } catch (err) {
-    const msg = err?.message ?? String(err);
+    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
     res.error = msg;
     if (msg.includes("timed out")) res.timedOut = true;
   } finally {
@@ -408,7 +413,8 @@ async function runMicrobenchSamples(url, iterations, opts) {
           await page.evaluate(runAeroMicrobenchSuiteOnce);
         } catch (err) {
           aeroMicrobenchSuite.status = "skipped";
-          aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite warmup failed: ${err?.message ?? String(err)}`;
+          const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+          aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite warmup failed: ${msg}`;
         }
 
         if (aeroMicrobenchSuite.status === "ok") {
@@ -424,7 +430,8 @@ async function runMicrobenchSamples(url, iterations, opts) {
               aeroMicrobenchSuite.samples.push(ms);
             } catch (err) {
               aeroMicrobenchSuite.status = "skipped";
-              aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite failed: ${err?.message ?? String(err)}`;
+              const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+              aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite failed: ${msg}`;
               aeroMicrobenchSuite.samples = [];
               break;
             }

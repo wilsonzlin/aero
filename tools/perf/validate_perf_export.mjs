@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { formatOneLineUtf8 } from "../../src/text.js";
+
+const MAX_ERROR_MESSAGE_BYTES = 512;
+const MAX_ERROR_POINTER_BYTES = 256;
 
 /**
  * `tools/perf/validate_perf_export.mjs` is used by CI and also by the repo's
@@ -263,13 +267,15 @@ async function readJsonFile(file, label) {
   try {
     raw = await fs.readFile(file, "utf8");
   } catch (err) {
-    throw new Error(`${label}: failed to read ${file}: ${err?.message ?? String(err)}`);
+    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    throw new Error(`${label}: failed to read ${file}: ${msg}`);
   }
 
   try {
     return JSON.parse(raw);
   } catch (err) {
-    throw new Error(`${label}: failed to parse JSON from ${file}: ${err?.message ?? String(err)}`);
+    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    throw new Error(`${label}: failed to parse JSON from ${file}: ${msg}`);
   }
 }
 
@@ -284,8 +290,10 @@ function formatAjvError(err) {
   }
 
   const ptr = instancePath === "" ? "/" : instancePath;
-  const msg = typeof err.message === "string" ? err.message : "schema validation failed";
-  return `${ptr}: ${msg}`;
+  const safePtr = formatOneLineUtf8(ptr, MAX_ERROR_POINTER_BYTES) || "/";
+  const rawMsg = typeof err.message === "string" ? err.message : "schema validation failed";
+  const safeMsg = formatOneLineUtf8(rawMsg, MAX_ERROR_MESSAGE_BYTES) || "schema validation failed";
+  return `${safePtr}: ${safeMsg}`;
 }
 
 async function main() {
@@ -333,6 +341,7 @@ async function main() {
 try {
   await main();
 } catch (err) {
-  console.error(err?.message ?? String(err));
+  const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+  console.error(msg);
   process.exit(1);
 }

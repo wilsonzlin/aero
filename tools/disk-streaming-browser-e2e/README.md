@@ -33,7 +33,7 @@ Prerequisites:
 - On minimal Linux environments, Playwright may require extra system packages. If `npm test` fails with
   missing shared libraries, install them via:
   ```bash
-  npx playwright install --with-deps chromium
+  node scripts/playwright_install.mjs chromium --with-deps
   ```
 
 ## Fixtures
