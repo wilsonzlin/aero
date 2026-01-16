@@ -21,8 +21,21 @@ export function appendKeyValue(filePath, key, value) {
   appendLine(filePath, `${key}=${value}`);
 }
 
+export function appendMultilineKeyValue(filePath, key, value, delimiterPrefix = "EOF") {
+  const body = String(value ?? "");
+  let delimiter = `${delimiterPrefix}_${Math.random().toString(16).slice(2)}`;
+  while (body.includes(delimiter)) {
+    delimiter = `${delimiterPrefix}_${Math.random().toString(16).slice(2)}`;
+  }
+  fs.appendFileSync(filePath, `${key}<<${delimiter}\n${body}\n${delimiter}\n`, "utf8");
+}
+
 export function appendOutput(key, value) {
   appendKeyValue(requireEnv("GITHUB_OUTPUT"), key, value);
+}
+
+export function appendMultilineOutput(key, value, delimiterPrefix = "EOF") {
+  appendMultilineKeyValue(requireEnv("GITHUB_OUTPUT"), key, value, delimiterPrefix);
 }
 
 export function appendEnv(key, value) {

@@ -1,12 +1,7 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { fail, requireEnv } from "../_shared/github_io.mjs";
+import { appendMultilineOutput, appendOutput, fail } from "../_shared/github_io.mjs";
 import { actionTimeoutMs } from "../_shared/exec.mjs";
-
-function writeOutput(text) {
-  const outPath = requireEnv("GITHUB_OUTPUT");
-  fs.appendFileSync(outPath, text, "utf8");
-}
 
 const browsers = (process.env.BROWSERS || "").split(/\s+/u).filter(Boolean);
 if (!browsers.length) fail("setup-playwright: no browsers requested");
@@ -36,7 +31,6 @@ if (missing.length) {
   for (const location of missing) console.log(`- ${location}`);
 }
 
-const delimiter = `EOF_${Math.random().toString(16).slice(2)}`;
-writeOutput(`missing=${missing.length > 0 ? "true" : "false"}\n`);
-writeOutput(`missing_locations<<${delimiter}\n${missing.join("\n")}\n${delimiter}\n`);
+appendOutput("missing", missing.length > 0 ? "true" : "false");
+appendMultilineOutput("missing_locations", missing.join("\n"));
 

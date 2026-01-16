@@ -42,6 +42,11 @@ test("setup-playwright precheck: writes missing=false when all install locations
 
   const raw = await fs.readFile(outFile, "utf8");
   assert.match(raw, /^missing=false$/m);
+
+  const m = raw.match(/^missing_locations<<(.+)$/m);
+  assert.ok(m, "expected missing_locations multiline output");
+  const delimiter = m[1];
+  assert.ok(raw.includes(`\n${delimiter}\n`), "expected closing delimiter line for missing_locations");
 });
 
 test("setup-playwright precheck: writes missing=true and lists missing paths", async () => {
@@ -72,7 +77,10 @@ test("setup-playwright precheck: writes missing=true and lists missing paths", a
 
   const raw = await fs.readFile(outFile, "utf8");
   assert.match(raw, /^missing=true$/m);
-  assert.match(raw, /missing_locations<<EOF_/);
+  const m = raw.match(/^missing_locations<<(.+)$/m);
+  assert.ok(m, "expected missing_locations multiline output");
+  const delimiter = m[1];
+  assert.ok(raw.includes(`\n${delimiter}\n`), "expected closing delimiter line for missing_locations");
   assert.ok(raw.includes(missing1));
   assert.ok(raw.includes(missing2));
 });
