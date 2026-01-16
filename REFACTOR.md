@@ -63,6 +63,16 @@ Outcomes:
 - Network/protocol surfaces use stable, single-line, UTF-8 byte-bounded client-visible errors by default.
 - Shared parsing/formatting invariants are guarded by parity/contract tests to prevent silent drift.
 
+### Phase 5: Cross-platform drift guards (in progress)
+Goal: catch portability bugs (path separators, platform-specific tooling quirks) early and cheaply.
+
+Approach:
+- Keep the contract/parity suite fast enough to run on multiple OSes.
+- Add targeted CI jobs when a portability bug is plausible and expensive jobs already exist.
+
+Outcomes:
+- Add a lightweight Windows CI job that runs `npm run test:contracts` to exercise the contract/parity suite under Windows path semantics.
+
 Some coding guidelines:
 
 ## General Principles

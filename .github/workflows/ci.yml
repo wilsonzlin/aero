@@ -655,6 +655,25 @@ jobs:
         working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run build
 
+  node-contracts-windows:
+    name: Node contracts (Windows)
+    needs: policy
+    if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node workspace
+        id: node-workspace
+        uses: ./.github/actions/setup-node-workspace
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Contract tests
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
+        run: npm run test:contracts
+
   smoke-matrix:
     name: Smoke matrix (${{ matrix.os }})
     needs: policy
@@ -863,6 +882,7 @@ jobs:
       - qemu-boot
       - wasm
       - node-unit
+      - node-contracts-windows
       - smoke-matrix
       - playwright
       - disk-streaming-browser-e2e
@@ -932,6 +952,11 @@ jobs:
 
           if [[ "${{ needs['node-unit'].result }}" != "success" ]]; then
             echo "::error::node-unit job result: ${{ needs['node-unit'].result }}"
+            failures=1
+          fi
+
+          if [[ "${{ needs['node-contracts-windows'].result }}" != "success" ]]; then
+            echo "::error::node-contracts-windows job result: ${{ needs['node-contracts-windows'].result }}"
             failures=1
           fi
 
