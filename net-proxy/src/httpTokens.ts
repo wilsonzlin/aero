@@ -33,3 +33,7 @@ export function isValidHttpTokenPart(input: string, start: number, end: number):
   return true;
 }
 
+export function isValidHttpToken(token: string): boolean {
+  return isValidHttpTokenPart(token, 0, token.length);
+}
+
