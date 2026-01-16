@@ -40,6 +40,22 @@ function findXssSinks(masked) {
     hits.push({ kind: ".insertAdjacentHTML", index: m.index });
   }
 
+  // document.write / writeln.
+  const writeRe = /\bdocument\s*\.\s*writeln?\s*\(/gmu;
+  for (;;) {
+    const m = writeRe.exec(masked);
+    if (!m) break;
+    hits.push({ kind: "document.write", index: m.index });
+  }
+
+  // Range.createContextualFragment (HTML injection via parsing).
+  const fragmentRe = /\.\s*createContextualFragment\b/gmu;
+  for (;;) {
+    const m = fragmentRe.exec(masked);
+    if (!m) break;
+    hits.push({ kind: ".createContextualFragment", index: m.index });
+  }
+
   return hits;
 }
 
