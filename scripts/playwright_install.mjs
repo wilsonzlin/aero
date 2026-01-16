@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import process from "node:process";
 import { createRequire } from "node:module";
+import { formatOneLineError } from "../src/text.js";
 
 const require = createRequire(import.meta.url);
 
@@ -77,7 +78,7 @@ try {
   main();
 } catch (err) {
   // eslint-disable-next-line no-console
-  console.error(err?.stack || err);
+  console.error(`playwright_install: ${formatOneLineError(err?.stack || err, 2048, "Error")}`);
   process.exitCode = 1;
 }
 
