@@ -223,6 +223,18 @@ Approach:
 Outcomes:
 - Contract suite fails if eval sinks appear in production code.
 
+### Phase 20: DOM XSS sink guardrails (done)
+Goal: prevent accidental introduction of unsafe DOM HTML injection patterns in production code.
+
+Approach:
+- Add a contract test that scans production JS/TS sources (excluding tests) for common XSS sinks:
+  - `dangerouslySetInnerHTML`
+  - `.innerHTML`, `.outerHTML`, `.insertAdjacentHTML`
+- Mask strings/comments to avoid false positives from embedded text.
+
+Outcomes:
+- Contract suite fails if new DOM HTML injection sinks appear in production sources.
+
 Some coding guidelines:
 
 ## General Principles
