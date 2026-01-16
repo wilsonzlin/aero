@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8080;
 const ROOT = __dirname;
 
@@ -24,11 +27,13 @@ function send(res, statusCode, body, contentType = "text/plain; charset=utf-8") 
   res.end(body);
 }
 
-function safeResolve(root, urlPath) {
-  const joined = path.join(root, urlPath);
-  const normalized = path.normalize(joined);
-  if (!normalized.startsWith(root)) return null;
-  return normalized;
+function safeResolve(rootDir, requestPath) {
+  const rootResolved = path.resolve(rootDir);
+  const resolved = path.resolve(rootResolved, `.${requestPath}`);
+  if (!resolved.startsWith(rootResolved + path.sep) && resolved !== rootResolved) {
+    return null;
+  }
+  return resolved;
 }
 
 const server = http.createServer((req, res) => {
@@ -38,12 +43,29 @@ const server = http.createServer((req, res) => {
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   res.setHeader("Cache-Control", "no-store");
 
-  if (!req.url) return send(res, 400, "Bad Request");
-  const urlPath = decodeURIComponent(req.url.split("?")[0]);
-  let pathname = urlPath;
+  const rawUrl = req.url ?? "/";
+  if (typeof rawUrl !== "string") return send(res, 400, "Bad Request");
+  if (rawUrl.length > MAX_REQUEST_URL_LEN) return send(res, 414, "URI Too Long");
+
+  let url;
+  try {
+    url = new URL(rawUrl, "http://localhost");
+  } catch {
+    return send(res, 400, "Bad Request");
+  }
+  if (url.pathname.length > MAX_PATHNAME_LEN) return send(res, 414, "URI Too Long");
+
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    return send(res, 400, "Bad Request");
+  }
+  if (pathname.length > MAX_PATHNAME_LEN) return send(res, 414, "URI Too Long");
+  if (pathname.includes("\0")) return send(res, 400, "Bad Request");
   if (pathname === "/") pathname = "/index.html";
 
-  const filePath = safeResolve(ROOT, `.${pathname}`);
+  const filePath = safeResolve(ROOT, pathname);
   if (!filePath) return send(res, 403, "Forbidden");
 
   let stat;
