@@ -281,6 +281,18 @@ Approach:
 Outcomes:
 - `tests/js_source_scan_helpers_contract.test.js` locks in masking behavior for regex + template-expression cases.
 
+### Phase 25: Subprocess sink guardrail correctness (done)
+Goal: ensure the subprocess sink contract actually detects forbidden `child_process` exec/execSync patterns without being defeated by string masking.
+
+Approach:
+- Refactor the subprocess sink scan to:
+  - Use masked code only to find candidate `import`/`require` tokens (avoids matches in strings/comments/regex).
+  - Parse the module specifier from the original source to correctly detect `"child_process"` / `"node:child_process"`.
+- Add focused parsing contract coverage for the sink scanner.
+
+Outcomes:
+- `tests/js_subprocess_sinks_parsing_contract.test.js` ensures `import { exec } from "child_process"` and `require("child_process").execSync(` are detected.
+
 Some coding guidelines:
 
 ## General Principles
