@@ -782,7 +782,11 @@ export function createWebSocketStream(ws, opts = {}) {
     readableHighWaterMark: highWaterMark,
     writableHighWaterMark: highWaterMark,
     write(chunk, _enc, callback) {
-      ws.send(chunk, (err) => callback(err));
+      try {
+        ws.send(chunk, (err) => callback(err));
+      } catch (err) {
+        callback(err);
+      }
     },
     read() {
       // no-op: data is pushed from the WebSocket 'message' handler.
