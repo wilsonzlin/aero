@@ -10,7 +10,7 @@ import {
   encodeServerEndFrame,
 } from "./protocol.js";
 import { PolicyError, resolveAndValidateTarget } from "./policy.js";
-import { formatOneLineUtf8 } from "./text.js";
+import { formatOneLineError, formatOneLineUtf8 } from "./text.js";
 
 const WS_CLOSE_POLICY_VIOLATION = 1008;
 const WS_CLOSE_UNSUPPORTED_DATA = 1003;
@@ -82,8 +82,7 @@ class TcpProxySession {
       }
       this.metrics.increment("bytesInTotal", buf.length);
       this.#handleFrame(buf).catch((err) => {
-        const errForLog = formatOneLineUtf8(err instanceof Error ? err.message : err, 512) || "Error";
-        this.logger.warn("ws_frame_error", { sessionId: this.sessionId, err: errForLog });
+        this.logger.warn("ws_frame_error", { sessionId: this.sessionId, err: formatOneLineError(err, 512) });
         closeWebSocket(this.ws, WS_CLOSE_POLICY_VIOLATION, "Protocol error");
       });
     });

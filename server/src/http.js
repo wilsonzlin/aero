@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import dns from "node:dns/promises";
 import { getAuthTokenFromRequest, isOriginAllowed, isTokenAllowed } from "./auth.js";
 import { isHostAllowed, isIpAllowed } from "./policy.js";
-import { formatOneLineUtf8 } from "./text.js";
+import { formatOneLineError } from "./text.js";
 
 const stat = promisify(fs.stat);
 const MAX_REQUEST_URL_LEN = 8 * 1024;
@@ -192,8 +192,7 @@ export function createHttpHandler({ config, logger, metrics }) {
 
       await handleStatic(req, res, url, { config });
     })().catch((err) => {
-      const errForLog = formatOneLineUtf8(err instanceof Error ? err.message : err, 512) || "Error";
-      logger.error("http_error", { err: errForLog });
+      logger.error("http_error", { err: formatOneLineError(err, 512) });
       if (!res.headersSent) res.statusCode = 500;
       res.end("Internal Server Error");
     });

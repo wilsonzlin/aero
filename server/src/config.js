@@ -28,17 +28,37 @@ const DEFAULTS = Object.freeze({
   logLevel: "info",
 });
 
+function coerceScalarString(value) {
+  if (value == null) return null;
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+      return String(value);
+    case "undefined":
+    case "object":
+    case "function":
+    default:
+      return null;
+  }
+}
+
 function parseBoolean(value, defaultValue) {
-  if (value == null) return defaultValue;
-  const normalized = String(value).trim().toLowerCase();
+  const raw = coerceScalarString(value);
+  if (raw == null) return defaultValue;
+  const normalized = raw.trim().toLowerCase();
   if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
   return defaultValue;
 }
 
 function parseNumber(value, defaultValue, { min, max } = {}) {
-  if (value == null) return defaultValue;
-  const raw = String(value).trim();
+  const rawInput = coerceScalarString(value);
+  if (rawInput == null) return defaultValue;
+  const raw = rawInput.trim();
   if (!raw) return defaultValue;
   if (raw.length > MAX_ENV_NUMBER_LEN) return defaultValue;
   if (!/^[+-]?\d+$/.test(raw)) return defaultValue;
@@ -52,7 +72,8 @@ function parseNumber(value, defaultValue, { min, max } = {}) {
 
 function parseCsv(value, name = "CSV") {
   if (!value) return [];
-  const raw = String(value);
+  const raw = coerceScalarString(value);
+  if (raw == null) return [];
   if (raw.length > MAX_ENV_CSV_LEN) {
     throw new Error(`${name} is too long`);
   }
@@ -79,7 +100,9 @@ function parseCsv(value, name = "CSV") {
 
 export function parseAllowPorts(value) {
   if (!value) return [];
-  const normalized = String(value).trim();
+  const raw = coerceScalarString(value);
+  if (raw == null) throw new Error("AERO_PROXY_ALLOW_PORTS must be a string");
+  const normalized = raw.trim();
   if (normalized === "*") return [{ start: 1, end: 65535 }];
   const ranges = [];
   for (const part of parseCsv(normalized, "AERO_PROXY_ALLOW_PORTS")) {
@@ -97,7 +120,9 @@ export function parseAllowPorts(value) {
 
 export function parseAllowHosts(value) {
   if (!value) return [];
-  const normalized = String(value).trim();
+  const raw = coerceScalarString(value);
+  if (raw == null) throw new Error("AERO_PROXY_ALLOW_HOSTS must be a string");
+  const normalized = raw.trim();
   if (normalized === "*") return [{ kind: "wildcard" }];
 
   const patterns = [];
