@@ -26,42 +26,60 @@ function rangeTestPageHtml(): string {
     <script>
       const UTF8 = Object.freeze({ encoding: "utf-8" });
       const MAX_ERROR_BYTES = 512;
+      const textEncoder = new TextEncoder();
+      const textDecoder = new TextDecoder(UTF8.encoding);
 
-      function sanitizeOneLine(input) {
-        let out = "";
+      function formatOneLineUtf8(input, maxBytes) {
+        if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
+        if (maxBytes === 0) return "";
+        const buf = new Uint8Array(maxBytes);
+        let written = 0;
         let pendingSpace = false;
         for (const ch of String(input ?? "")) {
           const code = ch.codePointAt(0) ?? 0;
           const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
           if (forbidden || /\\s/u.test(ch)) {
-            pendingSpace = out.length > 0;
+            pendingSpace = written > 0;
             continue;
           }
           if (pendingSpace) {
-            out += " ";
+            const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
+            if (spaceRes.written === 0) break;
+            written += spaceRes.written;
             pendingSpace = false;
+            if (written >= maxBytes) break;
           }
-          out += ch;
+          const res = textEncoder.encodeInto(ch, buf.subarray(written));
+          if (res.written === 0) break;
+          written += res.written;
+          if (written >= maxBytes) break;
         }
-        return out.trim();
+        return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
       }
 
-      function truncateUtf8(input, maxBytes) {
-        if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
-        const s = String(input ?? "");
-        const enc = new TextEncoder();
-        const bytes = enc.encode(s);
-        if (bytes.byteLength <= maxBytes) return s;
-        let cut = maxBytes;
-        while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut -= 1;
-        if (cut <= 0) return "";
-        const dec = new TextDecoder(UTF8.encoding);
-        return dec.decode(bytes.subarray(0, cut));
+      function safeErrorMessageInput(err) {
+        if (err === null) return "null";
+
+        const t = typeof err;
+        if (t === "string") return err;
+        if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
+
+        if (t === "object") {
+          try {
+            const msg = err && typeof err.message === "string" ? err.message : null;
+            if (msg !== null) return msg;
+          } catch {
+            // ignore getters throwing
+          }
+        }
+
+        // Avoid calling toString() on arbitrary objects/functions (can throw / be expensive).
+        return "Error";
       }
 
-      function formatOneLineUtf8(input, maxBytes) {
-        return truncateUtf8(sanitizeOneLine(input), maxBytes);
-      }
+      // Expose bounded helpers for other page.evaluate calls.
+      window.__formatOneLineUtf8 = formatOneLineUtf8;
+      window.__safeErrorMessageInput = safeErrorMessageInput;
 
       window.__rangeFetch = async function (url, rangeHeaderValue, extraHeaders) {
         try {
@@ -84,7 +102,7 @@ function rangeTestPageHtml(): string {
             bytes: Array.from(bytes),
           };
         } catch (err) {
-          return { ok: false, error: formatOneLineUtf8(err, MAX_ERROR_BYTES) || "Error" };
+          return { ok: false, error: formatOneLineUtf8(safeErrorMessageInput(err), MAX_ERROR_BYTES) || "Error" };
         }
       };
     </script>

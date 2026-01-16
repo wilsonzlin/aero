@@ -72,44 +72,17 @@ async function runHeadFetch(
   await page.goto(`${opts.pageOrigin}/`, { waitUntil: "load" });
   return await page.evaluate<HeadFetchResult, { targetUrl: string; extraHeaders?: Record<string, string> }>(
     async ({ targetUrl, extraHeaders }) => {
-      const UTF8 = Object.freeze({ encoding: "utf-8" });
       const MAX_ERROR_BYTES = 512;
 
-      function sanitizeOneLine(input: unknown): string {
-        let out = "";
-        let pendingSpace = false;
-        for (const ch of String(input ?? "")) {
-          const code = ch.codePointAt(0) ?? 0;
-          const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
-          if (forbidden || /\s/u.test(ch)) {
-            pendingSpace = out.length > 0;
-            continue;
-          }
-          if (pendingSpace) {
-            out += " ";
-            pendingSpace = false;
-          }
-          out += ch;
-        }
-        return out.trim();
-      }
+      const formatOneLineUtf8 = (window as unknown as { __formatOneLineUtf8?: unknown }).__formatOneLineUtf8;
+      const safeErrorMessageInput = (window as unknown as { __safeErrorMessageInput?: unknown }).__safeErrorMessageInput;
 
-      function truncateUtf8(input: unknown, maxBytes: number): string {
-        if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
-        const s = String(input ?? "");
-        const enc = new TextEncoder();
-        const bytes = enc.encode(s);
-        if (bytes.byteLength <= maxBytes) return s;
-        let cut = maxBytes;
-        while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut -= 1;
-        if (cut <= 0) return "";
-        const dec = new TextDecoder(UTF8.encoding);
-        return dec.decode(bytes.subarray(0, cut));
-      }
-
-      function formatOneLineUtf8(input: unknown, maxBytes: number): string {
-        return truncateUtf8(sanitizeOneLine(input), maxBytes);
-      }
+      const formatError = (err: unknown): string => {
+        if (typeof formatOneLineUtf8 !== "function" || typeof safeErrorMessageInput !== "function") return "Error";
+        const raw = (safeErrorMessageInput as (err: unknown) => unknown)(err);
+        const safe = (formatOneLineUtf8 as (input: unknown, maxBytes: number) => string)(raw, MAX_ERROR_BYTES);
+        return safe || "Error";
+      };
 
       try {
         const response = await fetch(targetUrl, {
@@ -124,7 +97,7 @@ async function runHeadFetch(
           contentLength: response.headers.get("Content-Length"),
         };
       } catch (err) {
-        return { ok: false, error: formatOneLineUtf8(err, MAX_ERROR_BYTES) || "Error" };
+        return { ok: false, error: formatError(err) };
       }
     },
     { targetUrl: opts.url, extraHeaders: opts.extraHeaders },

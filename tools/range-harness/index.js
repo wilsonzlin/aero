@@ -2,7 +2,7 @@
 import { randomInt } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatOneLineUtf8 } from '../../src/text.js';
+import { formatOneLineError, formatOneLineUtf8 } from '../../src/text.js';
 
 /**
  * Range Harness
@@ -660,8 +660,7 @@ async function main() {
             signal: controller.signal,
           });
         } catch (err) {
-          const rawFetchError = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
-          fetchError = formatOneLineUtf8(rawFetchError, MAX_LOG_ERROR_MESSAGE_BYTES) || 'Error';
+          fetchError = formatOneLineError(err, MAX_LOG_ERROR_MESSAGE_BYTES, 'fetch failed');
           const endNs = nowNs();
           passFinishedNs = endNs;
           finishedNs = endNs;

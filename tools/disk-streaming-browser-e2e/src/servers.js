@@ -10,42 +10,70 @@ const MAX_PATHNAME_LEN = 4 * 1024;
 const MAX_SPAWN_ERROR_MESSAGE_BYTES = 512;
 const MAX_ERROR_BODY_BYTES = 512;
 
+const UTF8 = Object.freeze({ encoding: 'utf-8' });
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder(UTF8.encoding);
+
 const PUBLIC_IMAGE_ID = 'win7';
 const PRIVATE_IMAGE_ID = 'secret';
 const PRIVATE_USER_ID = 'alice';
 
-function sanitizeOneLine(input) {
-  let out = '';
+function formatOneLineUtf8(input, maxBytes) {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
+  if (maxBytes === 0) return '';
+
+  const buf = new Uint8Array(maxBytes);
+  let written = 0;
   let pendingSpace = false;
   for (const ch of String(input ?? '')) {
     const code = ch.codePointAt(0) ?? 0;
     const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
     if (forbidden || /\s/u.test(ch)) {
-      pendingSpace = out.length > 0;
+      pendingSpace = written > 0;
       continue;
     }
+
     if (pendingSpace) {
-      out += ' ';
+      const spaceRes = textEncoder.encodeInto(' ', buf.subarray(written));
+      if (spaceRes.written === 0) break;
+      written += spaceRes.written;
       pendingSpace = false;
+      if (written >= maxBytes) break;
     }
-    out += ch;
+
+    const res = textEncoder.encodeInto(ch, buf.subarray(written));
+    if (res.written === 0) break;
+    written += res.written;
+    if (written >= maxBytes) break;
   }
-  return out.trim();
+  return written === 0 ? '' : textDecoder.decode(buf.subarray(0, written));
 }
 
-function truncateUtf8(input, maxBytes) {
-  if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
-  const s = String(input ?? '');
-  const buf = Buffer.from(s, 'utf8');
-  if (buf.length <= maxBytes) return s;
-  let cut = maxBytes;
-  while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut -= 1;
-  if (cut <= 0) return '';
-  return buf.subarray(0, cut).toString('utf8');
+function safeErrorMessageInput(err) {
+  if (err === null) return 'null';
+
+  const t = typeof err;
+  if (t === 'string') return err;
+  if (t === 'number' || t === 'boolean' || t === 'bigint' || t === 'symbol' || t === 'undefined') return String(err);
+
+  if (t === 'object') {
+    try {
+      const msg = err && typeof err.message === 'string' ? err.message : null;
+      if (msg !== null) return msg;
+    } catch {
+      // ignore getters throwing
+    }
+  }
+
+  // Avoid calling toString() on arbitrary objects/functions (can throw / be expensive).
+  return 'Error';
 }
 
-function formatOneLineUtf8(input, maxBytes) {
-  return truncateUtf8(sanitizeOneLine(input), maxBytes);
+function formatOneLineError(err, maxBytes, fallback = 'Error') {
+  const raw = safeErrorMessageInput(err);
+  const safe = formatOneLineUtf8(raw, maxBytes);
+  const fb = typeof fallback === 'string' && fallback ? fallback : 'Error';
+  return safe || fb;
 }
 
 function withCommonAppHeaders(res) {
@@ -81,8 +109,8 @@ function signalProcessTree(child, signal) {
 }
 
 function isSccacheWrapper(value) {
-  if (!value) return false;
-  const v = String(value).toLowerCase();
+  if (typeof value !== 'string' || !value) return false;
+  const v = value.toLowerCase();
   return (
     v === 'sccache' ||
     v === 'sccache.exe' ||
@@ -144,12 +172,20 @@ async function getFreePort() {
 }
 
 async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
+  function coerceUrlString(u) {
+    if (typeof u === 'string') return u;
+    if (u instanceof URL) return u.toString();
+    if (typeof u === 'number' || typeof u === 'boolean' || typeof u === 'bigint') return String(u);
+    return '';
+  }
+
   function formatUrlForError(u) {
+    const raw = coerceUrlString(u);
     try {
-      const parsed = new URL(String(u));
+      const parsed = new URL(raw);
       return `${parsed.origin}${parsed.pathname}`;
     } catch {
-      const s = String(u);
+      const s = raw || 'invalid url';
       return s.length > 128 ? `${s.slice(0, 128)}…(${s.length} chars)` : s;
     }
   }
@@ -425,7 +461,15 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   const outputLimit = 50_000;
   let output = '';
   const appendOutput = (chunk) => {
-    output += chunk.toString();
+    if (typeof chunk === 'string') {
+      output += chunk;
+    } else if (Buffer.isBuffer(chunk)) {
+      output += chunk.toString('utf8');
+    } else if (chunk instanceof Uint8Array) {
+      output += Buffer.from(chunk).toString('utf8');
+    } else {
+      return;
+    }
     if (output.length > outputLimit) output = output.slice(-outputLimit);
   };
 
@@ -529,7 +573,7 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   child.stderr?.on('data', appendOutput);
   child.on('error', (err) => {
     spawnError = err;
-    const msg = formatOneLineUtf8(err?.message ?? err, MAX_SPAWN_ERROR_MESSAGE_BYTES) || 'Error';
+    const msg = formatOneLineError(err, MAX_SPAWN_ERROR_MESSAGE_BYTES);
     appendOutput(`\n[disk-gateway spawn error] ${msg}\n`);
   });
 
@@ -538,7 +582,7 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
       timeoutMs: 120_000,
       shouldAbort: () => {
         if (spawnError) {
-          const msg = formatOneLineUtf8(spawnError?.message ?? spawnError, MAX_SPAWN_ERROR_MESSAGE_BYTES) || 'Error';
+          const msg = formatOneLineError(spawnError, MAX_SPAWN_ERROR_MESSAGE_BYTES);
           return `disk-gateway failed to spawn: ${msg}\n\nOutput:\n${output}`;
         }
         if (child.exitCode !== null) {
@@ -551,11 +595,11 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
     await killChildProcess(child);
     await fs.rm(tmpRoot, { recursive: true, force: true });
     const exitCode = child.exitCode;
-    const rawMsg = typeof err?.message === 'string' ? err.message : String(err);
-    if (rawMsg.includes('Output:\n')) {
+    const msgForOutputCheck = typeof err === 'string' ? err : safeErrorMessageInput(err);
+    if (msgForOutputCheck.includes('Output:\n')) {
       throw err;
     }
-    const msg = formatOneLineUtf8(rawMsg, MAX_SPAWN_ERROR_MESSAGE_BYTES) || 'Error';
+    const msg = formatOneLineError(err, MAX_SPAWN_ERROR_MESSAGE_BYTES);
     const prefix =
       exitCode === null
         ? 'disk-gateway failed to become ready.'
