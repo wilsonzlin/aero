@@ -137,7 +137,15 @@ export function handleTcpMuxRelay(
     if (closed) return;
     if (ws.readyState !== ws.OPEN) return;
     const frame = encodeTcpMuxFrame(msgType, streamId, payload);
-    const ok = wsStream.write(frame);
+    let ok = false;
+    try {
+      ok = wsStream.write(frame);
+    } catch (err) {
+      closeAll("ws_stream_write_error", 1011, "WebSocket stream error");
+      metrics.incConnectionError("error");
+      log("error", "connect_error", { connId, proto: "tcp-mux", clientAddress, err: formatError(err) });
+      return;
+    }
     if (!ok) {
       pauseAllTcpReads();
     }
