@@ -412,7 +412,8 @@ async function openWebSocket(url: string, protocol?: string): Promise<WebSocket>
     };
     const onClose = (evt: CloseEvent) => {
       clearTimeout(timer);
-      settle(new Error(`websocket closed (${evt.code}): ${evt.reason}`));
+      // Close reasons are server-controlled; do not reflect them in user-visible errors.
+      settle(new Error(`websocket closed (${evt.code})`));
     };
     const onError = () => {
       clearTimeout(timer);
@@ -732,7 +733,8 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     const onClose = (evt: CloseEvent) => {
       if (currentAttempt !== attemptId) return;
       if (!haveAnswer) {
-        settleAnswer(new Error(`signaling websocket closed (${evt.code}): ${evt.reason}`));
+        // Close reasons are server-controlled; do not reflect them in user-visible errors.
+        settleAnswer(new Error(`signaling websocket closed (${evt.code})`));
         return;
       }
       pc.close();

@@ -328,8 +328,8 @@ export class WebSocketUdpProxyClient {
 
         if (!settled) {
           const code = typeof evt?.code === "number" ? evt.code : 0;
-          const reason = typeof evt?.reason === "string" ? evt.reason : "";
-          settle(new Error(`udp relay websocket closed (${code}): ${reason}`));
+          // Close reasons are server-controlled; do not reflect them in user-visible errors.
+          settle(new Error(`udp relay websocket closed (${code})`));
         }
       };
     });

@@ -59,7 +59,7 @@ export function createL2TunnelDataChannel(pc: RTCPeerConnection): RTCDataChannel
 export type L2TunnelEvent =
   | { type: "open" }
   | { type: "frame"; frame: Uint8Array }
-  | { type: "close"; code?: number; reason?: string }
+  | { type: "close"; code?: number }
   | { type: "error"; error: unknown }
   | { type: "pong"; rttMs?: number };
 
@@ -364,7 +364,8 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     this.clearDrainRetryTimer();
     this.clearQueue();
 
-    this.sink({ type: "close", code, reason });
+    // Close reasons are peer-controlled; do not surface them to callers by default.
+    this.sink({ type: "close", code });
   }
 
   protected onTransportError(error: unknown): void {
@@ -678,7 +679,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     ws.onerror = (err) => this.onTransportError(err);
     ws.onclose = (evt) => {
       this.ws = null;
-      this.onTransportClose(evt.code, evt.reason);
+      this.onTransportClose(evt.code);
     };
 
     this.ws = ws;
