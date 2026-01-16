@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import path from "node:path";
-import { formatOneLineUtf8 } from "../src/text.js";
+import { formatOneLineError, formatOneLineUtf8 } from "../src/text.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -38,6 +38,21 @@ function sendText(res, statusCode, text) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.end(safeText);
+}
+
+function pipeFile(res, filePath) {
+  const stream = fs.createReadStream(filePath);
+  stream.on("error", (err) => {
+    // Avoid echoing internal errors back to clients; logs are sufficient for debugging.
+    // eslint-disable-next-line no-console
+    console.error(`bench static server: stream error: ${formatOneLineError(err, 512, "Error")}`);
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    sendText(res, 500, "Internal server error");
+  });
+  stream.pipe(res);
 }
 
 /**
@@ -104,7 +119,7 @@ export async function startStaticServer(opts) {
 
       res.statusCode = 200;
       res.setHeader("Content-Type", contentType(filePath));
-      fs.createReadStream(filePath).pipe(res);
+      pipeFile(res, filePath);
     } catch (err) {
       // Avoid echoing internal errors (and any attacker-controlled strings) back to clients.
       // This server is dev-only; logs are sufficient for debugging.

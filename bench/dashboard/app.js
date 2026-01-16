@@ -1,77 +1,9 @@
-/* global document, fetch */
+import { formatOneLineError as formatOneLineErrorShared } from "./_shared/text_one_line.js";
 
-const UTF8 = Object.freeze({ encoding: "utf-8" });
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder(UTF8.encoding);
-
-function coerceString(input) {
-  try {
-    return String(input ?? "");
-  } catch {
-    return "";
-  }
-}
-
-function formatOneLineUtf8(input, maxBytes) {
-  if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
-  if (maxBytes === 0) return "";
-
-  const buf = new Uint8Array(maxBytes);
-  let written = 0;
-  let pendingSpace = false;
-  for (const ch of coerceString(input)) {
-    const code = ch.codePointAt(0) ?? 0;
-    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
-    if (forbidden || /\s/u.test(ch)) {
-      pendingSpace = written > 0;
-      continue;
-    }
-
-    if (pendingSpace) {
-      const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
-      if (spaceRes.written === 0) break;
-      written += spaceRes.written;
-      pendingSpace = false;
-      if (written >= maxBytes) break;
-    }
-
-    const res = textEncoder.encodeInto(ch, buf.subarray(written));
-    if (res.written === 0) break;
-    written += res.written;
-    if (written >= maxBytes) break;
-  }
-  return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
-}
-
-function safeErrorMessageInput(err) {
-  if (err === null) return "null";
-
-  const t = typeof err;
-  if (t === "string") return err;
-  if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
-
-  if (t === "object") {
-    try {
-      const msg = typeof err.message === "string" ? err.message : null;
-      if (msg) return msg;
-    } catch {
-      // ignore getters throwing
-    }
-    try {
-      const name = typeof err.name === "string" ? err.name : null;
-      if (name) return name;
-    } catch {
-      // ignore getters throwing
-    }
-  }
-
-  // Avoid calling toString() on arbitrary objects/functions (can throw / be expensive).
-  return "Error";
-}
+const ERROR_FMT_OPTS = Object.freeze({ includeNameFallback: true });
 
 function formatOneLineError(err, maxBytes) {
-  const raw = safeErrorMessageInput(err);
-  return formatOneLineUtf8(raw, maxBytes) || "Error";
+  return formatOneLineErrorShared(err, maxBytes, ERROR_FMT_OPTS);
 }
 
 function byId(id) {

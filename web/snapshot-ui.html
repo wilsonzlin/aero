@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero Snapshot UI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background: #0b0e14;
+        color: #e6edf3;
+      }
+      body {
+        margin: 16px;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        padding: 6px 10px;
+      }
+      #status {
+        white-space: pre-wrap;
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 8px;
+        padding: 12px;
+        min-height: 220px;
+      }
+      .hint {
+        color: #9aa4b2;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Aero Snapshot UI</h2>
+    <p class="hint">
+      This page expects a host integration to provide
+      <code>window.aeroSnapshotHost.saveSnapshotBytes()</code> and
+      <code>window.aeroSnapshotHost.loadSnapshotBytes(bytes)</code>.
+    </p>
+
+    <div class="row">
+      <button id="save" type="button">Save</button>
+      <button id="load" type="button">Load</button>
+      <button id="export" type="button">Export</button>
+      <label>
+        Import:
+        <input id="import" type="file" accept=".snap,application/octet-stream" />
+      </label>
+      <label>
+        Auto-save (seconds):
+        <input id="autosave" type="number" min="0" step="1" value="0" style="width: 90px" />
+      </label>
+    </div>
+
+    <pre id="status"></pre>
+
+    <script type="module" src="./snapshot-ui.js"></script>
+  </body>
+</html>

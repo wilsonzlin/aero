@@ -307,6 +307,8 @@ jobs:
           rm -rf dist/perf-dashboard
           mkdir -p dist/perf-dashboard
           cp -r bench/dashboard/* dist/perf-dashboard/
+          mkdir -p dist/perf-dashboard/_shared
+          cp web/public/_shared/text_one_line.js dist/perf-dashboard/_shared/text_one_line.js
           cp bench/history.json dist/perf-dashboard/history.json
           cp bench/history.md dist/perf-dashboard/history.md
           cp bench/history.schema.json dist/perf-dashboard/history.schema.json

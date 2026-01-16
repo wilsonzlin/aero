@@ -1,80 +1,35 @@
-const STATUS_EL = /** @type {HTMLElement} */ (document.getElementById("status"));
+import { formatOneLineError as formatOneLineErrorShared } from "./_shared/text_one_line.js";
+
+function byId(id, ctor) {
+  const el = document.getElementById(id);
+  if (!(el instanceof ctor)) {
+    const name = ctor && typeof ctor === "function" ? ctor.name : "HTMLElement";
+    throw new Error(`snapshot-ui: missing required element #${id} (${name})`);
+  }
+  return el;
+}
+
+const STATUS_EL = byId("status", HTMLElement);
+const SAVE_BTN = byId("save", HTMLButtonElement);
+const LOAD_BTN = byId("load", HTMLButtonElement);
+const EXPORT_BTN = byId("export", HTMLButtonElement);
+const IMPORT_INPUT = byId("import", HTMLInputElement);
+const AUTOSAVE_INPUT = byId("autosave", HTMLInputElement);
 
 const OPFS_SNAPSHOT_FILE = "aero-autosave.snap";
+const MAX_LOG_LINES = 200;
+const logLines = [];
 
-const UTF8 = Object.freeze({ encoding: "utf-8" });
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder(UTF8.encoding);
-
-function coerceString(input) {
-  try {
-    return String(input ?? "");
-  } catch {
-    return "";
-  }
-}
-
-function formatOneLineUtf8(input, maxBytes) {
-  if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
-  if (maxBytes === 0) return "";
-
-  const buf = new Uint8Array(maxBytes);
-  let written = 0;
-  let pendingSpace = false;
-  for (const ch of coerceString(input)) {
-    const code = ch.codePointAt(0) ?? 0;
-    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
-    if (forbidden || /\s/u.test(ch)) {
-      pendingSpace = written > 0;
-      continue;
-    }
-
-    if (pendingSpace) {
-      const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
-      if (spaceRes.written === 0) break;
-      written += spaceRes.written;
-      pendingSpace = false;
-      if (written >= maxBytes) break;
-    }
-
-    const res = textEncoder.encodeInto(ch, buf.subarray(written));
-    if (res.written === 0) break;
-    written += res.written;
-    if (written >= maxBytes) break;
-  }
-  return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
-}
-
-function safeErrorMessageInput(err) {
-  if (err === null) return "null";
-  const t = typeof err;
-  if (t === "string") return err;
-  if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
-
-  if (t === "object") {
-    try {
-      const msg = err && typeof err.message === "string" ? err.message : null;
-      if (msg !== null) return msg;
-    } catch {
-      // ignore getters throwing
-    }
-    try {
-      const name = err && typeof err.name === "string" ? err.name : null;
-      if (name !== null) return name;
-    } catch {
-      // ignore getters throwing
-    }
-  }
-
-  return "Error";
-}
+const ERROR_FMT_OPTS = Object.freeze({ includeNameFallback: "missing" });
 
 function formatOneLineError(err, maxBytes) {
-  return formatOneLineUtf8(safeErrorMessageInput(err), maxBytes) || "Error";
+  return formatOneLineErrorShared(err, maxBytes, ERROR_FMT_OPTS);
 }
 
 function log(line) {
-  STATUS_EL.textContent = `${new Date().toISOString()}  ${line}\n${STATUS_EL.textContent}`;
+  logLines.unshift(`${new Date().toISOString()}  ${line}`);
+  if (logLines.length > MAX_LOG_LINES) logLines.length = MAX_LOG_LINES;
+  STATUS_EL.textContent = logLines.join("\n");
 }
 
 async function getOpfsRoot() {
@@ -109,7 +64,7 @@ async function saveSnapshotToOpfs(bytes) {
   } catch (err) {
     // Abort on error so a failed write does not leave behind a truncated/partial snapshot file.
     try {
-      if (writable && typeof writable.abort === "function") await writable.abort(err);
+      if (writable && typeof writable.abort === "function") await writable.abort();
     } catch {
       // ignore
     }
@@ -130,8 +85,15 @@ function downloadSnapshot(bytes, filename = "aero-snapshot.snap") {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  const parent = document.body ?? document.documentElement;
+  parent.appendChild(a);
+  try {
+    a.click();
+  } finally {
+    a.remove();
+    // Avoid revoking immediately; some browsers may still be consuming the URL after click.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 }
 
 // These are expected to be provided by the WASM host integration.
@@ -164,7 +126,7 @@ async function doLoad(bytesOverride = null) {
   log(`Loaded snapshot (${bytes.byteLength} bytes)`);
 }
 
-document.getElementById("save").addEventListener("click", async () => {
+SAVE_BTN.addEventListener("click", async () => {
   try {
     await doSave();
   } catch (err) {
@@ -172,7 +134,7 @@ document.getElementById("save").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("load").addEventListener("click", async () => {
+LOAD_BTN.addEventListener("click", async () => {
   try {
     await doLoad();
   } catch (err) {
@@ -180,7 +142,7 @@ document.getElementById("load").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("export").addEventListener("click", async () => {
+EXPORT_BTN.addEventListener("click", async () => {
   try {
     const bytes = await loadSnapshotFromOpfs();
     downloadSnapshot(bytes);
@@ -190,25 +152,24 @@ document.getElementById("export").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("import").addEventListener("change", async (ev) => {
+IMPORT_INPUT.addEventListener("change", async () => {
   try {
-    const input = /** @type {HTMLInputElement} */ (ev.target);
-    if (!input.files || input.files.length === 0) return;
-    const file = input.files[0];
+    if (!IMPORT_INPUT.files || IMPORT_INPUT.files.length === 0) return;
+    const file = IMPORT_INPUT.files[0];
     const bytes = new Uint8Array(await file.arrayBuffer());
     await doLoad(bytes);
     await saveSnapshotToOpfs(bytes);
     log(`Imported snapshot and persisted to OPFS (${bytes.byteLength} bytes)`);
+    IMPORT_INPUT.value = "";
   } catch (err) {
     log(`Import failed: ${formatOneLineError(err, 512)}`);
   }
 });
 
-document.getElementById("autosave").addEventListener("change", async (ev) => {
-  const input = /** @type {HTMLInputElement} */ (ev.target);
-  const seconds = Number.parseInt(input.value, 10);
+AUTOSAVE_INPUT.addEventListener("change", async () => {
+  const seconds = Number.parseInt(AUTOSAVE_INPUT.value, 10);
   if (!Number.isFinite(seconds) || seconds < 0) {
-    input.value = "0";
+    AUTOSAVE_INPUT.value = "0";
     return;
   }
 
