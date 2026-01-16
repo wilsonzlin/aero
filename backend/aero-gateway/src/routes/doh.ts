@@ -9,7 +9,7 @@ import { base64UrlPrefixForHeader, decodeBase64UrlToBuffer, maxBase64UrlLenForBy
 import { headerHasMimeType } from '../contentType.js';
 import type { SessionManager } from '../session.js';
 import { setupDnsJsonRoutes } from './dnsJson.js';
-import { formatOneLineUtf8 } from '../util/text.js';
+import { formatOneLineError, formatOneLineUtf8 } from '../util/text.js';
 
 type DohQuery = { dns?: string };
 
@@ -179,8 +179,6 @@ export function setupDohRoutes(
           return sendDnsError(reply, 200, { id, queryFlags, question, rcode: 5 });
         }
 
-        const rawMessage = err instanceof Error ? err.message : '';
-
         // All resolver failures should map to a standard DNS error response (SERVFAIL) so
         // DoH clients always receive a valid DNS message payload.
         metrics.dnsQueriesTotal.inc({
@@ -188,7 +186,7 @@ export function setupDohRoutes(
           rcode: rcodeToString(2),
           source: 'error',
         });
-        const errForLog = formatOneLineUtf8(rawMessage, MAX_DNS_ERROR_LOG_BYTES) || 'DNS resolution failed';
+        const errForLog = formatOneLineError(err, MAX_DNS_ERROR_LOG_BYTES, 'DNS resolution failed');
         request.log.warn({ qname: question.name, qtype: question.type, err: errForLog }, 'dns_error');
         return sendDnsError(reply, 200, { id, queryFlags, question, rcode: 2 });
       }

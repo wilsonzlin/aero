@@ -12,6 +12,9 @@ import type { SessionConnectionTracker } from "../session.js";
 import { WebSocketTcpBridge } from "./tcpBridge.js";
 import type { TcpProxyEgressMetricSink } from "./tcpEgressMetrics.js";
 import { resolveTcpProxyTarget, TcpProxyTargetError } from "./tcpResolve.js";
+import { formatOneLineError } from "../util/text.js";
+
+const MAX_UPGRADE_ERROR_MESSAGE_BYTES = 512;
 
 type TcpProxyUpgradeOptions = TcpProxyUpgradePolicy &
   Readonly<{
@@ -92,7 +95,7 @@ export function handleTcpProxyUpgrade(
       });
     } catch (err) {
       if (err instanceof TcpProxyTargetError) {
-        respondUpgradeHttp(socket, err.statusCode, err.message);
+        respondUpgradeHttp(socket, err.statusCode, formatOneLineError(err, MAX_UPGRADE_ERROR_MESSAGE_BYTES));
         return;
       }
       respondUpgradeHttp(socket, 502, formatUpgradeError(err, "Bad Gateway"));
@@ -144,7 +147,7 @@ export function handleTcpProxyUpgrade(
 
 function formatUpgradeError(err: unknown, fallback: string): string {
   if (err instanceof TcpTargetParseError) {
-    return err.message;
+    return formatOneLineError(err, MAX_UPGRADE_ERROR_MESSAGE_BYTES, fallback);
   }
   return fallback;
 }

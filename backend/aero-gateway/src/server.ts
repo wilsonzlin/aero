@@ -480,43 +480,60 @@ function e2ePageHtml(): string {
         return (u8[off] << 8) | u8[off + 1];
       }
 
-      function sanitizeOneLine(input) {
-        let out = '';
+      const UTF8 = Object.freeze({ encoding: 'utf-8' });
+      const textEncoder = new TextEncoder();
+      const textDecoder = new TextDecoder(UTF8.encoding);
+
+      function formatOneLineUtf8(input, maxBytes) {
+        if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
+        if (maxBytes === 0) return '';
+        const buf = new Uint8Array(maxBytes);
+        let written = 0;
         let pendingSpace = false;
         for (const ch of String(input ?? '')) {
           const code = ch.codePointAt(0) ?? 0;
           const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
           if (forbidden || /\\s/u.test(ch)) {
-            pendingSpace = out.length > 0;
+            pendingSpace = written > 0;
             continue;
           }
           if (pendingSpace) {
-            out += ' ';
+            const spaceRes = textEncoder.encodeInto(' ', buf.subarray(written));
+            if (spaceRes.written === 0) break;
+            written += spaceRes.written;
             pendingSpace = false;
+            if (written >= maxBytes) break;
           }
-          out += ch;
+          const res = textEncoder.encodeInto(ch, buf.subarray(written));
+          if (res.written === 0) break;
+          written += res.written;
+          if (written >= maxBytes) break;
         }
-        return out.trim();
+        return written === 0 ? '' : textDecoder.decode(buf.subarray(0, written));
       }
 
-      function truncateUtf8(input, maxBytes) {
-        if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
-        const s = String(input ?? '');
-        const bytes = new TextEncoder().encode(s);
-        if (bytes.length <= maxBytes) return s;
-        let cut = maxBytes;
-        while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut -= 1;
-        if (cut <= 0) return '';
-        return new TextDecoder('utf-8').decode(bytes.subarray(0, cut));
-      }
+      function safeErrorMessageInput(err) {
+        if (err === null) return 'null';
 
-      function formatOneLineUtf8(input, maxBytes) {
-        return truncateUtf8(sanitizeOneLine(input), maxBytes);
+        const t = typeof err;
+        if (t === 'string') return err;
+        if (t === 'number' || t === 'boolean' || t === 'bigint' || t === 'symbol' || t === 'undefined') return String(err);
+
+        if (t === 'object') {
+          try {
+            const msg = err && typeof err.message === 'string' ? err.message : null;
+            if (msg !== null) return msg;
+          } catch {
+            // ignore getters throwing
+          }
+        }
+
+        // Avoid calling toString() on arbitrary objects/functions (can throw / be expensive).
+        return 'Error';
       }
 
       function formatOneLineError(err) {
-        const raw = err && typeof err === 'object' && 'message' in err ? err.message : err;
-        return formatOneLineUtf8(raw, 256) || 'Error';
+        return formatOneLineUtf8(safeErrorMessageInput(err), 256) || 'Error';
       }
 
       (async () => {
@@ -589,7 +606,8 @@ function e2ePageHtml(): string {
           }), 5000, 'WebSocket');
 
           if (!(echo instanceof ArrayBuffer)) {
-            throw new Error('Expected ArrayBuffer echo, got ' + Object.prototype.toString.call(echo));
+            const kind = echo === null ? 'null' : typeof echo;
+            throw new Error('Expected ArrayBuffer echo, got type ' + kind);
           }
           const decoded = new TextDecoder().decode(new Uint8Array(echo));
           results.websocket.ok = decoded === 'ping';

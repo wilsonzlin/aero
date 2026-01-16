@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import { splitCommaSeparatedList } from './csv.js';
 import { normalizeAllowedOriginString } from './security/origin.js';
-import { formatOneLineUtf8 } from './util/text.js';
+import { formatOneLineError, formatOneLineUtf8 } from './util/text.js';
 import {
   L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
   L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
@@ -103,7 +103,7 @@ function splitCommaList(value: string, envName: string, opts?: { maxLen?: number
   try {
     return splitCommaSeparatedList(value, { maxLen: opts?.maxLen, maxItems: opts?.maxItems });
   } catch (err) {
-    const msg = formatOneLineUtf8(err instanceof Error ? err.message : err, MAX_ENV_ERROR_MESSAGE_BYTES) || 'Error';
+    const msg = formatOneLineError(err, MAX_ENV_ERROR_MESSAGE_BYTES);
     throw new Error(`Invalid ${envName}: ${msg}`);
   }
 }
@@ -193,7 +193,14 @@ const envSchema = z.object({
 export function loadConfig(env: Env = process.env): Config {
   const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
-    throw new Error(`Invalid configuration:\n${parsed.error.message}`);
+    const details = parsed.error.issues
+      .slice(0, 5)
+      .map((issue) => {
+        const key = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+        return `${key}: ${issue.code}`;
+      })
+      .join("; ");
+    throw new Error(`Invalid configuration: ${details || "invalid"}`);
   }
 
   const raw = parsed.data;
