@@ -12,6 +12,14 @@ const UTF8 = Object.freeze({ encoding: "utf-8" as const });
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder(UTF8.encoding);
 
+function coerceString(input: unknown): string {
+  try {
+    return String(input ?? "");
+  } catch {
+    return "";
+  }
+}
+
 function formatOneLineUtf8(input: unknown, maxBytes: number): string {
   if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
   if (maxBytes === 0) return "";
@@ -19,7 +27,7 @@ function formatOneLineUtf8(input: unknown, maxBytes: number): string {
   const buf = new Uint8Array(maxBytes);
   let written = 0;
   let pendingSpace = false;
-  for (const ch of String(input ?? "")) {
+  for (const ch of coerceString(input)) {
     const code = ch.codePointAt(0) ?? 0;
     const forbidden =
       code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
