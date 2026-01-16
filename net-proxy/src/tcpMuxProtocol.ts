@@ -221,6 +221,6 @@ export function decodeTcpMuxErrorPayload(buf: Buffer): { code: number; message: 
   if (buf.length !== 4 + messageLen) {
     throw new Error("ERROR payload length mismatch");
   }
-  const message = buf.subarray(4).toString("utf8");
+  const message = buf.subarray(4, 4 + messageLen).toString("utf8");
   return { code, message: truncateUtf8(sanitizeOneLine(message), MAX_TCP_MUX_ERROR_MESSAGE_BYTES) };
 }
