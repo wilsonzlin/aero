@@ -59,34 +59,131 @@ export function findLineNumber(text, index) {
 }
 
 export function stripStringsAndComments(source) {
-  // Best-effort lexer to mask out string literals and comments so we avoid false positives
-  // from help text / docs embedded in code. We preserve newlines and string length by replacing
-  // masked characters with spaces.
+  // Best-effort lexer to mask out string literals, regex literals, and comments so we avoid
+  // false positives from help text / docs embedded in code. We preserve newlines and string
+  // length by replacing masked characters with spaces.
   const out = source.split("");
   const len = out.length;
 
   let i = 0;
-  let state = "normal"; // normal | sq | dq | template | line_comment | block_comment | template_expr
+  let state = "normal"; // normal | template | template_expr | sq | dq | line_comment | block_comment | regex
+  let resumeState = "normal"; // where sq/dq/comments/regex return
+  let templateResumeState = "normal"; // where a template literal returns on closing backtick
   let templateExprDepth = 0;
+  let regexInCharClass = false;
+
+  // Context-sensitive regex literal detection.
+  let canStartRegex = true;
+  const KEYWORDS_EXPECT_EXPR = new Set([
+    "return",
+    "throw",
+    "case",
+    "else",
+    "do",
+    "yield",
+    "await",
+    "typeof",
+    "instanceof",
+    "void",
+    "delete",
+    "new",
+    "in",
+    "of",
+  ]);
 
   const maskChar = (idx) => {
     if (out[idx] !== "\n") out[idx] = " ";
+  };
+
+  const isIdentStart = (c) => {
+    const code = c.charCodeAt(0);
+    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || c === "_" || c === "$";
+  };
+  const isIdentPart = (c) => {
+    const code = c.charCodeAt(0);
+    return (
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      c === "_" ||
+      c === "$"
+    );
+  };
+  const isDigit = (c) => {
+    const code = c.charCodeAt(0);
+    return code >= 48 && code <= 57;
+  };
+
+  const onPunct = (ch, next) => {
+    // Tokens that strongly suggest an expression can start next.
+    if (ch === "(" || ch === "[" || ch === "{" || ch === "," || ch === ";" || ch === ":" || ch === "?" || ch === "=") {
+      canStartRegex = true;
+      return false;
+    }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      canStartRegex = false;
+      return false;
+    }
+
+    // Postfix operators end an expression.
+    if ((ch === "+" && next === "+") || (ch === "-" && next === "-")) {
+      canStartRegex = false;
+      return true; // consumed 2 chars
+    }
+
+    // Most operators allow a new expression next.
+    if (ch === "!" || ch === "~" || ch === "+" || ch === "-" || ch === "*" || ch === "%" || ch === "&" || ch === "|" || ch === "^" || ch === "<" || ch === ">") {
+      canStartRegex = true;
+      return false;
+    }
+
+    // Dot expects an identifier next; treat as "can't start regex".
+    if (ch === ".") {
+      canStartRegex = false;
+      return false;
+    }
+
+    return false;
   };
 
   while (i < len) {
     const ch = source[i];
     const next = i + 1 < len ? source[i + 1] : "";
 
-    if (state === "normal") {
-      if (ch === "'" || ch === '"' || ch === "`") {
+    if (state === "normal" || state === "template_expr") {
+      // Regex literal start (only where it's grammatically plausible).
+      if (ch === "/" && next !== "/" && next !== "*" && canStartRegex) {
+        const returnTo = state;
         maskChar(i);
-        state = ch === "'" ? "sq" : ch === '"' ? "dq" : "template";
+        state = "regex";
+        resumeState = returnTo;
+        regexInCharClass = false;
         i++;
         continue;
       }
+
+      if (ch === "'" || ch === '"') {
+        maskChar(i);
+        resumeState = state;
+        state = ch === "'" ? "sq" : "dq";
+        canStartRegex = false;
+        i++;
+        continue;
+      }
+
+      if (ch === "`") {
+        maskChar(i);
+        templateResumeState = state;
+        state = "template";
+        canStartRegex = false;
+        i++;
+        continue;
+      }
+
       if (ch === "/" && next === "/") {
         maskChar(i);
         maskChar(i + 1);
+        resumeState = state;
         state = "line_comment";
         i += 2;
         continue;
@@ -94,10 +191,54 @@ export function stripStringsAndComments(source) {
       if (ch === "/" && next === "*") {
         maskChar(i);
         maskChar(i + 1);
+        resumeState = state;
         state = "block_comment";
         i += 2;
         continue;
       }
+
+      if (state === "template_expr") {
+        if (ch === "{") {
+          templateExprDepth++;
+          canStartRegex = true;
+          i++;
+          continue;
+        }
+        if (ch === "}") {
+          templateExprDepth--;
+          canStartRegex = false;
+          if (templateExprDepth === 0) {
+            state = "template";
+          }
+          i++;
+          continue;
+        }
+      }
+
+      if (isIdentStart(ch)) {
+        let j = i + 1;
+        while (j < len && isIdentPart(source[j])) j++;
+        const word = source.slice(i, j);
+        canStartRegex = KEYWORDS_EXPECT_EXPR.has(word);
+        i = j;
+        continue;
+      }
+      if (isDigit(ch)) {
+        let j = i + 1;
+        while (j < len && isDigit(source[j])) j++;
+        canStartRegex = false;
+        i = j;
+        continue;
+      }
+
+      if (ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n") {
+        const consumed2 = onPunct(ch, next);
+        if (consumed2) {
+          i += 2;
+          continue;
+        }
+      }
+
       i++;
       continue;
     }
@@ -110,7 +251,8 @@ export function stripStringsAndComments(source) {
         continue;
       }
       if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
-        state = "normal";
+        state = resumeState;
+        canStartRegex = false;
       }
       i++;
       continue;
@@ -127,45 +269,48 @@ export function stripStringsAndComments(source) {
         maskChar(i + 1);
         state = "template_expr";
         templateExprDepth = 1;
+        canStartRegex = true;
         i += 2;
         continue;
       }
       if (ch === "`") {
-        state = "normal";
+        state = templateResumeState;
+        canStartRegex = false;
       }
       i++;
       continue;
     }
 
-    if (state === "template_expr") {
-      // Inside `${ ... }`, we keep code (do not mask), but we still need to track nested braces.
-      if (ch === "'" || ch === '"' || ch === "`") {
-        maskChar(i);
-        state = ch === "'" ? "sq" : ch === '"' ? "dq" : "template";
+    if (state === "regex") {
+      maskChar(i);
+      if (ch === "\\") {
+        if (i + 1 < len) maskChar(i + 1);
+        i += 2;
+        continue;
+      }
+      if (ch === "[") {
+        regexInCharClass = true;
         i++;
         continue;
       }
-      if (ch === "/" && next === "/") {
-        maskChar(i);
-        maskChar(i + 1);
-        state = "line_comment";
-        i += 2;
+      if (ch === "]") {
+        regexInCharClass = false;
+        i++;
         continue;
       }
-      if (ch === "/" && next === "*") {
-        maskChar(i);
-        maskChar(i + 1);
-        state = "block_comment";
-        i += 2;
-        continue;
-      }
-      if (ch === "{") {
-        templateExprDepth++;
-      } else if (ch === "}") {
-        templateExprDepth--;
-        if (templateExprDepth === 0) {
-          state = "template";
+      if (ch === "/" && !regexInCharClass) {
+        i++;
+        while (i < len) {
+          const c = source[i];
+          const code = c.charCodeAt(0);
+          const isAlpha = (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+          if (!isAlpha) break;
+          maskChar(i);
+          i++;
         }
+        state = resumeState;
+        canStartRegex = false;
+        continue;
       }
       i++;
       continue;
@@ -173,7 +318,7 @@ export function stripStringsAndComments(source) {
 
     if (state === "line_comment") {
       maskChar(i);
-      if (ch === "\n") state = "normal";
+      if (ch === "\n") state = resumeState;
       i++;
       continue;
     }
@@ -182,7 +327,7 @@ export function stripStringsAndComments(source) {
       maskChar(i);
       if (ch === "*" && next === "/") {
         maskChar(i + 1);
-        state = "normal";
+        state = resumeState;
         i += 2;
         continue;
       }
