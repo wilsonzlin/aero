@@ -8,8 +8,9 @@ The repository historically accumulated multiple overlapping USB host controller
   - Rust USB device models + host controllers (UHCI/EHCI/xHCI): `crates/aero-usb`
   - WASM exports: `crates/aero-wasm`
   - Host integration (WebHID/WebUSB broker/executor, worker proxying): `web/`
-- **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
-  - Legacy/demo main-thread broker + worker client (deprecated/quarantined): `src/platform/legacy/webusb_{broker,client,protocol}.ts`
+- **Repo-root WebUSB demo RPC (parallel TypeScript surface; removed):**
+  - A legacy/demo main-thread broker + worker client previously lived under `src/platform/legacy/webusb_{broker,client,protocol}.ts`.
+    It was deprecated/quarantined and has been deleted to prevent drift.
 - **Native emulator integration (consumer):**
   - PCI/PortIO wiring + compatibility re-exports: `crates/emulator` (`emulator::io::usb` module)
 - **Legacy prototype (duplicate wire contract; removed):**
@@ -161,9 +162,9 @@ alive and call `reset()` on disconnect instead of recreating it. See `docs/webus
 3. **Consolidate TypeScript WebUSB host integration**
    - Treat `web/src/usb/*` as the canonical WebUSB passthrough host integration for the
       `UsbHostAction`/`UsbHostCompletion` contract.
-    - The repo-root `src/platform/legacy/webusb_{broker,client,protocol}.ts` stack is a **generic WebUSB demo
-      RPC** (direct `navigator.usb` operations), and must not grow a second passthrough wire contract.
-    - Deletion target (once demos migrate or become redundant): `src/platform/legacy/webusb_{broker,client,protocol}.ts`.
+    - The repo previously included a **generic WebUSB demo RPC** stack (direct `navigator.usb` operations)
+      under `src/platform/legacy/webusb_{broker,client,protocol}.ts`. It has been removed; do not reintroduce
+      a parallel USB stack or an alternate passthrough wire contract outside `web/src/usb/*` + `crates/aero-usb`.
 
 4. **Converge native on shared code**
    - The native emulator consumes `aero-usb` for USB device models + host controller behavior

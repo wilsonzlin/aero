@@ -127,7 +127,9 @@ Because Aero prefers worker-side I/O, there are two viable integration patterns:
     - The ring path is opportunistic: when rings are unavailable (or temporarily full), messages fall back to typed `postMessage` (`usb.action` / `usb.completion`).
     - Late-starting worker runtimes can request the rings via `usb.ringAttachRequest`.
     - If a ring becomes corrupted (decode error), runtimes can disable the ring fast path by sending `usb.ringDetach` and falling back to `postMessage`.
-  - The repo-root Vite harness also contains a **legacy/demo WebUSB RPC** under `src/platform/legacy/webusb_{broker,client,protocol}.ts` (direct `navigator.usb` operations). It is deprecated and is not the canonical passthrough `UsbHostAction` contract.
+  - The repo-root Vite harness previously contained a **legacy/demo WebUSB RPC** under
+    `src/platform/legacy/webusb_{broker,client,protocol}.ts` (direct `navigator.usb` operations). It has been
+    removed and is not the canonical passthrough `UsbHostAction` contract.
 
 > `USBDevice` structured-clone / transferability support is **browser-dependent** and must be treated as a runtime capability. Probe this at runtime via the production WebUSB smoke-test panel (`web/src/usb/webusb_panel.ts`) or the dedicated diagnostics page (`/webusb_diagnostics.html`).
 >

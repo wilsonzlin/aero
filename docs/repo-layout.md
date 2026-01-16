@@ -92,7 +92,7 @@ Legacy/non-canonical USB implementations (do not extend for new browser runtime 
 
 - Native emulator USB integration (PCI/PortIO wiring + re-exports around `crates/aero-usb`):
   `crates/emulator` (`emulator::io::usb` module)
-- Legacy repo-root WebUSB demo RPC (direct `navigator.usb` operations; deprecated): `src/platform/legacy/webusb_*`
+- Legacy repo-root WebUSB demo RPC (direct `navigator.usb` operations; removed): previously lived under `src/platform/legacy/webusb_*`
 
 ### Backend services (production)
 
