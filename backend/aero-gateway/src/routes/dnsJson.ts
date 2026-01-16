@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 
 import type { Config } from '../config.js';
 import { encodeDnsQuery, normalizeDnsName } from '../dns/codec.js';
-import type { DnsResolver } from '../dns/resolver.js';
+import { DnsPolicyError, type DnsResolver } from '../dns/resolver.js';
 import type { TokenBucketRateLimiter } from '../dns/rateLimit.js';
 import { dnsResponseToJson } from '../dns/dnsJson.js';
 import { parseDnsRecordType } from '../dns/recordTypes.js';
@@ -40,9 +40,8 @@ export function setupDnsJsonRoutes(
     let type: number;
     try {
       type = parseDnsRecordType(query.type);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Invalid DNS record type';
-      return reply.code(400).send({ error: 'bad_request', message });
+    } catch {
+      return reply.code(400).send({ error: 'bad_request', message: 'Invalid DNS record type' });
     }
 
     const dnsQuery = encodeDnsQuery({ id: 0, name, type });
@@ -58,21 +57,15 @@ export function setupDnsJsonRoutes(
       reply.header('cache-control', 'no-store');
       return reply.send(dnsResponseToJson(response, { name, type }));
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'DNS resolution failed';
-
-      if (message.includes('ANY queries are disabled') || message.includes('PTR queries to private ranges are disabled')) {
+      if (err instanceof DnsPolicyError) {
+        const message =
+          err.kind === 'any-disabled' ? 'ANY queries are disabled' : 'PTR queries to private ranges are disabled';
         return reply.code(403).send({ error: 'forbidden', message });
       }
 
-      if (message.startsWith('DNS ')) {
-        return reply.code(400).send({ error: 'bad_request', message });
-      }
-
-      if (message.includes('Upstream response too large')) {
-        return reply.code(502).send({ error: 'bad_gateway', message });
-      }
-
-      return reply.code(502).send({ error: 'bad_gateway', message });
+      // Avoid reflecting upstream/internal error strings (URLs, network details) in client responses.
+      // DoH clients can treat any 502 as SERVFAIL-equivalent.
+      return reply.code(502).send({ error: 'bad_gateway', message: 'DNS resolution failed' });
     }
   });
 }

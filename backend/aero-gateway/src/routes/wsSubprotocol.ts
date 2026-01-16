@@ -1,3 +1,4 @@
+import { isValidHttpTokenPart } from "../httpTokens.js";
 export type WebSocketSubprotocolDecision =
   | { ok: true; has: boolean }
   | { ok: false; has: false };
@@ -37,6 +38,7 @@ export function hasWebSocketSubprotocol(
       if (end > start) {
         count += 1;
         if (count > MAX_SEC_WEBSOCKET_PROTOCOLS) return { ok: false, has: false };
+        if (!isValidHttpTokenPart(part, start, end)) return { ok: false, has: false };
 
         const len = end - start;
         if (len === required.length) {

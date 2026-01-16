@@ -2,6 +2,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { iterRawHeaderValues } from './rawHeaders.js';
 
+// Cookie values are attacker-controlled. Keep any decoding/allocation bounded.
+const MAX_COOKIE_VALUE_LEN = 4 * 1024;
+const MAX_COOKIE_HEADER_VALUE_LEN = 16 * 1024;
+
 export interface CookieOptions {
   httpOnly?: boolean;
   maxAgeSeconds?: number;
@@ -163,7 +167,12 @@ function getCookieValueFromHeaderString(raw: string, name: string): string | und
       continue;
     }
 
-    const value = raw.slice(valueStart, valueEnd);
+    const rawValueLen = valueEnd - valueStart;
+    const boundedEnd = rawValueLen > MAX_COOKIE_VALUE_LEN ? valueStart + MAX_COOKIE_VALUE_LEN : valueEnd;
+    const value = raw.slice(valueStart, boundedEnd);
+    if (value.indexOf('%') === -1) {
+      return value;
+    }
     try {
       return decodeURIComponent(value);
     } catch {
@@ -193,10 +202,30 @@ export function getCookieValue(cookieHeader: string | string[] | undefined, name
 export function getCookieValueFromRequest(req: IncomingMessage, name: string): string | undefined {
   const rawHeaders = (req as unknown as { rawHeaders?: unknown }).rawHeaders;
   for (const header of iterRawHeaderValues(rawHeaders, 'cookie')) {
+    // Preserve "first cookie wins" semantics even when the header itself is oversized:
+    // treat an oversized Cookie header as invalid (blocks bypass via later headers).
+    if (header.length > MAX_COOKIE_HEADER_VALUE_LEN) return '';
     const value = getCookieValueFromHeaderString(header, name);
     // Preserve "first cookie wins" semantics, even when the value is an empty string.
     if (value !== undefined) return value;
   }
 
-  return getCookieValue(req.headers.cookie, name);
+  const cookieHeader = (req.headers as Record<string, unknown>)['cookie'];
+  if (typeof cookieHeader === 'string') {
+    if (cookieHeader.length > MAX_COOKIE_HEADER_VALUE_LEN) return '';
+    return getCookieValueFromHeaderString(cookieHeader, name);
+  }
+  if (Array.isArray(cookieHeader)) {
+    for (const header of cookieHeader) {
+      if (typeof header !== 'string') return '';
+      if (header.length > MAX_COOKIE_HEADER_VALUE_LEN) return '';
+    }
+    for (const header of cookieHeader) {
+      const value = getCookieValueFromHeaderString(header, name);
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
+
+  return undefined;
 }

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import { splitCommaSeparatedList } from './csv.js';
 import { normalizeAllowedOriginString } from './security/origin.js';
+import { formatOneLineUtf8 } from './util/text.js';
 import {
   L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
   L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
@@ -88,21 +89,34 @@ export type Config = Readonly<{
 
 type Env = Record<string, string | undefined>;
 
+function formatForError(value: string, maxLen = 128): string {
+  if (maxLen <= 0) return `(${value.length} chars)`;
+  if (value.length <= maxLen) return value;
+  return `${value.slice(0, maxLen)}…(${value.length} chars)`;
+}
+
+const MAX_ENV_INT_LEN = 64;
+const MAX_ENV_ERROR_MESSAGE_BYTES = 256;
+const DEFAULT_LIST_LIMITS = { maxLen: 64 * 1024, maxItems: 1024 } as const;
+
 function splitCommaList(value: string, envName: string, opts?: { maxLen?: number; maxItems?: number }): string[] {
   try {
     return splitCommaSeparatedList(value, { maxLen: opts?.maxLen, maxItems: opts?.maxItems });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatOneLineUtf8(err instanceof Error ? err.message : err, MAX_ENV_ERROR_MESSAGE_BYTES) || 'Error';
     throw new Error(`Invalid ${envName}: ${msg}`);
   }
 }
 
 function splitCommaListNumbers(value: string, envName: string): number[] {
   if (value.trim() === '') return [];
-  return splitCommaList(value, envName).map((raw) => {
+  return splitCommaList(value, envName, DEFAULT_LIST_LIMITS).map((raw) => {
+    if (raw.length > MAX_ENV_INT_LEN) {
+      throw new Error(`Invalid ${envName} number (too long)`);
+    }
     const n = Number(raw);
     if (!Number.isInteger(n)) {
-      throw new Error(`Invalid ${envName} number: ${raw}`);
+      throw new Error(`Invalid ${envName} number: ${formatForError(raw)}`);
     }
     return n;
   });
@@ -111,10 +125,10 @@ function assertReadableFile(filePath: string, envName: string): void {
   try {
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) {
-      throw new Error(`${envName} must point to a file: ${filePath}`);
+      throw new Error(`${envName} must point to a file: ${formatForError(filePath)}`);
     }
   } catch {
-    throw new Error(`${envName} does not exist: ${filePath}`);
+    throw new Error(`${envName} does not exist: ${formatForError(filePath)}`);
   }
 }
 
@@ -216,7 +230,7 @@ export function loadConfig(env: Env = process.env): Config {
   try {
     publicBaseUrlParsed = new URL(publicBaseUrl);
   } catch {
-    throw new Error(`Invalid PUBLIC_BASE_URL "${publicBaseUrl}". Expected a URL like "https://example.com".`);
+    throw new Error("Invalid PUBLIC_BASE_URL (expected an absolute http(s) URL)");
   }
 
   const allowedOrigins = splitCommaList(raw.ALLOWED_ORIGINS, 'ALLOWED_ORIGINS', { maxLen: 64 * 1024, maxItems: 1024 }).map(
@@ -232,14 +246,12 @@ export function loadConfig(env: Env = process.env): Config {
     try {
       udpRelayParsed = new URL(udpRelayBaseUrlRaw);
     } catch {
-      throw new Error(
-        `Invalid UDP_RELAY_BASE_URL "${udpRelayBaseUrlRaw}". Expected a URL like "https://relay.example.com" or "wss://relay.example.com".`,
-      );
+      throw new Error("Invalid UDP_RELAY_BASE_URL (expected http(s):// or ws(s):// URL)");
     }
 
     if (!['http:', 'https:', 'ws:', 'wss:'].includes(udpRelayParsed.protocol)) {
       throw new Error(
-        `Invalid UDP_RELAY_BASE_URL "${udpRelayBaseUrlRaw}". Expected http(s):// or ws(s)://, got "${udpRelayParsed.protocol}".`,
+        `Invalid UDP_RELAY_BASE_URL protocol (got ${formatForError(udpRelayParsed.protocol)})`,
       );
     }
 
@@ -263,9 +275,12 @@ export function loadConfig(env: Env = process.env): Config {
   function parseOptionalPositiveInt(name: string, value: string | undefined): number | null {
     const trimmed = value?.trim();
     if (!trimmed) return null;
+    if (trimmed.length > MAX_ENV_INT_LEN) {
+      throw new Error(`${name} value too long`);
+    }
     const parsed = Number(trimmed);
     if (!Number.isInteger(parsed) || parsed < 0) {
-      throw new Error(`${name} must be a positive integer (or 0 to unset), got ${JSON.stringify(value)}`);
+      throw new Error(`${name} must be a positive integer (or 0 to unset), got ${formatForError(trimmed)}`);
     }
     // Treat 0 as "unset" so deployments can pass through empty/placeholder values without
     // accidentally disabling framing.
@@ -306,9 +321,9 @@ export function loadConfig(env: Env = process.env): Config {
     TLS_CERT_PATH: tlsCertPath,
     TLS_KEY_PATH: tlsKeyPath,
     TCP_ALLOW_PRIVATE_IPS: raw.TCP_ALLOW_PRIVATE_IPS === '1',
-    TCP_ALLOWED_HOSTS: splitCommaList(raw.TCP_ALLOWED_HOSTS, 'TCP_ALLOWED_HOSTS'),
+    TCP_ALLOWED_HOSTS: splitCommaList(raw.TCP_ALLOWED_HOSTS, 'TCP_ALLOWED_HOSTS', DEFAULT_LIST_LIMITS),
     TCP_ALLOWED_PORTS: tcpAllowedPorts,
-    TCP_BLOCKED_CLIENT_IPS: splitCommaList(raw.TCP_BLOCKED_CLIENT_IPS, 'TCP_BLOCKED_CLIENT_IPS'),
+    TCP_BLOCKED_CLIENT_IPS: splitCommaList(raw.TCP_BLOCKED_CLIENT_IPS, 'TCP_BLOCKED_CLIENT_IPS', DEFAULT_LIST_LIMITS),
     TCP_MUX_MAX_STREAMS: raw.TCP_MUX_MAX_STREAMS,
     TCP_MUX_MAX_STREAM_BUFFER_BYTES: raw.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
     TCP_MUX_MAX_FRAME_PAYLOAD_BYTES: raw.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
@@ -319,7 +334,7 @@ export function loadConfig(env: Env = process.env): Config {
     TCP_PROXY_CONNECT_TIMEOUT_MS: raw.TCP_PROXY_CONNECT_TIMEOUT_MS,
     TCP_PROXY_IDLE_TIMEOUT_MS: raw.TCP_PROXY_IDLE_TIMEOUT_MS,
 
-    DNS_UPSTREAMS: splitCommaList(raw.DNS_UPSTREAMS, 'DNS_UPSTREAMS'),
+    DNS_UPSTREAMS: splitCommaList(raw.DNS_UPSTREAMS, 'DNS_UPSTREAMS', DEFAULT_LIST_LIMITS),
     DNS_UPSTREAM_TIMEOUT_MS: raw.DNS_UPSTREAM_TIMEOUT_MS,
 
     DNS_CACHE_MAX_ENTRIES: raw.DNS_CACHE_MAX_ENTRIES,

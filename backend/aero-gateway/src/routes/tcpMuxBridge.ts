@@ -32,6 +32,24 @@ class TcpMuxIpPolicyDeniedError extends Error {
   override name = "TcpMuxIpPolicyDeniedError";
 }
 
+function formatTcpMuxHostPolicyRejection(
+  reason: "invalid-hostname" | "ip-literal-disallowed" | "blocked-by-host-policy" | "not-allowed-by-host-policy",
+): string {
+  // Keep client-visible rejection strings stable and avoid leaking internal config knobs.
+  switch (reason) {
+    case "invalid-hostname":
+      return "Invalid host";
+    case "ip-literal-disallowed":
+      return "IP-literal targets are not allowed";
+    case "blocked-by-host-policy":
+      return "Target is blocked";
+    case "not-allowed-by-host-policy":
+      return "Target is not allowed";
+    default:
+      return "Target is not allowed";
+  }
+}
+
 export type TcpMuxBridgeOptions = TcpProxyUpgradePolicy &
   Readonly<{
     allowPrivateIps?: boolean;
@@ -201,7 +219,8 @@ export class WebSocketTcpMuxBridge {
     try {
       target = decodeTcpMuxOpenPayload(frame.payload);
     } catch (err) {
-      this.sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, (err as Error).message);
+      // Keep client-visible error strings stable; do not reflect parser exception messages.
+      this.sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "Invalid OPEN payload");
       return;
     }
 
@@ -221,7 +240,7 @@ export class WebSocketTcpMuxBridge {
       this.opts.metrics?.blockedByHostPolicyTotal?.inc();
       const code =
         hostDecision.reason === "invalid-hostname" ? TcpMuxErrorCode.PROTOCOL_ERROR : TcpMuxErrorCode.POLICY_DENIED;
-      this.sendStreamError(frame.streamId, code, `${hostDecision.reason}: ${hostDecision.message}`);
+      this.sendStreamError(frame.streamId, code, formatTcpMuxHostPolicyRejection(hostDecision.reason));
       return;
     }
 
@@ -348,9 +367,11 @@ export class WebSocketTcpMuxBridge {
       stream.connectTimer = undefined;
       if (err instanceof TcpMuxIpPolicyDeniedError) {
         this.opts.metrics?.blockedByIpPolicyTotal?.inc();
-        this.sendStreamError(stream.id, TcpMuxErrorCode.POLICY_DENIED, err.message);
+        // Keep a stable message; avoid depending on arbitrary Error.message.
+        this.sendStreamError(stream.id, TcpMuxErrorCode.POLICY_DENIED, "Target IP is not allowed by IP egress policy");
       } else {
-        this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, err.message);
+        // Avoid reflecting raw socket error messages (which may include resolved IPs).
+        this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
       }
       this.destroyStream(stream.id);
     });
@@ -395,7 +416,8 @@ export class WebSocketTcpMuxBridge {
     try {
       flags = decodeTcpMuxClosePayload(frame.payload).flags;
     } catch (err) {
-      this.sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, (err as Error).message);
+      // Keep client-visible error strings stable; do not reflect parser exception messages.
+      this.sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "Invalid CLOSE payload");
       return;
     }
 

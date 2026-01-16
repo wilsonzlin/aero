@@ -1,5 +1,7 @@
 import type { Duplex } from "node:stream";
 
+import { formatOneLineUtf8 } from "../util/text.js";
+
 // Conservative cap to avoid spending unbounded CPU/memory on attacker-controlled request targets.
 // Many HTTP stacks enforce ~8KB request target limits; keep the gateway strict and predictable.
 export const MAX_REQUEST_URL_LEN = 8 * 1024;
@@ -28,7 +30,8 @@ function httpStatusText(status: number): string {
 }
 
 export function respondUpgradeHttp(socket: Duplex, status: number, message: string): void {
-  const body = `${message}\n`;
+  const safeMessage = formatOneLineUtf8(message, 512) || httpStatusText(status);
+  const body = `${safeMessage}\n`;
   socket.end(
     [
       `HTTP/1.1 ${status} ${httpStatusText(status)}`,

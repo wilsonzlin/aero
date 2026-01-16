@@ -197,6 +197,17 @@ function parseIp6ArpaBytes(base: string): Uint8Array | null {
   return bytes;
 }
 
+export type DnsPolicyErrorKind = "any-disabled" | "private-ptr-disabled";
+
+export class DnsPolicyError extends Error {
+  readonly kind: DnsPolicyErrorKind;
+
+  constructor(kind: DnsPolicyErrorKind) {
+    super(kind === "any-disabled" ? "ANY queries are disabled" : "PTR queries to private ranges are disabled");
+    this.kind = kind;
+  }
+}
+
 export class DnsResolver {
   private readonly cache: DnsCache;
   private readonly upstreams: DnsUpstream[];
@@ -210,6 +221,14 @@ export class DnsResolver {
     this.upstreams = parseUpstreams(config.DNS_UPSTREAMS);
   }
 
+  static policyErrorAnyDisabled(): DnsPolicyError {
+    return new DnsPolicyError("any-disabled");
+  }
+
+  static policyErrorPrivatePtrDisabled(): DnsPolicyError {
+    return new DnsPolicyError("private-ptr-disabled");
+  }
+
   async resolve(query: Buffer): Promise<{ response: Buffer; qname: string; qtype: number; rcode: number; cacheHit: boolean }> {
     const header = decodeDnsHeader(query);
     const question = decodeFirstQuestion(query);
@@ -217,11 +236,11 @@ export class DnsResolver {
     const qtypeLabel = qtypeToString(question.type);
 
     if (!this.config.DNS_ALLOW_ANY && question.type === 255) {
-      throw new Error('ANY queries are disabled');
+      throw DnsResolver.policyErrorAnyDisabled();
     }
 
     if (!this.config.DNS_ALLOW_PRIVATE_PTR && question.type === 12 && isPrivatePtrQname(question.name)) {
-      throw new Error('PTR queries to private ranges are disabled');
+      throw DnsResolver.policyErrorPrivatePtrDisabled();
     }
 
     const cached = this.cache.get(cacheKey);

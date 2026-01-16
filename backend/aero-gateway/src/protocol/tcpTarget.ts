@@ -24,6 +24,12 @@ export class TcpTargetParseError extends Error {
   }
 }
 
+// Defensive caps: query params are attacker-controlled.
+const MAX_VERSION_LEN = 16;
+const MAX_HOST_LEN = 1024;
+const MAX_PORT_LEN = 16;
+const MAX_TARGET_LEN = MAX_HOST_LEN + MAX_PORT_LEN + 16;
+
 export function parseTcpTargetFromUrl(url: URL): TcpTarget {
   return parseTcpTarget(url.searchParams);
 }
@@ -50,6 +56,12 @@ export function parseTcpTarget(searchParams: URLSearchParams): TcpTarget {
 
   const target = searchParams.get("target");
   if (target !== null) {
+    if (target.length > MAX_TARGET_LEN) {
+      throw new TcpTargetParseError(
+        "ERR_TCP_INVALID_TARGET",
+        "Invalid target: too long",
+      );
+    }
     const { host, port } = parseTargetParam(target);
     return { host, port, version };
   }
@@ -69,6 +81,19 @@ export function parseTcpTarget(searchParams: URLSearchParams): TcpTarget {
     );
   }
 
+  if (rawHost.length > MAX_HOST_LEN) {
+    throw new TcpTargetParseError(
+      "ERR_TCP_INVALID_HOST",
+      "Invalid host: too long",
+    );
+  }
+  if (rawPort.length > MAX_PORT_LEN) {
+    throw new TcpTargetParseError(
+      "ERR_TCP_INVALID_PORT",
+      "Invalid port",
+    );
+  }
+
   const host = normalizeHost(rawHost);
   const port = parsePort(rawPort);
   return { host, port, version };
@@ -78,12 +103,18 @@ function parseVersion(raw: string | null): TcpProxyProtocolVersion {
   if (raw === null || raw === "") {
     return 1;
   }
+  if (raw.length > MAX_VERSION_LEN) {
+    throw new TcpTargetParseError(
+      "ERR_TCP_UNSUPPORTED_VERSION",
+      "Unsupported TCP proxy protocol version",
+    );
+  }
   if (raw === "1") {
     return 1;
   }
   throw new TcpTargetParseError(
     "ERR_TCP_UNSUPPORTED_VERSION",
-    `Unsupported TCP proxy protocol version: ${raw}`,
+    "Unsupported TCP proxy protocol version",
   );
 }
 
@@ -179,7 +210,19 @@ function normalizeHost(host: string): string {
         "Invalid host: empty bracketed host",
       );
     }
+    if (inner.length > MAX_HOST_LEN) {
+      throw new TcpTargetParseError(
+        "ERR_TCP_INVALID_HOST",
+        "Invalid host: too long",
+      );
+    }
     return inner;
+  }
+  if (host.length > MAX_HOST_LEN) {
+    throw new TcpTargetParseError(
+      "ERR_TCP_INVALID_HOST",
+      "Invalid host: too long",
+    );
   }
   return host;
 }
@@ -188,7 +231,13 @@ function parsePort(port: string): number {
   if (port === "") {
     throw new TcpTargetParseError(
       "ERR_TCP_INVALID_PORT",
-      `Invalid port: ${port}`,
+      "Invalid port",
+    );
+  }
+  if (port.length > MAX_PORT_LEN) {
+    throw new TcpTargetParseError(
+      "ERR_TCP_INVALID_PORT",
+      "Invalid port",
     );
   }
 
@@ -198,14 +247,14 @@ function parsePort(port: string): number {
     if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) {
       throw new TcpTargetParseError(
         "ERR_TCP_INVALID_PORT",
-        `Invalid port: ${port}`,
+        "Invalid port",
       );
     }
     n = n * 10 + (c - 0x30);
     if (n > 65535) {
       throw new TcpTargetParseError(
         "ERR_TCP_INVALID_PORT",
-        `Invalid port: ${port}`,
+        "Invalid port",
       );
     }
   }
@@ -213,7 +262,7 @@ function parsePort(port: string): number {
   if (n < 1) {
     throw new TcpTargetParseError(
       "ERR_TCP_INVALID_PORT",
-      `Invalid port: ${port}`,
+      "Invalid port",
     );
   }
 

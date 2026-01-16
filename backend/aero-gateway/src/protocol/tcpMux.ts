@@ -1,6 +1,14 @@
+import { formatOneLineUtf8, sanitizeOneLine } from "../util/text.js";
+
 export const TCP_MUX_SUBPROTOCOL = 'aero-tcp-mux-v1';
 
 export const TCP_MUX_HEADER_BYTES = 9;
+
+// Defensive caps: OPEN payload strings are attacker-controlled and should never be large.
+// Hostnames are <=253 chars on the wire; allow some slack for IPv6 literals and future extensions.
+export const MAX_TCP_MUX_OPEN_HOST_BYTES = 1024;
+export const MAX_TCP_MUX_OPEN_METADATA_BYTES = 4 * 1024;
+export const MAX_TCP_MUX_ERROR_MESSAGE_BYTES = 1024;
 
 // NOTE: This file is executed directly in Node unit tests via `--experimental-strip-types`,
 // which does not support TS `enum` syntax. Keep protocol constants as `as const` objects so the
@@ -111,10 +119,10 @@ export function encodeTcpMuxOpenPayload(payload: TcpMuxOpenPayload): Buffer {
   const hostBytes = Buffer.from(payload.host, 'utf8');
   const metadataBytes = payload.metadata ? Buffer.from(payload.metadata, 'utf8') : Buffer.alloc(0);
 
-  if (hostBytes.length > 0xffff) {
+  if (hostBytes.length > MAX_TCP_MUX_OPEN_HOST_BYTES) {
     throw new Error('host too long');
   }
-  if (metadataBytes.length > 0xffff) {
+  if (metadataBytes.length > MAX_TCP_MUX_OPEN_METADATA_BYTES) {
     throw new Error('metadata too long');
   }
   if (!Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535) {
@@ -143,6 +151,9 @@ export function decodeTcpMuxOpenPayload(buf: Buffer): TcpMuxOpenPayload {
   let offset = 0;
   const hostLen = buf.readUInt16BE(offset);
   offset += 2;
+  if (hostLen > MAX_TCP_MUX_OPEN_HOST_BYTES) {
+    throw new Error('host too long');
+  }
   if (buf.length < offset + hostLen + 2 + 2) {
     throw new Error('OPEN payload truncated (host)');
   }
@@ -152,6 +163,9 @@ export function decodeTcpMuxOpenPayload(buf: Buffer): TcpMuxOpenPayload {
   offset += 2;
   const metadataLen = buf.readUInt16BE(offset);
   offset += 2;
+  if (metadataLen > MAX_TCP_MUX_OPEN_METADATA_BYTES) {
+    throw new Error('metadata too long');
+  }
   if (buf.length < offset + metadataLen) {
     throw new Error('OPEN payload truncated (metadata)');
   }
@@ -177,10 +191,8 @@ export function decodeTcpMuxClosePayload(buf: Buffer): { flags: number } {
 }
 
 export function encodeTcpMuxErrorPayload(code: TcpMuxErrorCode | number, message: string): Buffer {
-  const messageBytes = Buffer.from(message, 'utf8');
-  if (messageBytes.length > 0xffff) {
-    throw new Error('error message too long');
-  }
+  const safeMessage = formatOneLineUtf8(message, MAX_TCP_MUX_ERROR_MESSAGE_BYTES);
+  const messageBytes = Buffer.from(safeMessage, 'utf8');
   const buf = Buffer.allocUnsafe(2 + 2 + messageBytes.length);
   buf.writeUInt16BE(code & 0xffff, 0);
   buf.writeUInt16BE(messageBytes.length, 2);
@@ -194,9 +206,12 @@ export function decodeTcpMuxErrorPayload(buf: Buffer): { code: number; message: 
   }
   const code = buf.readUInt16BE(0);
   const messageLen = buf.readUInt16BE(2);
+  if (messageLen > MAX_TCP_MUX_ERROR_MESSAGE_BYTES) {
+    throw new Error('error message too long');
+  }
   if (buf.length !== 4 + messageLen) {
     throw new Error('ERROR payload length mismatch');
   }
   const message = buf.subarray(4).toString('utf8');
-  return { code, message };
+  return { code, message: sanitizeOneLine(message) };
 }

@@ -480,6 +480,45 @@ function e2ePageHtml(): string {
         return (u8[off] << 8) | u8[off + 1];
       }
 
+      function sanitizeOneLine(input) {
+        let out = '';
+        let pendingSpace = false;
+        for (const ch of String(input ?? '')) {
+          const code = ch.codePointAt(0) ?? 0;
+          const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+          if (forbidden || /\\s/u.test(ch)) {
+            pendingSpace = out.length > 0;
+            continue;
+          }
+          if (pendingSpace) {
+            out += ' ';
+            pendingSpace = false;
+          }
+          out += ch;
+        }
+        return out.trim();
+      }
+
+      function truncateUtf8(input, maxBytes) {
+        if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
+        const s = String(input ?? '');
+        const bytes = new TextEncoder().encode(s);
+        if (bytes.length <= maxBytes) return s;
+        let cut = maxBytes;
+        while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut -= 1;
+        if (cut <= 0) return '';
+        return new TextDecoder('utf-8').decode(bytes.subarray(0, cut));
+      }
+
+      function formatOneLineUtf8(input, maxBytes) {
+        return truncateUtf8(sanitizeOneLine(input), maxBytes);
+      }
+
+      function formatOneLineError(err) {
+        const raw = err && typeof err === 'object' && 'message' in err ? err.message : err;
+        return formatOneLineUtf8(raw, 256) || 'Error';
+      }
+
       (async () => {
         const results = {
           crossOriginIsolated: window.crossOriginIsolated,
@@ -501,7 +540,7 @@ function e2ePageHtml(): string {
           const buf = new SharedArrayBuffer(16);
           results.sharedArrayBuffer.ok = buf.byteLength === 16;
         } catch (err) {
-          results.sharedArrayBuffer.error = String(err && err.message ? err.message : err);
+          results.sharedArrayBuffer.error = formatOneLineError(err);
         }
 
         try {
@@ -517,7 +556,7 @@ function e2ePageHtml(): string {
           discoveredEndpoints = json?.endpoints ?? null;
           results.session.endpoints = discoveredEndpoints;
         } catch (err) {
-          results.session.error = String(err && err.message ? err.message : err);
+          results.session.error = formatOneLineError(err);
         }
 
         try {
@@ -556,7 +595,7 @@ function e2ePageHtml(): string {
           results.websocket.ok = decoded === 'ping';
           results.websocket.echo = decoded;
         } catch (err) {
-          results.websocket.error = String(err && err.message ? err.message : err);
+          results.websocket.error = formatOneLineError(err);
         }
 
         try {
@@ -580,7 +619,7 @@ function e2ePageHtml(): string {
           results.dnsQuery.meta = { id, rcode, qdcount, ancount };
           results.dnsQuery.ok = id === query.id && qr && rcode === 0 && qdcount === 1 && ancount >= 1;
         } catch (err) {
-          results.dnsQuery.error = String(err && err.message ? err.message : err);
+          results.dnsQuery.error = formatOneLineError(err);
         }
 
         try {
@@ -593,7 +632,7 @@ function e2ePageHtml(): string {
           results.dnsJson.answer = json?.Answer?.[0]?.data ?? null;
           results.dnsJson.ok = Boolean(res.ok && json && json.Status === 0 && typeof results.dnsJson.answer === 'string');
         } catch (err) {
-          results.dnsJson.error = String(err && err.message ? err.message : err);
+          results.dnsJson.error = formatOneLineError(err);
         }
 
         window.__aeroGatewayE2E = results;

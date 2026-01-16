@@ -97,3 +97,31 @@ test('validateWebSocketHandshakeRequest rejects repeated handshake headers in ra
   assert.deepEqual(decision, { ok: false, status: 400, message: 'Invalid WebSocket upgrade' });
 });
 
+test('validateWebSocketHandshakeRequest accepts comma-separated token lists for Upgrade/Connection', () => {
+  const req = {
+    headers: {
+      upgrade: 'h2c, WebSocket',
+      connection: 'keep-alive, Upgrade',
+      'sec-websocket-version': '13',
+      'sec-websocket-key': 'abc',
+    },
+  } as unknown as http.IncomingMessage;
+
+  const decision = validateWebSocketHandshakeRequest(req);
+  assert.deepEqual(decision, { ok: true, key: 'abc' });
+});
+
+test('validateWebSocketHandshakeRequest rejects partial token matches for Upgrade', () => {
+  const req = {
+    headers: {
+      upgrade: 'websocket2',
+      connection: 'Upgrade',
+      'sec-websocket-version': '13',
+      'sec-websocket-key': 'abc',
+    },
+  } as unknown as http.IncomingMessage;
+
+  const decision = validateWebSocketHandshakeRequest(req);
+  assert.deepEqual(decision, { ok: false, status: 400, message: 'Invalid WebSocket upgrade' });
+});
+

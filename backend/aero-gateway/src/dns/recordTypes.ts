@@ -16,6 +16,8 @@ const RECORD_TYPE_BY_NAME = new Map<string, number>([
   ['CNAME', DNS_RECORD_TYPES.CNAME],
 ]);
 
+const SUPPORTED_RECORD_TYPE_NAMES = ['A', 'AAAA', 'CNAME'] as const;
+
 export function parseDnsRecordType(value: string): number {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -33,17 +35,17 @@ export function parseDnsRecordType(value: string): number {
   if (isNumeric) {
     const parsed = Number.parseInt(trimmed, 10);
     if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 0xffff) {
-      throw new Error(`Invalid DNS record type number: ${value}`);
+      throw new Error('Invalid DNS record type number');
     }
     if (!SUPPORTED_RECORD_TYPES.has(parsed)) {
-      throw new Error(`Unsupported DNS record type: ${value}`);
+      throw new Error(`Unsupported DNS record type (supported: ${SUPPORTED_RECORD_TYPE_NAMES.join(', ')})`);
     }
     return parsed;
   }
 
   const mapped = RECORD_TYPE_BY_NAME.get(trimmed.toUpperCase());
   if (mapped === undefined) {
-    throw new Error(`Unsupported DNS record type: ${value}`);
+    throw new Error(`Unsupported DNS record type (supported: ${SUPPORTED_RECORD_TYPE_NAMES.join(', ')})`);
   }
   return mapped;
 }

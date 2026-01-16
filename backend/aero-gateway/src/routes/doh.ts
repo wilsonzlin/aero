@@ -3,12 +3,13 @@ import type { FastifyInstance } from 'fastify';
 import type { Config } from '../config.js';
 import type { DnsMetrics } from '../metrics.js';
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsErrorResponse } from '../dns/codec.js';
-import { DnsResolver, qtypeToString, rcodeToString } from '../dns/resolver.js';
+import { DnsPolicyError, DnsResolver, qtypeToString, rcodeToString } from '../dns/resolver.js';
 import { TokenBucketRateLimiter } from '../dns/rateLimit.js';
 import { base64UrlPrefixForHeader, decodeBase64UrlToBuffer, maxBase64UrlLenForBytes } from '../base64url.js';
 import { headerHasMimeType } from '../contentType.js';
 import type { SessionManager } from '../session.js';
 import { setupDnsJsonRoutes } from './dnsJson.js';
+import { formatOneLineUtf8 } from '../util/text.js';
 
 type DohQuery = { dns?: string };
 
@@ -29,6 +30,7 @@ export function setupDohRoutes(
   setupDnsJsonRoutes(app, config, { resolver, rateLimiter, sessions });
 
   const MAX_CONTENT_TYPE_LEN = 256;
+  const MAX_DNS_ERROR_LOG_BYTES = 512;
 
   function sendDnsMessage(reply: import('fastify').FastifyReply, statusCode: number, message: Buffer) {
     reply.code(statusCode);
@@ -167,9 +169,7 @@ export function setupDohRoutes(
 
         return sendDnsMessage(reply, 200, response);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'DNS resolution failed';
-
-        if (message.includes('ANY queries are disabled') || message.includes('PTR queries to private ranges are disabled')) {
+        if (err instanceof DnsPolicyError) {
           metrics.dnsQueriesTotal.inc({
             qtype: qtypeToString(question.type),
             rcode: rcodeToString(5),
@@ -179,6 +179,8 @@ export function setupDohRoutes(
           return sendDnsError(reply, 200, { id, queryFlags, question, rcode: 5 });
         }
 
+        const rawMessage = err instanceof Error ? err.message : '';
+
         // All resolver failures should map to a standard DNS error response (SERVFAIL) so
         // DoH clients always receive a valid DNS message payload.
         metrics.dnsQueriesTotal.inc({
@@ -186,7 +188,8 @@ export function setupDohRoutes(
           rcode: rcodeToString(2),
           source: 'error',
         });
-        request.log.warn({ qname: question.name, qtype: question.type, err: message }, 'dns_error');
+        const errForLog = formatOneLineUtf8(rawMessage, MAX_DNS_ERROR_LOG_BYTES) || 'DNS resolution failed';
+        request.log.warn({ qname: question.name, qtype: question.type, err: errForLog }, 'dns_error');
         return sendDnsError(reply, 200, { id, queryFlags, question, rcode: 2 });
       }
     },

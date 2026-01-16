@@ -6,6 +6,12 @@ import { normalizeIpv4Literal, normalizeIpv6Literal } from "./ipPolicy.js";
 const MAX_HOSTNAME_PATTERNS_CSV_LEN = 64 * 1024;
 const MAX_HOSTNAME_PATTERNS = 4096;
 
+function formatForError(value: string, maxLen = 256): string {
+  if (maxLen <= 0) return `(${value.length} chars)`;
+  if (value.length <= maxLen) return value;
+  return `${value.slice(0, maxLen)}…(${value.length} chars)`;
+}
+
 export type HostnamePattern =
   | { kind: "exact"; hostname: string }
   | { kind: "wildcard"; suffix: string }
@@ -42,12 +48,38 @@ export type TcpHostPolicyDecision =
       message: string;
     };
 
+type CachedTcpHostnamePolicy = Readonly<{
+  allowedCsv: string | undefined;
+  blockedCsv: string | undefined;
+  requireDnsNameRaw: string | undefined;
+  policy: TcpHostnameEgressPolicy;
+}>;
+
+const tcpHostnamePolicyCache = new WeakMap<object, CachedTcpHostnamePolicy>();
+
 export function parseTcpHostnameEgressPolicyFromEnv(env: Record<string, string | undefined>): TcpHostnameEgressPolicy {
-  return {
-    allowed: parseHostnamePatterns(env.TCP_ALLOWED_HOSTS),
-    blocked: parseHostnamePatterns(env.TCP_BLOCKED_HOSTS),
-    requireDnsName: env.TCP_REQUIRE_DNS_NAME === "1",
+  const envObj = env as unknown as object;
+  const allowedCsv = env.TCP_ALLOWED_HOSTS;
+  const blockedCsv = env.TCP_BLOCKED_HOSTS;
+  const requireDnsNameRaw = env.TCP_REQUIRE_DNS_NAME;
+
+  const cached = tcpHostnamePolicyCache.get(envObj);
+  if (
+    cached &&
+    cached.allowedCsv === allowedCsv &&
+    cached.blockedCsv === blockedCsv &&
+    cached.requireDnsNameRaw === requireDnsNameRaw
+  ) {
+    return cached.policy;
+  }
+
+  const policy: TcpHostnameEgressPolicy = {
+    allowed: parseHostnamePatterns(allowedCsv),
+    blocked: parseHostnamePatterns(blockedCsv),
+    requireDnsName: requireDnsNameRaw === "1",
   };
+  tcpHostnamePolicyCache.set(envObj, { allowedCsv, blockedCsv, requireDnsNameRaw, policy });
+  return policy;
 }
 
 export function parseHostnamePatterns(csv: string | undefined): HostnamePattern[] {
@@ -84,9 +116,11 @@ export function parseHostnamePattern(rawPattern: string): HostnamePattern {
 
   if (pattern.startsWith("*.")) {
     const suffixRaw = pattern.slice(2);
-    if (!suffixRaw) throw new Error(`Invalid wildcard host pattern "${rawPattern}"`);
+    if (!suffixRaw) throw new Error(`Invalid wildcard host pattern "${formatForError(rawPattern)}"`);
     if (suffixRaw.includes("*")) {
-      throw new Error(`Invalid wildcard host pattern "${rawPattern}": "*" is only supported as a "*." prefix`);
+      throw new Error(
+        `Invalid wildcard host pattern "${formatForError(rawPattern)}": "*" is only supported as a "*." prefix`,
+      );
     }
     return {
       kind: "wildcard",
@@ -95,7 +129,7 @@ export function parseHostnamePattern(rawPattern: string): HostnamePattern {
   }
 
   if (pattern.includes("*")) {
-    throw new Error(`Invalid host pattern "${rawPattern}": "*" is only supported as a "*." prefix`);
+    throw new Error(`Invalid host pattern "${formatForError(rawPattern)}": "*" is only supported as a "*." prefix`);
   }
 
   const classified = classifyTargetHost(pattern);

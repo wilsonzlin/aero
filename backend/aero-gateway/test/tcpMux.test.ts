@@ -125,6 +125,22 @@ describe("tcpMux route", () => {
     assert.ok(res.includes("Invalid Sec-WebSocket-Protocol header"));
   });
 
+  it("rejects missing Sec-WebSocket-Protocol (400)", async () => {
+    const req = {
+      url: "/tcp-mux",
+      headers: {
+        ...TEST_WS_HANDSHAKE_HEADERS,
+      },
+      socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as http.IncomingMessage;
+
+    const res = await captureUpgradeResponse((socket) => {
+      handleTcpMuxUpgrade(req, socket, Buffer.alloc(0));
+    });
+    assert.ok(res.startsWith("HTTP/1.1 400 "));
+    assert.ok(res.includes(`Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`));
+  });
+
   it("closes the WebSocket with 1002 when a frame exceeds maxFramePayloadBytes", async () => {
     const proxyServer = http.createServer();
     proxyServer.on("upgrade", (req, socket, head) => {

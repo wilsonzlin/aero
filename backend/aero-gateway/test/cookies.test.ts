@@ -64,6 +64,14 @@ test("getCookieValue: returns raw value on decodeURIComponent failure", () => {
   assert.equal(getCookieValue("aero_session=%zz", "aero_session"), "%zz");
 });
 
+test("getCookieValue: bounds oversized cookie values", () => {
+  const huge = "a".repeat(10_000);
+  const value = getCookieValue(`aero_session=${huge}`, "aero_session");
+  assert.ok(typeof value === "string");
+  assert.ok(value.length <= 4096);
+  assert.equal(value, huge.slice(0, value.length));
+});
+
 test("getCookieValue: returns undefined when missing", () => {
   assert.equal(getCookieValue("a=1; b=2", "aero_session"), undefined);
 });
@@ -75,6 +83,39 @@ test("getCookieValueFromRequest: prefers rawHeaders order for repeated Cookie he
       cookie: "aero_session=ok",
     },
     rawHeaders: ["Cookie", "aero_session=", "Cookie", "aero_session=ok"],
+  } as unknown as import("node:http").IncomingMessage;
+
+  assert.equal(getCookieValueFromRequest(req, "aero_session"), "");
+});
+
+test("getCookieValueFromRequest: treats oversized Cookie headers as invalid (prevents bypass)", () => {
+  const huge = "a".repeat(20_000);
+  const req = {
+    headers: {
+      cookie: "aero_session=ok",
+    },
+    rawHeaders: ["Cookie", `aero_session=${huge}`, "Cookie", "aero_session=ok"],
+  } as unknown as import("node:http").IncomingMessage;
+
+  assert.equal(getCookieValueFromRequest(req, "aero_session"), "");
+});
+
+test("getCookieValueFromRequest: oversized headers.cookie is invalid (fallback path)", () => {
+  const huge = "a".repeat(20_000);
+  const req = {
+    headers: {
+      cookie: `aero_session=${huge}`,
+    },
+  } as unknown as import("node:http").IncomingMessage;
+
+  assert.equal(getCookieValueFromRequest(req, "aero_session"), "");
+});
+
+test("getCookieValueFromRequest: non-string headers.cookie array element is invalid (fallback path)", () => {
+  const req = {
+    headers: {
+      cookie: ["aero_session=ok", 123] as unknown,
+    },
   } as unknown as import("node:http").IncomingMessage;
 
   assert.equal(getCookieValueFromRequest(req, "aero_session"), "");

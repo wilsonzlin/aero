@@ -73,7 +73,7 @@ export function handleTcpProxyUpgrade(
     }
     target = parseTcpTargetFromUrl(url);
   } catch (err) {
-    respondUpgradeHttp(socket, 400, formatUpgradeError(err));
+    respondUpgradeHttp(socket, 400, formatUpgradeError(err, "Invalid request"));
     return;
   }
 
@@ -95,7 +95,7 @@ export function handleTcpProxyUpgrade(
         respondUpgradeHttp(socket, err.statusCode, err.message);
         return;
       }
-      respondUpgradeHttp(socket, 502, formatUpgradeError(err));
+      respondUpgradeHttp(socket, 502, formatUpgradeError(err, "Bad Gateway"));
       return;
     }
 
@@ -142,12 +142,9 @@ export function handleTcpProxyUpgrade(
   })();
 }
 
-function formatUpgradeError(err: unknown): string {
+function formatUpgradeError(err: unknown, fallback: string): string {
   if (err instanceof TcpTargetParseError) {
     return err.message;
   }
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return "Invalid request";
+  return fallback;
 }
