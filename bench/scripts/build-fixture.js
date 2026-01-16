@@ -1,7 +1,9 @@
-'use strict';
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const fs = require('node:fs/promises');
-const path = require('node:path');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function copyDir(src, dest) {
   await fs.mkdir(dest, { recursive: true });

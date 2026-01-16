@@ -197,7 +197,7 @@ The benchmark uses a fixed `random_seed` so random I/O patterns are repeatable a
 
 ```bash
 npm ci
-npx playwright install --with-deps chromium
+node scripts/playwright_install.mjs chromium --with-deps
 
 # Write artifacts to storage-perf-results/head/
 npm run bench:storage -- --out-dir storage-perf-results/head

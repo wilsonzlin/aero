@@ -1,14 +1,12 @@
-'use strict';
+import { createAeroPage, exportPerf, resetPerf, waitForAeroReady } from "../aero_page.js";
+import { flattenNumericMetrics } from "../util/metrics.js";
 
-const { createAeroPage, exportPerf, resetPerf, waitForAeroReady } = require('../aero_page');
-const { flattenNumericMetrics } = require('../util/metrics');
-
-module.exports = {
+const scenario = {
   id: 'microbench',
   name: 'microbench',
 
   /**
-   * @param {import('../runner').ScenarioRunContext} ctx
+   * @param {import('../runner.js').ScenarioRunContext} ctx
    */
   async run(ctx) {
     const { context, page } = await createAeroPage(ctx.browser, { viewport: ctx.viewport });
@@ -53,3 +51,5 @@ module.exports = {
     return { id: this.id, name: this.name, runs };
   }
 };
+
+export default scenario;

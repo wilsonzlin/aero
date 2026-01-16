@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * @param {number[]} values
  * @returns {number}
@@ -53,7 +51,7 @@ function max(values) {
 /**
  * @param {number[]} values
  */
-function computeStats(values) {
+export function computeStats(values) {
   const m = mean(values);
   const s = stdev(values);
   const cov = Number.isFinite(m) && m !== 0 ? s / m : 0;
@@ -67,5 +65,3 @@ function computeStats(values) {
     max: max(values)
   };
 }
-
-module.exports = { computeStats };

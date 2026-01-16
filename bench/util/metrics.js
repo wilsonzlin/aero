@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Recursively collect numeric leaf values into a flat map.
  *
@@ -10,7 +8,7 @@
  * @param {{ prefix?: string, out?: Record<string, number> }} [opts]
  * @returns {Record<string, number>}
  */
-function flattenNumericMetrics(value, opts = {}) {
+export function flattenNumericMetrics(value, opts = {}) {
   const out = opts.out ?? {};
   const prefix = opts.prefix ?? '';
 
@@ -36,5 +34,3 @@ function flattenNumericMetrics(value, opts = {}) {
 
   return out;
 }
-
-module.exports = { flattenNumericMetrics };

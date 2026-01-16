@@ -1,5 +1,3 @@
-'use strict';
-
 const DISABLE_ANIMATIONS_CSS = `
 *,
 *::before,
@@ -17,7 +15,7 @@ const DISABLE_ANIMATIONS_CSS = `
  * @param {import('playwright').Browser} browser
  * @param {{ viewport: { width: number, height: number } }} opts
  */
-async function createAeroContext(browser, opts) {
+export async function createAeroContext(browser, opts) {
   const context = await browser.newContext({
     viewport: opts.viewport,
     deviceScaleFactor: 1,
@@ -47,7 +45,7 @@ async function createAeroContext(browser, opts) {
  * @param {import('playwright').Browser} browser
  * @param {{ viewport: { width: number, height: number } }} opts
  */
-async function createAeroPage(browser, opts) {
+export async function createAeroPage(browser, opts) {
   const context = await createAeroContext(browser, opts);
   const page = await context.newPage();
   return { context, page };
@@ -57,7 +55,7 @@ async function createAeroPage(browser, opts) {
  * @param {import('playwright').Page} page
  * @param {number} timeoutMs
  */
-async function waitForAeroReady(page, timeoutMs) {
+export async function waitForAeroReady(page, timeoutMs) {
   await page.waitForFunction(
     async () => {
       // eslint-disable-next-line no-undef
@@ -85,7 +83,7 @@ async function waitForAeroReady(page, timeoutMs) {
 /**
  * @param {import('playwright').Page} page
  */
-async function resetPerf(page) {
+export async function resetPerf(page) {
   await page
     .evaluate(() => {
       // eslint-disable-next-line no-undef
@@ -98,7 +96,7 @@ async function resetPerf(page) {
  * @param {import('playwright').Page} page
  * @returns {Promise<any>}
  */
-async function exportPerf(page) {
+export async function exportPerf(page) {
   return await page.evaluate(async () => {
     // eslint-disable-next-line no-undef
     const aero = window.aero;
@@ -116,7 +114,7 @@ async function exportPerf(page) {
  * @param {any} perfExport
  * @returns {{ wasmCompileMs?: number, wasmInstantiateMs?: number }}
  */
-function extractWasmTimes(perfExport) {
+export function extractWasmTimes(perfExport) {
   const result = {};
   const wasm =
     perfExport?.wasm ??
@@ -136,12 +134,3 @@ function extractWasmTimes(perfExport) {
 
   return result;
 }
-
-module.exports = {
-  createAeroContext,
-  createAeroPage,
-  waitForAeroReady,
-  resetPerf,
-  exportPerf,
-  extractWasmTimes
-};

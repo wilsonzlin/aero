@@ -1,13 +1,11 @@
-'use strict';
+import { createAeroPage, exportPerf, extractWasmTimes, waitForAeroReady } from "../aero_page.js";
 
-const { createAeroPage, exportPerf, extractWasmTimes, waitForAeroReady } = require('../aero_page');
-
-module.exports = {
+const scenario = {
   id: 'startup',
   name: 'startup',
 
   /**
-   * @param {import('../runner').ScenarioRunContext} ctx
+   * @param {import('../runner.js').ScenarioRunContext} ctx
    */
   async run(ctx) {
     const runs = [];
@@ -43,3 +41,5 @@ module.exports = {
     return { id: this.id, name: this.name, runs };
   }
 };
+
+export default scenario;

@@ -1,13 +1,18 @@
-'use strict';
+import { execFileSync } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
-const cp = require('node:child_process');
-const fs = require('node:fs/promises');
-const path = require('node:path');
+import { SCHEMA_VERSION } from "./schema.js";
+import { startStaticServer } from "./server.js";
+import { SCENARIOS, getScenario } from "./scenarios/index.js";
+import { computeStats } from "./util/stats.js";
 
-const { SCHEMA_VERSION } = require('./schema');
-const { startStaticServer } = require('./server');
-const { SCENARIOS, getScenario } = require('./scenarios');
-const { computeStats } = require('./util/stats');
+const require = createRequire(import.meta.url);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * @typedef {Object} ScenarioRunContext
@@ -66,7 +71,7 @@ async function pathExists(p) {
 async function maybeBuild(projectRoot, opts) {
   if (opts.skipBuild) return;
   try {
-    cp.execSync('npm run build', { stdio: 'inherit', cwd: projectRoot });
+    execFileSync("npm", ["run", "build"], { stdio: "inherit", cwd: projectRoot });
   } catch (err) {
     // For CI/dev ergonomics, prefer falling back to the built-in fixture over hard-failing.
     // If callers need to enforce a successful build, they can do so before invoking the runner.
@@ -135,12 +140,10 @@ function renderTable(summary) {
 function loadPlaywright() {
   try {
     // Preferred: full Playwright API.
-    // eslint-disable-next-line global-require
     return require('playwright');
   } catch {
     try {
       // Fallback: Playwright test runner package (commonly present in repos).
-      // eslint-disable-next-line global-require
       return require('@playwright/test');
     } catch (err) {
       throw new Error(
@@ -189,7 +192,7 @@ async function probeAeroApi(browser, opts) {
 /**
  * @param {BenchOptions} opts
  */
-async function runBench(opts) {
+export async function runBench(opts) {
   const { chromium } = loadPlaywright();
 
   const projectRoot = path.resolve(__dirname, '..');
@@ -365,5 +368,3 @@ async function runBench(opts) {
     if (server) await server.close();
   }
 }
-
-module.exports = { runBench };

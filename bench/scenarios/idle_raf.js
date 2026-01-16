@@ -1,6 +1,4 @@
-'use strict';
-
-const { createAeroPage, exportPerf, resetPerf, waitForAeroReady } = require('../aero_page');
+import { createAeroPage, exportPerf, resetPerf, waitForAeroReady } from "../aero_page.js";
 
 function percentile(sorted, p) {
   if (!sorted.length) return NaN;
@@ -9,12 +7,12 @@ function percentile(sorted, p) {
   return sorted[idx];
 }
 
-module.exports = {
+const scenario = {
   id: 'idle_raf',
   name: 'idle_raf',
 
   /**
-   * @param {import('../runner').ScenarioRunContext} ctx
+   * @param {import('../runner.js').ScenarioRunContext} ctx
    */
   async run(ctx) {
     const { context, page } = await createAeroPage(ctx.browser, { viewport: ctx.viewport });
@@ -96,3 +94,5 @@ module.exports = {
     return { id: this.id, name: this.name, runs };
   }
 };
+
+export default scenario;
