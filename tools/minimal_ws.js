@@ -7,6 +7,7 @@ import { formatOneLineUtf8 } from "../src/text.js";
 import { isValidHttpToken } from "../src/httpTokens.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
 
 const MAX_SUBPROTOCOL_HEADER_LEN = 4 * 1024;
 const MAX_SUBPROTOCOL_TOKENS = 32;
@@ -392,7 +393,14 @@ class WebSocket extends EventEmitter {
       this._buffer = this._buffer.subarray(offset);
 
       if (opcode === 0x1) {
-        this.emit("message", payload.toString("utf8"));
+        let text;
+        try {
+          text = utf8DecoderFatal.decode(payload);
+        } catch {
+          this._fail(1007, "Invalid UTF-8");
+          return;
+        }
+        this.emit("message", text);
         continue;
       }
       if (opcode === 0x2) {
