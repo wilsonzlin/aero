@@ -3,7 +3,7 @@ import type { LookupAddress } from "node:dns";
 import net from "node:net";
 import ipaddr from "ipaddr.js";
 import { splitCommaSeparatedList } from "./csv";
-import { formatOneLineUtf8 } from "./text";
+import { formatOneLineError, formatOneLineUtf8 } from "./text";
 
 export interface ResolvedTarget {
   requestedHost: string;
@@ -163,7 +163,7 @@ function parseAllowlist(rawAllowlist: string): AllowRule[] {
   try {
     entries = splitCommaSeparatedList(trimmed, { maxLen: 64 * 1024, maxItems: 4096 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatOneLineError(err, 256);
     throw new Error(`Invalid allowlist: ${formatForError(msg, 128)}`);
   }
 

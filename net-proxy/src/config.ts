@@ -1,4 +1,5 @@
 import { splitCommaSeparatedList } from "./csv";
+import { formatOneLineError } from "./text";
 
 export interface ProxyConfig {
   listenHost: string;
@@ -79,7 +80,7 @@ function readEnvOriginAllowlist(name: string): string[] {
   try {
     parts = splitCommaSeparatedList(raw, { maxLen: 64 * 1024, maxItems: 1024 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatOneLineError(err, 256, "invalid");
     throw new Error(`Invalid ${name}: ${msg}`);
   }
 
