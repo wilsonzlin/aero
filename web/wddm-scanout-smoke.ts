@@ -19,6 +19,7 @@ import type { WorkerInitMessage } from "./src/runtime/protocol";
 import { createSharedMemoryViews } from "./src/runtime/shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
+import { formatOneLineError } from "./src/text";
 
 declare global {
   interface Window {
@@ -659,7 +660,7 @@ async function main(): Promise<void> {
         // Ensure we have at least one stats snapshot so countersBefore is meaningful.
         await waitFor(() => lastStats != null && lastStats.type === "stats", 15_000, "gpu-worker stats");
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return { ok: false, error: formatOneLineError(err, 512) };
       }
 
       const countersBefore = lastStats?.counters ?? null;
@@ -677,7 +678,7 @@ async function main(): Promise<void> {
         );
         loseOk = typeof ev?.message === "string" ? ev.message.includes("ok=true") : undefined;
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return { ok: false, error: formatOneLineError(err, 512) };
       }
       if (loseOk !== true) {
         return { ok: false, error: "debug_context_loss lose did not succeed", loseOk };
@@ -692,7 +693,7 @@ async function main(): Promise<void> {
           "WebGL context lost (DeviceLost event)",
         );
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err), loseOk };
+        return { ok: false, error: formatOneLineError(err, 512), loseOk };
       }
 
       const debugRestoreIndex = gpuEvents.length;
@@ -707,7 +708,7 @@ async function main(): Promise<void> {
         );
         restoreOk = typeof ev?.message === "string" ? ev.message.includes("ok=true") : undefined;
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return { ok: false, error: formatOneLineError(err, 512) };
       }
       if (restoreOk !== true) {
         return { ok: false, error: "debug_context_loss restore did not succeed", loseOk, restoreOk };
@@ -717,7 +718,7 @@ async function main(): Promise<void> {
       try {
         await waitFor(() => readyCount >= readyCountBefore + 1, 15_000, "gpu-worker recovery ready");
       } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err), loseOk, restoreOk };
+        return { ok: false, error: formatOneLineError(err, 512), loseOk, restoreOk };
       }
 
       // Send a few ticks while the legacy shared framebuffer remains PRESENTED. This mimics the
@@ -741,7 +742,7 @@ async function main(): Promise<void> {
             "recovery counters",
           );
         } catch (err) {
-          return { ok: false, error: err instanceof Error ? err.message : String(err), loseOk, restoreOk };
+          return { ok: false, error: formatOneLineError(err, 512), loseOk, restoreOk };
         }
       }
 
@@ -833,7 +834,7 @@ async function main(): Promise<void> {
       runContextLossRecovery,
     };
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

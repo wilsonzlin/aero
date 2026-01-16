@@ -11,6 +11,7 @@ import {
 import type { WorkerInitMessage } from "./src/runtime/protocol";
 import { createSharedMemoryViews } from "./src/runtime/shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
+import { formatOneLineError } from "./src/text";
 
 declare global {
   interface Window {
@@ -287,7 +288,7 @@ async function main(): Promise<void> {
 
     window.__aeroTest = { ready: true, pass, width: w, height: h, samples };
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

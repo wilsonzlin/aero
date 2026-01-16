@@ -1,6 +1,7 @@
 import { RingBuffer } from "../../ipc/ring_buffer.ts";
 import { decodeCommand, decodeEvent, encodeCommand, encodeEvent, type Command, type Event } from "../../ipc/protocol.ts";
 import type { IrqSink } from "../device_manager.ts";
+import { formatOneLineError } from "../../text.ts";
 
 /**
  * IRQ callback invoked by {@link AeroIpcIoClient.poll}.
@@ -231,7 +232,7 @@ export class AeroIpcIoClient {
         bytes = this.#evtQ.popBlocking(remaining);
       } catch (err) {
         // Include a bit more context than RingBuffer's generic message.
-        const base = err instanceof Error ? err.message : String(err);
+        const base = formatOneLineError(err, 256);
         throw new Error(`${base} while waiting for ${kind} (id=${requestId})`);
       }
       let evt: Event;

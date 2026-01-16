@@ -16,6 +16,7 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
   SharedFramebufferHeaderIndex,
 } from "./src/ipc/shared-layout";
+import { formatOneLineError } from "./src/text";
 
 declare global {
   interface Window {
@@ -201,7 +202,7 @@ async function main() {
     };
   } catch (err) {
     coordinator.stop();
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

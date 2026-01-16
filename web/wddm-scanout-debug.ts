@@ -37,6 +37,7 @@ import {
 import { VRAM_BASE_PADDR } from "./src/arch/guest_phys";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
 import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
+import { formatOneLineError } from "./src/text";
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -479,7 +480,7 @@ async function main() {
       try {
         publishScanoutForUi();
       } catch (err) {
-        log(err instanceof Error ? err.message : String(err));
+        log(formatOneLineError(err, 512));
       }
     });
   }
@@ -558,7 +559,7 @@ async function main() {
     readyReject?.(err);
     readyResolve = null;
     readyReject = null;
-    log(`worker error: ${err instanceof Error ? err.message : String(err)}`);
+    log(`worker error: ${formatOneLineError(err, 512)}`);
   });
 
   // NOTE: This page uses both init protocols:
@@ -630,7 +631,7 @@ async function main() {
          ),
       );
     } catch (err) {
-      setText("scanout", `failed to snapshot scanoutState: ${err instanceof Error ? err.message : String(err)}`);
+      setText("scanout", `failed to snapshot scanoutState: ${formatOneLineError(err, 512)}`);
     }
 
     if (lastStats) {
@@ -662,7 +663,7 @@ async function main() {
 }
 
 void main().catch((err) => {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatOneLineError(err, 512);
   try {
     setText("log", message);
   } catch {

@@ -17,7 +17,7 @@ import initAeroGpuWasm, {
 } from '../wasm/aero-gpu';
 
 import type { DirtyRect } from '../ipc/shared-layout';
-import { formatOneLineUtf8, truncateUtf8 } from '../text';
+import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from '../text';
 
 function hardenWebGl2PresentState(gl: WebGL2RenderingContext): void {
   // Best-effort deterministic state hardening: wgpu uses WebGL2 state under the hood, and
@@ -158,8 +158,8 @@ export class WgpuWebGl2Presenter implements Presenter {
       if (err instanceof WebAssembly.RuntimeError && `${err.message}`.includes('unreachable')) {
         return false;
       }
-      const message = err instanceof Error ? err.message : err != null ? String(err) : '';
-      const suffix = message ? `: ${message}` : '';
+      const message = formatOneLineError(err, 512);
+      const suffix = message && message !== 'Error' ? `: ${message}` : '';
       const cause = sanitizePresenterErrorCause(err);
       throw new PresenterError('wgpu_present_failed', `Failed to present frame via wgpu WebGL2 presenter${suffix}`, cause);
     }
@@ -223,8 +223,8 @@ export class WgpuWebGl2Presenter implements Presenter {
       if (err instanceof WebAssembly.RuntimeError && `${err.message}`.includes('unreachable')) {
         return false;
       }
-      const message = err instanceof Error ? err.message : err != null ? String(err) : '';
-      const suffix = message ? `: ${message}` : '';
+      const message = formatOneLineError(err, 512);
+      const suffix = message && message !== 'Error' ? `: ${message}` : '';
       const cause = sanitizePresenterErrorCause(err);
       throw new PresenterError(
         'wgpu_present_failed',

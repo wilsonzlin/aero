@@ -4,6 +4,7 @@ import { WorkerCoordinator } from "./src/runtime/coordinator";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
 import type { AeroConfig } from "./src/config/aero_config";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
+import { formatOneLineError } from "./src/text";
 
 declare global {
   interface Window {
@@ -141,9 +142,9 @@ async function main() {
       return;
     }
     if (typed.type === "error") {
-      log(`gpu-worker error: ${typed.message ?? "unknown"}`);
+      log(`gpu-worker error: ${formatOneLineError(typed.message, 512, "unknown")}`);
       if (!presenterReadyResolved && presenterReadyReject) {
-        presenterReadyReject(new Error(String(typed.message ?? "gpu-worker init error")));
+        presenterReadyReject(new Error(formatOneLineError(typed.message, 512, "gpu-worker init error")));
         presenterReadyResolve = null;
         presenterReadyReject = null;
       }
@@ -239,5 +240,5 @@ async function main() {
 }
 
 void main().catch((err) => {
-  renderError(err instanceof Error ? err.message : String(err));
+  renderError(formatOneLineError(err, 512));
 });

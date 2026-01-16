@@ -1,4 +1,5 @@
 import type { BackendKind, FrameTimingsReport, GpuAdapterInfo, GpuWorkerInitOptions } from "../ipc/gpu-protocol";
+import { formatOneLineError } from "../text";
 
 // Ensure the persistent GPU cache API is installed on `globalThis` before any WASM code tries to
 // open it (used for D3D9 DXBC->WGSL shader translation caching).
@@ -37,7 +38,7 @@ function detectThreadSupport(): ThreadSupport {
     // eslint-disable-next-line no-new
     new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 256);
     return { supported: false, reason: `Shared WebAssembly.Memory is not supported: ${message}` };
   }
 

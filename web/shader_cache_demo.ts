@@ -6,6 +6,7 @@ import {
   computeWebGpuCapsHash,
   compileWgslModule,
 } from "./gpu-cache/persistent_cache.ts";
+import { formatOneLineError } from "./src/text";
 
 function logLine(line) {
   console.log(line);
@@ -236,5 +237,5 @@ async function main() {
 
 main().catch((err) => {
   console.error(err);
-  window.__shaderCacheDemo = { error: String(err) };
+  window.__shaderCacheDemo = { error: formatOneLineError(err, 512) };
 });

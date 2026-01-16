@@ -1,5 +1,6 @@
 import { AerogpuCmdWriter, AerogpuShaderStage } from "../emulator/protocol/aerogpu/aerogpu_cmd";
 import { createGpuWorker } from "./src/main/createGpuWorker";
+import { formatOneLineError } from "./src/text";
 
 type ShaderCacheCounters = {
   translateCalls: number;
@@ -333,7 +334,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err) => {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatOneLineError(err, 512);
   window.__d3d9ShaderCacheDemo = {
     translateCalls: 0,
     persistentHits: 0,

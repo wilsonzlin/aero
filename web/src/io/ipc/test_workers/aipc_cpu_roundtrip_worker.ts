@@ -3,6 +3,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { openRingByKind } from "../../../ipc/ipc.ts";
 import { queueKind } from "../../../ipc/layout.ts";
 import { VRAM_BASE_PADDR } from "../../../arch/guest_phys.ts";
+import { formatOneLineError } from "../../../text";
 import { AeroIpcIoClient } from "../aero_ipc_io.ts";
 
 const { ipcBuffer, vram } = workerData as { ipcBuffer: SharedArrayBuffer; vram?: SharedArrayBuffer };
@@ -105,5 +106,5 @@ try {
     vramBytes,
   });
 } catch (err) {
-  parentPort!.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  parentPort!.postMessage({ ok: false, error: formatOneLineError(err, 512) });
 }

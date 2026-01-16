@@ -5,6 +5,7 @@ import { probeRemoteDisk } from "./src/platform/remote_disk";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
 import type { AeroConfig } from "./src/config/aero_config";
 import type { DiskImageMetadata } from "./src/storage/metadata";
+import { formatOneLineError } from "./src/text";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
@@ -143,9 +144,9 @@ async function main() {
         return;
       }
       if (typed.type === "error") {
-        log(`gpu-worker error: ${typed.message ?? "unknown"}`);
+        log(`gpu-worker error: ${formatOneLineError(typed.message, 512, "unknown")}`);
         if (!presenterReadyResolved && presenterReadyReject) {
-          presenterReadyReject(new Error(String(typed.message ?? "gpu-worker init error")));
+          presenterReadyReject(new Error(formatOneLineError(typed.message, 512, "gpu-worker init error")));
           presenterReadyResolve = null;
           presenterReadyReject = null;
         }
@@ -294,7 +295,7 @@ async function main() {
     };
   } catch (err) {
     coordinator.stop();
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

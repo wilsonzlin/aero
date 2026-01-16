@@ -14,6 +14,7 @@ import {
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
 } from "./src/ipc/gpu-protocol";
+import { formatOneLineError } from "./src/text";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
@@ -151,7 +152,7 @@ async function main() {
         resolve();
       } else if (typed.type === "error") {
         gpu.removeEventListener("message", onMessage);
-        reject(new Error(String(typed.message ?? "unknown error")));
+        reject(new Error(formatOneLineError(typed.message, 512, "unknown error")));
       }
     };
     gpu.addEventListener("message", onMessage);
@@ -173,7 +174,7 @@ async function main() {
     };
     if (typed.protocol !== GPU_PROTOCOL_NAME || typed.protocolVersion !== GPU_PROTOCOL_VERSION) return;
     if (typed.type === "error") {
-      renderError(String(typed.message ?? "gpu worker error"));
+      renderError(formatOneLineError(typed.message, 512, "gpu worker error"));
       return;
     }
     if (typed.type === "screenshot") {
@@ -255,7 +256,7 @@ async function main() {
 
     window.__aeroTest = { ready: true, pass, sample, expected };
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

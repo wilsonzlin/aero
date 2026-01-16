@@ -19,6 +19,62 @@
   const TOC_MAGIC = asciiBytes("AEROTOC\0");
   const FOOTER_MAGIC = asciiBytes("AEROGPUF");
 
+  const UTF8 = Object.freeze({ encoding: "utf-8" });
+  const textEncoder = new TextEncoder();
+  const textDecoder = new TextDecoder(UTF8.encoding);
+
+  function formatOneLineUtf8(input, maxBytes) {
+    if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
+    if (maxBytes === 0) return "";
+
+    const buf = new Uint8Array(maxBytes);
+    let written = 0;
+    let pendingSpace = false;
+    for (const ch of String(input ?? "")) {
+      const code = ch.codePointAt(0) ?? 0;
+      const forbidden =
+        code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+      if (forbidden || /\s/u.test(ch)) {
+        pendingSpace = written > 0;
+        continue;
+      }
+
+      if (pendingSpace) {
+        const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
+        if (spaceRes.written === 0) break;
+        written += spaceRes.written;
+        pendingSpace = false;
+        if (written >= maxBytes) break;
+      }
+
+      const res = textEncoder.encodeInto(ch, buf.subarray(written));
+      if (res.written === 0) break;
+      written += res.written;
+      if (written >= maxBytes) break;
+    }
+    return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
+  }
+
+  function safeErrorMessageInput(err) {
+    if (err === null) return "null";
+    const t = typeof err;
+    if (t === "string") return err;
+    if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
+    if (t === "object") {
+      try {
+        const msg = err && typeof err.message === "string" ? err.message : "";
+        if (msg) return msg;
+      } catch {
+        // ignore
+      }
+    }
+    return "Error";
+  }
+
+  function formatOneLineErrorText(err, maxBytes) {
+    return formatOneLineUtf8(safeErrorMessageInput(err), maxBytes) || "Error";
+  }
+
   const RECORD_BEGIN_FRAME = 0x01;
   const RECORD_PRESENT = 0x02;
   const RECORD_PACKET = 0x03;
@@ -2589,7 +2645,7 @@ void main() {
         try {
           iter = new AerogpuCmdStreamIter(cmdStreamBytes);
         } catch (err) {
-          fail(err && err.message ? err.message : String(err));
+          fail(formatOneLineErrorText(err, 512));
         }
 
         nextPacket = () => {
@@ -2597,7 +2653,7 @@ void main() {
           try {
             res = iter.next();
           } catch (err) {
-            fail(err && err.message ? err.message : String(err));
+            fail(formatOneLineErrorText(err, 512));
           }
           if (res.done) return false;
           off = res.value.offsetBytes >>> 0;

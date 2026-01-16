@@ -1,6 +1,7 @@
 import { createGpuWorker } from "./src/main/createGpuWorker";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "./src/ipc/gpu-protocol";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
+import { formatOneLineError } from "./src/text";
 import { aerogpuFormatToString } from "../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 declare global {
@@ -260,7 +261,7 @@ async function main() {
     try {
       ready = await gpu.ready;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       if (expectInitFailure) {
         renderError(message);
         return;
@@ -332,7 +333,7 @@ async function main() {
       }
     }
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

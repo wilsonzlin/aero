@@ -1,4 +1,5 @@
 import { createGraphicsBackend } from './graphics/index.js';
+import { formatOneLineError } from './text';
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('frame'));
 const backendEl = document.getElementById('backend');
@@ -31,7 +32,7 @@ async function main() {
     log('');
   } catch (err) {
     backendEl.textContent = 'Unavailable';
-    log(`Failed to initialize graphics backend:\n${String(err)}`);
+    log(`Failed to initialize graphics backend:\n${formatOneLineError(err, 512)}`);
     return;
   }
 

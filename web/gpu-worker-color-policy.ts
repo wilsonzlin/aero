@@ -1,5 +1,6 @@
 import { createGpuWorker } from "./src/main/createGpuWorker";
 import { createGpuColorTestCardRgba8Linear, srgbEncodeChannel } from "./src/gpu/test-card";
+import { formatOneLineError } from "./src/text";
 
 declare global {
   interface Window {
@@ -163,7 +164,7 @@ async function main() {
       }),
     };
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

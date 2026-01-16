@@ -1,5 +1,6 @@
 import initD3d11, { run_d3d11_shader_cache_demo } from "./src/wasm/aero-d3d11";
 import { computeWebGpuCapsHash } from "./gpu-cache/persistent_cache.ts";
+import { formatOneLineError } from "./src/text";
 
 type ShaderCacheCounters = {
   translateCalls: number;
@@ -84,7 +85,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err) => {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatOneLineError(err, 512);
   window.__d3d11ShaderCacheDemo = {
     translateCalls: 0,
     persistentHits: 0,

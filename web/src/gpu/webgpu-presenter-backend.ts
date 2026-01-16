@@ -4,6 +4,7 @@ import { PresenterError } from './presenter';
 import type { DirtyRect } from '../ipc/shared-layout';
 import { packRgba8RectToAlignedBuffer, type PackedRect } from './webgpu-rect-pack';
 import { computeViewport } from './viewport';
+import { formatOneLineError } from '../text';
 
 function alignUp(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
@@ -497,12 +498,7 @@ export class WebGpuPresenterBackend implements Presenter {
     }
 
     if (!currentTexture) {
-      const message =
-        currentTextureError instanceof Error
-          ? currentTextureError.message
-          : currentTextureError
-            ? String(currentTextureError)
-            : 'Unknown error';
+      const message = formatOneLineError(currentTextureError, 512, 'Unknown error');
       throw new PresenterError('webgpu_surface_error', `WebGPU getCurrentTexture() failed: ${message}`, currentTextureError);
     }
 
@@ -536,7 +532,7 @@ export class WebGpuPresenterBackend implements Presenter {
     }
 
     if (!view) {
-      const message = viewError instanceof Error ? viewError.message : viewError ? String(viewError) : 'Unknown error';
+      const message = formatOneLineError(viewError, 512, 'Unknown error');
       throw new PresenterError('webgpu_surface_error', `WebGPU currentTexture.createView() failed: ${message}`, viewError);
     }
 
@@ -664,7 +660,7 @@ export class WebGpuPresenterBackend implements Presenter {
           err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string'
             ? (err as { message: string }).message
             : '';
-        let msg = errorMessage || (err != null ? String(err) : 'WebGPU uncaptured error');
+        let msg = errorMessage || formatOneLineError(err ?? 'WebGPU uncaptured error', 512);
         if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
           msg = `${errorName}: ${msg}`;
         }
@@ -952,12 +948,7 @@ export class WebGpuPresenterBackend implements Presenter {
     }
 
     if (!currentTexture) {
-      const message =
-        currentTextureError instanceof Error
-          ? currentTextureError.message
-          : currentTextureError
-            ? String(currentTextureError)
-            : 'Unknown error';
+      const message = formatOneLineError(currentTextureError, 512, "Unknown error");
       this.opts.onError?.(
         new PresenterError('webgpu_surface_error', `WebGPU getCurrentTexture() failed: ${message}`, currentTextureError),
       );
@@ -996,7 +987,7 @@ export class WebGpuPresenterBackend implements Presenter {
     }
 
     if (!view) {
-      const message = viewError instanceof Error ? viewError.message : viewError ? String(viewError) : 'Unknown error';
+      const message = formatOneLineError(viewError, 512, "Unknown error");
       this.opts.onError?.(
         new PresenterError('webgpu_surface_error', `WebGPU currentTexture.createView() failed: ${message}`, viewError),
       );

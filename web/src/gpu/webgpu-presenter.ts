@@ -1,3 +1,5 @@
+import { formatOneLineError } from "../text";
+
 // WebGPU presenter responsible for the *final* step: showing the emulator framebuffer
 // on an HTML canvas with correct sRGB/linear handling and correct alpha mode.
 //
@@ -234,7 +236,7 @@ export class WebGpuPresenter {
           ctorName;
         const errorMessage =
           err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : "";
-        let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
+        let msg = errorMessage || formatOneLineError(err ?? "WebGPU uncaptured error", 512);
         if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
           msg = `${errorName}: ${msg}`;
         }

@@ -1,5 +1,6 @@
 import { RawWebGL2Presenter } from './src/gpu/raw-webgl2-presenter';
 import { WebGpuPresenter } from './src/gpu/webgpu-presenter';
+import { formatOneLineError } from './src/text';
 
 declare global {
   interface Window {
@@ -200,7 +201,7 @@ async function main() {
             return await presenter.presentAndReadbackRgba8();
           };
         } catch (err) {
-          webgpuError = err instanceof Error ? err.message : String(err);
+          webgpuError = formatOneLineError(err, 512);
         }
       } else {
         webgpuError = 'navigator.gpu is missing';
@@ -227,7 +228,7 @@ async function main() {
             return readPixelsTopLeft(gl, width, height);
           };
         } catch (err) {
-          const webgl2Error = err instanceof Error ? err.message : String(err);
+          const webgl2Error = formatOneLineError(err, 512);
           throw new Error(`No usable GPU backend (WebGPU: ${webgpuError}; WebGL2: ${webgl2Error})`);
         }
       }
@@ -276,7 +277,7 @@ async function main() {
       },
     };
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

@@ -1,3 +1,5 @@
+import { formatOneLineError } from "../text";
+
 export type RequestWebGpuDeviceOptions = {
   powerPreference?: GPUPowerPreference;
   /**
@@ -76,7 +78,7 @@ export async function requestWebGpuDevice(
         ctorName;
       const errorMessage =
         err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : "";
-      let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
+      let msg = errorMessage || formatOneLineError(err ?? "WebGPU uncaptured error", 512);
       if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
         msg = `${errorName}: ${msg}`;
       }

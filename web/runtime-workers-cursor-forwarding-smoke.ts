@@ -3,6 +3,7 @@ import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from 
 import type { AeroConfig } from "./src/config/aero_config";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
+import { formatOneLineError } from "./src/text";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
@@ -140,9 +141,9 @@ async function main() {
         return;
       }
       if (typed.type === "error") {
-        log(`gpu-worker error: ${typed.message ?? "unknown"}`);
+        log(`gpu-worker error: ${formatOneLineError(typed.message, 512, "unknown")}`);
         if (!presenterReadyResolved && presenterReadyReject) {
-          presenterReadyReject(new Error(String(typed.message ?? "gpu-worker init error")));
+        presenterReadyReject(new Error(formatOneLineError(typed.message, 512, "gpu-worker init error")));
           presenterReadyResolve = null;
           presenterReadyReject = null;
         }
@@ -218,7 +219,7 @@ async function main() {
     window.__aeroTest = { ready: true, pass, sample, expected };
   } catch (err) {
     coordinator.stop();
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

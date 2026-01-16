@@ -12,6 +12,7 @@ import {
   storeHeaderI32,
   wrapSharedFramebuffer,
 } from "./src/display/framebuffer_protocol";
+import { formatOneLineError } from "./src/text";
 
 declare global {
   interface Window {
@@ -167,7 +168,7 @@ async function main() {
       samplePixels: async () => sampleCanvas(canvas),
     };
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 

@@ -18,6 +18,7 @@ import { VRAM_BASE_PADDR } from "./src/arch/guest_phys";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
 import { createSharedMemoryViews } from "./src/runtime/shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
+import { formatOneLineError } from "./src/text";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
 import { AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES } from "../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
@@ -614,7 +615,7 @@ async function main(): Promise<void> {
       cursorOk,
     };
   } catch (err) {
-    renderError(err instanceof Error ? err.message : String(err));
+    renderError(formatOneLineError(err, 512));
   }
 }
 
