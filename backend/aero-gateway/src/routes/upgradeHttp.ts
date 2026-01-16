@@ -32,16 +32,23 @@ function httpStatusText(status: number): string {
 export function respondUpgradeHttp(socket: Duplex, status: number, message: string): void {
   const safeMessage = formatOneLineUtf8(message, 512) || httpStatusText(status);
   const body = `${safeMessage}\n`;
-  socket.end(
-    [
-      `HTTP/1.1 ${status} ${httpStatusText(status)}`,
-      "Content-Type: text/plain; charset=utf-8",
-      `Content-Length: ${Buffer.byteLength(body)}`,
-      "Connection: close",
-      "",
-      body,
-    ].join("\r\n"),
-  );
+  const response = [
+    `HTTP/1.1 ${status} ${httpStatusText(status)}`,
+    "Content-Type: text/plain; charset=utf-8",
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    "Connection: close",
+    "",
+    body,
+  ].join("\r\n");
+  try {
+    socket.end(response);
+  } catch {
+    try {
+      socket.destroy();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export function enforceUpgradeRequestUrlLimit(rawUrl: string, socket: Duplex, parsedUrl?: URL): boolean {

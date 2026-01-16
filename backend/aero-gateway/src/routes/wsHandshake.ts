@@ -15,15 +15,22 @@ export function writeWebSocketHandshake(
 ): void {
   const accept = webSocketAccept(opts.key);
   const protocol = opts.protocol && isValidHttpToken(opts.protocol) ? opts.protocol : undefined;
-  socket.write(
-    [
-      "HTTP/1.1 101 Switching Protocols",
-      "Upgrade: websocket",
-      "Connection: Upgrade",
-      `Sec-WebSocket-Accept: ${accept}`,
-      ...(protocol ? [`Sec-WebSocket-Protocol: ${protocol}`] : []),
-      "\r\n",
-    ].join("\r\n"),
-  );
+  const response = [
+    "HTTP/1.1 101 Switching Protocols",
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Accept: ${accept}`,
+    ...(protocol ? [`Sec-WebSocket-Protocol: ${protocol}`] : []),
+    "\r\n",
+  ].join("\r\n");
+  try {
+    socket.write(response);
+  } catch {
+    try {
+      socket.destroy();
+    } catch {
+      // ignore
+    }
+  }
 }
 
