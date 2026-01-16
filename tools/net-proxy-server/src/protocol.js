@@ -262,5 +262,7 @@ export function decodeTcpMuxErrorPayload(buf) {
     throw new Error("ERROR payload length mismatch");
   }
   const message = buf.subarray(4).toString("utf8");
-  return { code, message: sanitizeOneLine(message) };
+  // Defensive: invalid UTF-8 sequences can expand when decoded (replacement chars), so ensure the
+  // decoded+sanitized message still respects the byte cap.
+  return { code, message: truncateUtf8(sanitizeOneLine(message), MAX_TCP_MUX_ERROR_MESSAGE_BYTES) };
 }

@@ -160,7 +160,7 @@ export function decodeServerFrame(buf) {
     const status = frame.readUInt8(5);
     const msgLen = frame.readUInt16BE(6);
     ensureLength(frame, 8 + msgLen, "opened msg");
-    const message = frame.subarray(8, 8 + msgLen).toString("utf8");
+    const message = formatOneLineUtf8(frame.subarray(8, 8 + msgLen).toString("utf8"), MAX_PROTOCOL_MESSAGE_BYTES);
     return { type: "opened", connId, status, message };
   }
   if (type === FrameType.DATA_FROM_REMOTE) {
@@ -174,7 +174,7 @@ export function decodeServerFrame(buf) {
     const reason = frame.readUInt8(5);
     const msgLen = frame.readUInt16BE(6);
     ensureLength(frame, 8 + msgLen, "close msg");
-    const message = frame.subarray(8, 8 + msgLen).toString("utf8");
+    const message = formatOneLineUtf8(frame.subarray(8, 8 + msgLen).toString("utf8"), MAX_PROTOCOL_MESSAGE_BYTES);
     return { type: "close", connId, reason, message };
   }
   throw new Error("Unknown frame type");
