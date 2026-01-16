@@ -6,10 +6,16 @@
 
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
+import { formatOneLineUtf8 } from "../text.ts";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
 export const TCP_MUX_HEADER_BYTES = 9;
+
+// Defensive caps: keep aligned with the gateway and relay implementations.
+export const MAX_TCP_MUX_OPEN_HOST_BYTES = 1024;
+export const MAX_TCP_MUX_OPEN_METADATA_BYTES = 4 * 1024;
+export const MAX_TCP_MUX_ERROR_MESSAGE_BYTES = 1024;
 
 // NOTE: This file is executed directly by Node's `--experimental-strip-types`
 // loader in unit tests. Node's "strip-only" TypeScript support does not handle
@@ -55,7 +61,25 @@ export type TcpMuxError = Readonly<{
 }>;
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
+
+function decodeUtf8Exact(bytes: Uint8Array, context: string): string {
+  try {
+    return utf8DecoderFatal.decode(bytes);
+  } catch {
+    throw new Error(`${context} is not valid UTF-8`);
+  }
+}
+
+function hasControlOrWhitespace(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden =
+      code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) return true;
+  }
+  return false;
+}
 
 function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
   if (a.byteLength === 0) return b;
@@ -147,10 +171,10 @@ export function encodeTcpMuxOpenPayload(payload: TcpMuxOpenPayload): Uint8Array 
   const hostBytes = textEncoder.encode(payload.host);
   const metadataBytes = payload.metadata ? textEncoder.encode(payload.metadata) : new Uint8Array(0);
 
-  if (hostBytes.byteLength > 0xffff) {
+  if (hostBytes.byteLength > MAX_TCP_MUX_OPEN_HOST_BYTES) {
     throw new Error("host too long");
   }
-  if (metadataBytes.byteLength > 0xffff) {
+  if (metadataBytes.byteLength > MAX_TCP_MUX_OPEN_METADATA_BYTES) {
     throw new Error("metadata too long");
   }
   if (!Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535) {
@@ -182,11 +206,16 @@ export function decodeTcpMuxOpenPayload(buf: Uint8Array): TcpMuxOpenPayload {
   const hostLen = dv.getUint16(offset, false);
   offset += 2;
 
+  if (hostLen > MAX_TCP_MUX_OPEN_HOST_BYTES) {
+    throw new Error("host too long");
+  }
   if (buf.byteLength < offset + hostLen + 2 + 2) {
     throw new Error("OPEN payload truncated (host)");
   }
 
-  const host = textDecoder.decode(buf.subarray(offset, offset + hostLen));
+  const host = decodeUtf8Exact(buf.subarray(offset, offset + hostLen), "host");
+  if (!host) throw new Error("host is empty");
+  if (hasControlOrWhitespace(host)) throw new Error("invalid host");
   offset += hostLen;
 
   const port = dv.getUint16(offset, false);
@@ -195,11 +224,15 @@ export function decodeTcpMuxOpenPayload(buf: Uint8Array): TcpMuxOpenPayload {
   const metadataLen = dv.getUint16(offset, false);
   offset += 2;
 
+  if (metadataLen > MAX_TCP_MUX_OPEN_METADATA_BYTES) {
+    throw new Error("metadata too long");
+  }
   if (buf.byteLength < offset + metadataLen) {
     throw new Error("OPEN payload truncated (metadata)");
   }
 
-  const metadata = metadataLen > 0 ? textDecoder.decode(buf.subarray(offset, offset + metadataLen)) : undefined;
+  const metadata =
+    metadataLen > 0 ? decodeUtf8Exact(buf.subarray(offset, offset + metadataLen), "metadata") : undefined;
   offset += metadataLen;
 
   if (offset !== buf.byteLength) {
@@ -223,8 +256,9 @@ export function decodeTcpMuxClosePayload(payload: Uint8Array): { flags: number }
 }
 
 export function encodeTcpMuxErrorPayload(code: TcpMuxErrorCode | number, message: string): Uint8Array {
-  const messageBytes = textEncoder.encode(message);
-  if (messageBytes.byteLength > 0xffff) {
+  const safeMessage = formatOneLineUtf8(message, MAX_TCP_MUX_ERROR_MESSAGE_BYTES);
+  const messageBytes = textEncoder.encode(safeMessage);
+  if (messageBytes.byteLength > MAX_TCP_MUX_ERROR_MESSAGE_BYTES) {
     throw new Error("error message too long");
   }
   const buf = new Uint8Array(2 + 2 + messageBytes.byteLength);
@@ -240,11 +274,15 @@ export function decodeTcpMuxErrorPayload(payload: Uint8Array): TcpMuxError {
   const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
   const code = dv.getUint16(0, false);
   const msgLen = dv.getUint16(2, false);
+  if (msgLen > MAX_TCP_MUX_ERROR_MESSAGE_BYTES) {
+    throw new Error("error message too long");
+  }
   if (payload.byteLength !== 4 + msgLen) {
     throw new Error("ERROR payload length mismatch");
   }
-  const msgBytes = payload.subarray(4);
-  const message = textDecoder.decode(msgBytes);
+  const msgBytes = payload.subarray(4, 4 + msgLen);
+  const messageRaw = decodeUtf8Exact(msgBytes, "message");
+  const message = formatOneLineUtf8(messageRaw, MAX_TCP_MUX_ERROR_MESSAGE_BYTES);
   return { code, message };
 }
 
