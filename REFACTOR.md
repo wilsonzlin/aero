@@ -246,6 +246,17 @@ Approach:
 Outcomes:
 - JS guardrail tests share a single scanner implementation, and the contract suite blocks unsafe subprocess APIs in production sources.
 
+### Phase 22: SQL injection guardrails (done)
+Goal: prevent accidental introduction of known-unsafe Prisma raw query APIs.
+
+Approach:
+- Add a contract test that scans production JS/TS sources for Prisma unsafe raw query methods:
+  - `queryRawUnsafe`, `executeRawUnsafe`, `$queryRawUnsafe`, `$executeRawUnsafe`
+- Mask strings/comments to avoid false positives from documentation text.
+
+Outcomes:
+- Contract suite fails if Prisma unsafe raw query APIs appear in production sources.
+
 Some coding guidelines:
 
 ## General Principles
