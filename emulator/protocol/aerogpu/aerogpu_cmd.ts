@@ -8,6 +8,74 @@
 
 import { AEROGPU_ABI_VERSION_U32, parseAndValidateAbiVersionU32 } from "./aerogpu_pci.ts";
 
+const UTF8 = Object.freeze({ encoding: "utf-8" as const });
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder(UTF8.encoding);
+
+function formatOneLineUtf8(input: unknown, maxBytes: number): string {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
+  if (maxBytes === 0) return "";
+
+  const buf = new Uint8Array(maxBytes);
+  let written = 0;
+  let pendingSpace = false;
+  for (const ch of String(input ?? "")) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden =
+      code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) {
+      pendingSpace = written > 0;
+      continue;
+    }
+
+    if (pendingSpace) {
+      const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
+      if (spaceRes.written === 0) break;
+      written += spaceRes.written;
+      pendingSpace = false;
+      if (written >= maxBytes) break;
+    }
+
+    const res = textEncoder.encodeInto(ch, buf.subarray(written));
+    if (res.written === 0) break;
+    written += res.written;
+    if (written >= maxBytes) break;
+  }
+  return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
+}
+
+function safeErrorMessageInput(err: unknown): string {
+  if (err === null) return "null";
+  switch (typeof err) {
+    case "string":
+      return err;
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+    case "undefined":
+      return String(err);
+    case "object": {
+      try {
+        const msg =
+          err && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : "";
+        if (msg) return msg;
+      } catch {
+        // ignore hostile getters
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return "Error";
+}
+
+function formatDecodeErrorCause(err: unknown, maxBytes = 512): string {
+  const raw = safeErrorMessageInput(err);
+  return formatOneLineUtf8(raw, maxBytes) || "Error";
+}
+
 export type AerogpuHandle = number;
 
 export const AEROGPU_CMD_STREAM_MAGIC = 0x444d4341; // "ACMD" LE
@@ -144,7 +212,7 @@ export class AerogpuCmdStreamIter implements IterableIterator<AerogpuCmdPacketVi
     try {
       hdr = decodeCmdHdr(this.view, this.cursor);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = formatDecodeErrorCause(err, 512);
       throw new Error(`invalid aerogpu_cmd_hdr at offset ${this.cursor}: ${msg}`);
     }
 
