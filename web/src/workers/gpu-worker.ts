@@ -49,6 +49,7 @@ import {
 
 import { linearizeSrgbRgba8InPlace } from "../utils/srgb";
 import { formatOneLineUtf8, truncateUtf8 } from "../text";
+import { serializeErrorForProtocol } from "../errors/serialize";
 
 const MAX_UI_ERROR_NAME_BYTES = 128;
 const MAX_UI_ERROR_MESSAGE_BYTES = 512;
@@ -62,10 +63,11 @@ function formatUiErrorMessage(err: unknown): string {
 
 function serializeUiErrorDetails(err: unknown): unknown {
   if (err instanceof Error) {
-    const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || "Error";
-    const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
-    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined;
-    return { name, message, ...(stack ? { stack } : {}) };
+    return serializeErrorForProtocol(err, {
+      maxNameBytes: MAX_UI_ERROR_NAME_BYTES,
+      maxMessageBytes: MAX_UI_ERROR_MESSAGE_BYTES,
+      maxStackBytes: MAX_UI_ERROR_STACK_BYTES,
+    });
   }
   return formatUiErrorMessage(err);
 }
@@ -1894,11 +1896,13 @@ function trySnapshotScanoutState(): ScanoutStateSnapshot | null {
 }
 
 function serializeErrorForPostMessage(err: Error): { name: string; message: string; stack?: string; cause?: unknown } {
-  const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || "Error";
-  const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
-  const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined;
+  const base = serializeErrorForProtocol(err, {
+    maxNameBytes: MAX_UI_ERROR_NAME_BYTES,
+    maxMessageBytes: MAX_UI_ERROR_MESSAGE_BYTES,
+    maxStackBytes: MAX_UI_ERROR_STACK_BYTES,
+  });
   const cause = (err as Error & { cause?: unknown }).cause;
-  return { name, message, ...(stack ? { stack } : {}), ...(cause === undefined ? {} : { cause: sanitizeForPostMessage(cause) }) };
+  return { ...base, ...(cause === undefined ? {} : { cause: sanitizeForPostMessage(cause) }) };
 }
 
 function serializePresenterErrorForPostMessage(
