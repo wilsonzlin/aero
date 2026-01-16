@@ -1,32 +1,5 @@
 import { stripStringsAndComments } from "./js_source_scan_helpers.js";
-
-function isSpace(ch) {
-  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
-}
-
-function skipWs(text, i) {
-  while (i < text.length && isSpace(text[i])) i++;
-  return i;
-}
-
-function parseQuotedStringLiteral(source, quoteIdx) {
-  const quote = source[quoteIdx];
-  if (quote !== "'" && quote !== '"') return null;
-
-  let i = quoteIdx + 1;
-  for (;;) {
-    if (i >= source.length) return null;
-    const ch = source[i];
-    if (ch === "\\") {
-      i += 2;
-      continue;
-    }
-    if (ch === quote) {
-      return { value: source.slice(quoteIdx + 1, i), endIdxExclusive: i + 1 };
-    }
-    i++;
-  }
-}
+import { isSpace, parseQuotedStringLiteral, skipWs } from "./js_scan_parse_helpers.js";
 
 function isChildProcessSpecifier(spec) {
   return spec === "child_process" || spec === "node:child_process";
