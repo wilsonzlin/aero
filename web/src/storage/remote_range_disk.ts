@@ -864,7 +864,7 @@ async function probeRemoteImage(
     const parsed = parseContentRangeHeader(contentRange);
     if (parsed.start !== 0 || parsed.endInclusive !== 0) {
       await cancelBody(probe);
-      throw new Error(`Range probe returned unexpected Content-Range: ${contentRange}`);
+      throw new Error(`Range probe returned unexpected Content-Range: ${formatHeaderValueForError(contentRange)}`);
     }
     sizeBytes = parsed.total;
 
@@ -2093,7 +2093,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const parsed = parseContentRangeHeader(contentRange);
     if (parsed.start !== start || parsed.endInclusive !== endInclusive) {
       await cancelBody(resp);
-      throw new Error(`Content-Range mismatch: expected bytes ${start}-${endInclusive}, got ${contentRange}`);
+      throw new Error(`Content-Range mismatch: expected bytes ${start}-${endInclusive}, got ${formatHeaderValueForError(contentRange)}`);
     }
     if (parsed.total !== this.capacityBytesValue) {
       // Image size changed without us noticing; treat like an invalidation event.

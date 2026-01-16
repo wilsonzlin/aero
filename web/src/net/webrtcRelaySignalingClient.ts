@@ -303,7 +303,8 @@ async function negotiateHttpOffer(pc: RTCPeerConnection, baseUrl: string, authTo
     label: "webrtc offer response",
   });
   if (!res.ok) {
-    throw new Error(`webrtc offer failed (${res.status}): ${text}`);
+    // Do not reflect response bodies in user-visible errors.
+    throw new Error(`webrtc offer failed (${res.status})`);
   }
 
   const data: unknown = JSON.parse(text);
@@ -357,7 +358,8 @@ async function negotiateLegacyOffer(pc: RTCPeerConnection, baseUrl: string, auth
     label: "legacy offer response",
   });
   if (!res.ok) {
-    throw new Error(`legacy offer failed (${res.status}): ${text}`);
+    // Do not reflect response bodies in user-visible errors.
+    throw new Error(`legacy offer failed (${res.status})`);
   }
 
   const answer = parseAnswerResponseJSON(text).answer;
