@@ -6,7 +6,7 @@
 
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
-import { formatOneLineUtf8 } from "../text.ts";
+import { formatOneLineError, formatOneLineUtf8 } from "../text.ts";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
@@ -60,6 +60,8 @@ export type TcpMuxError = Readonly<{
   message: string;
 }>;
 
+const MAX_CLIENT_ERROR_MESSAGE_BYTES = 512;
+
 const textEncoder = new TextEncoder();
 const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
 
@@ -79,6 +81,10 @@ function hasControlOrWhitespace(value: string): boolean {
     if (forbidden || /\s/u.test(ch)) return true;
   }
   return false;
+}
+
+function formatClientErrorMessage(input: unknown, fallback: string): string {
+  return formatOneLineError(input, MAX_CLIENT_ERROR_MESSAGE_BYTES, fallback);
 }
 
 function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -461,7 +467,7 @@ export class WebSocketTcpMuxProxyClient {
       this.enqueue(TcpMuxMsgType.OPEN, streamId, frame);
     } catch (err) {
       this.maybeNotifyOpen(streamId);
-      this.onError?.(streamId, { code: 0, message: (err as Error).message });
+      this.onError?.(streamId, { code: 0, message: formatClientErrorMessage(err, "Invalid OPEN request") });
       this.closeStream(streamId);
       return;
     }
@@ -493,7 +499,7 @@ export class WebSocketTcpMuxProxyClient {
         }
       } catch (err) {
         this.maybeNotifyOpen(streamId);
-        this.onError?.(streamId, { code: 0, message: (err as Error).message });
+        this.onError?.(streamId, { code: 0, message: formatClientErrorMessage(err, "Invalid DATA frame") });
         this.closeStream(streamId);
         return;
       }
@@ -512,7 +518,7 @@ export class WebSocketTcpMuxProxyClient {
       this.enqueue(TcpMuxMsgType.CLOSE, streamId, frame);
     } catch (err) {
       this.maybeNotifyOpen(streamId);
-      this.onError?.(streamId, { code: 0, message: (err as Error).message });
+      this.onError?.(streamId, { code: 0, message: formatClientErrorMessage(err, "Invalid CLOSE frame") });
       this.closeStream(streamId);
       return;
     }
@@ -583,7 +589,7 @@ export class WebSocketTcpMuxProxyClient {
       try {
         this.ws.send(entry.frame);
       } catch (err) {
-        this.onError?.(0, { code: 0, message: `WebSocket send failed: ${(err as Error).message}` });
+        this.onError?.(0, { code: 0, message: "WebSocket send failed" });
         // Trigger `onWsClose`, which tears down stream state.
         try {
           this.ws.close();
@@ -617,7 +623,7 @@ export class WebSocketTcpMuxProxyClient {
     try {
       frames = this.parser.push(new Uint8Array(evt.data));
     } catch (err) {
-      this.onError?.(0, { code: 0, message: `tcp-mux protocol error: ${(err as Error).message}` });
+      this.onError?.(0, { code: 0, message: "tcp-mux protocol error" });
       this.ws.close(1002);
       return;
     }
@@ -630,7 +636,10 @@ export class WebSocketTcpMuxProxyClient {
   private onWsClose(): void {
     const pending = this.parser.pendingBytes();
     if (pending !== 0) {
-      this.onError?.(0, { code: 0, message: `tcp-mux connection closed with ${pending} unparsed bytes` });
+      this.onError?.(0, {
+        code: 0,
+        message: formatOneLineUtf8(`tcp-mux connection closed with ${pending} unparsed bytes`, MAX_CLIENT_ERROR_MESSAGE_BYTES),
+      });
     }
 
     for (const streamId of this.streams.keys()) {
@@ -667,7 +676,7 @@ export class WebSocketTcpMuxProxyClient {
         try {
           flags = decodeTcpMuxClosePayload(frame.payload).flags;
         } catch (err) {
-          this.onError?.(frame.streamId, { code: 0, message: (err as Error).message });
+          this.onError?.(frame.streamId, { code: 0, message: "Invalid CLOSE payload" });
           this.closeStream(frame.streamId);
           return;
         }
@@ -707,7 +716,7 @@ export class WebSocketTcpMuxProxyClient {
         try {
           decoded = decodeTcpMuxErrorPayload(frame.payload);
         } catch (err) {
-          decoded = { code: 0, message: (err as Error).message };
+          decoded = { code: 0, message: "Invalid ERROR payload" };
         }
         this.onError?.(frame.streamId, decoded);
         // v1 gateways do not send CLOSE after ERROR; treat ERROR as terminal.
@@ -727,7 +736,10 @@ export class WebSocketTcpMuxProxyClient {
         return;
       }
       default: {
-        this.onError?.(frame.streamId, { code: 0, message: `Unknown msg_type ${frame.msgType}` });
+        this.onError?.(frame.streamId, {
+          code: 0,
+          message: formatOneLineUtf8(`Unknown msg_type ${frame.msgType}`, MAX_CLIENT_ERROR_MESSAGE_BYTES),
+        });
       }
     }
   }
