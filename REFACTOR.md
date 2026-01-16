@@ -293,6 +293,15 @@ Approach:
 Outcomes:
 - `tests/js_subprocess_sinks_parsing_contract.test.js` ensures `import { exec } from "child_process"` and `require("child_process").execSync(` are detected.
 
+### Phase 26: JS eval sink guardrail expansion (done)
+Goal: cover additional eval-equivalent sinks beyond `eval()` and `new Function()`.
+
+Approach:
+- Extend the eval sink contract to also forbid `Function()` calls (same semantics as `new Function()`).
+
+Outcomes:
+- Contract suite fails if `Function(` appears in production sources (outside of allowlisted fixtures).
+
 Some coding guidelines:
 
 ## General Principles
