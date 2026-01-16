@@ -248,6 +248,16 @@ async function sleep(ms) {
 }
 
 async function waitForHttpReady(url, { timeoutMs, intervalMs, serverProcess, getServerError }) {
+  function formatUrlForError(u) {
+    try {
+      const parsed = new URL(String(u));
+      return `${parsed.origin}${parsed.pathname}`;
+    } catch {
+      const s = String(u);
+      return s.length > 128 ? `${s.slice(0, 128)}…(${s.length} chars)` : s;
+    }
+  }
+
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (typeof getServerError === "function") {
@@ -271,7 +281,7 @@ async function waitForHttpReady(url, { timeoutMs, intervalMs, serverProcess, get
 
   // Final attempt with a real error.
   if (!(await fetchOk(url))) {
-    throw new Error(`Timed out waiting for ${url} to become ready`);
+    throw new Error(`Timed out waiting for ${formatUrlForError(url)} to become ready`);
   }
 }
 

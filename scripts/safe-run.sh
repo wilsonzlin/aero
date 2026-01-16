@@ -565,7 +565,9 @@ if [[ "${is_retryable_cmd}" == "true" ]] && [[ "$(uname 2>/dev/null || true)" ==
 
     aero_host_target=""
     if command -v rustc >/dev/null 2>&1; then
-        aero_host_target="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n1)"
+        # `rustc` may be a rustup shim; if HOME/RUSTUP_HOME is unset or points at an empty sandbox,
+        # `rustc -vV` can fail. Treat probe failures as "unknown host target" instead of aborting.
+        aero_host_target="$({ rustc -vV 2>/dev/null || true; } | sed -n 's/^host: //p' | head -n1)"
     fi
     if [[ -n "${aero_host_target}" ]]; then
         _aero_add_lld_threads_rustflags_retryable "${aero_host_target}"
@@ -733,7 +735,9 @@ if [[ "${is_cargo_cmd}" == "true" ]]; then
         # Determine host target triple for default (no `--target`) Cargo invocations.
         aero_host_target=""
         if command -v rustc >/dev/null 2>&1; then
-            aero_host_target="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n1)"
+            # `rustc` may be a rustup shim; if HOME/RUSTUP_HOME is unset or points at an empty sandbox,
+            # `rustc -vV` can fail. Treat probe failures as "unknown host target" instead of aborting.
+            aero_host_target="$({ rustc -vV 2>/dev/null || true; } | sed -n 's/^host: //p' | head -n1)"
         fi
 
         # Determine the explicit Cargo target triple, if any.

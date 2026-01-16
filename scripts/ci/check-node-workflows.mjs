@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -144,7 +144,7 @@ for (const dir of workspaceDirs) {
 
 function listRepoFiles() {
   try {
-    const out = execSync("git ls-files", { cwd: repoRoot, encoding: "utf8" });
+    const out = execFileSync("git", ["ls-files"], { cwd: repoRoot, encoding: "utf8" });
     return out.split(/\r?\n/).filter(Boolean);
   } catch {
     // Best-effort fallback for environments that do not have git metadata.
