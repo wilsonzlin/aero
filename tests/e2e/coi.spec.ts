@@ -22,7 +22,12 @@ async function assertCrossOriginIsolated(page: Page) {
       const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
       sharedWasmMemory = mem.buffer instanceof SharedArrayBuffer;
     } catch (err) {
-      sharedWasmError = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : err;
+      sharedWasmError = String(msg ?? "Error")
+        .replace(/[\x00-\x1F\x7F]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 512);
     }
 
     return {

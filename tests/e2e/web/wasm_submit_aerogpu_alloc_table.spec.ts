@@ -48,6 +48,14 @@ test("aero-gpu-wasm: submit_aerogpu decodes alloc_table bytes for backing_alloc_
       import { AerogpuCmdWriter } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
       import { AEROGPU_ALLOC_TABLE_MAGIC } from "/emulator/protocol/aerogpu/aerogpu_ring.ts";
       import { AEROGPU_ABI_VERSION_U32 } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+      import { formatOneLineUtf8 } from "/web/src/text.ts";
+
+      const MAX_ERROR_BYTES = 512;
+
+      function formatOneLineError(err) {
+        const msg = err instanceof Error ? err.message : err;
+        return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+      }
 
       function buildAllocTable(allocId, gpa, sizeBytes) {
         const headerBytes = 24;
@@ -90,7 +98,7 @@ test("aero-gpu-wasm: submit_aerogpu decodes alloc_table bytes for backing_alloc_
           try {
             submit_aerogpu(cmdStream, 1n);
           } catch (err) {
-            missingError = String(err);
+            missingError = formatOneLineError(err);
           }
 
           const allocTable = buildAllocTable(/* allocId */ 1, /* gpa */ 0n, /* sizeBytes */ 4096n);
@@ -101,7 +109,7 @@ test("aero-gpu-wasm: submit_aerogpu decodes alloc_table bytes for backing_alloc_
             okResult,
           };
         } catch (err) {
-          window.__AERO_WASM_ALLOC_TABLE_RESULT__ = { error: String(err) };
+          window.__AERO_WASM_ALLOC_TABLE_RESULT__ = { error: formatOneLineError(err) };
         }
       })();
     </script>

@@ -38,10 +38,18 @@ test("GPU worker: CursorState uploads cursor image from guest memory and screens
         publishCursorState,
         wrapCursorState,
       } from "/web/src/ipc/cursor_state.ts";
+      import { formatOneLineUtf8 } from "/web/src/text.ts";
 
       const W = 64;
       const H = 64;
       const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+
+      const MAX_ERROR_BYTES = 512;
+
+      function formatOneLineError(err) {
+        const msg = err instanceof Error ? err.message : err;
+        return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+      }
 
       const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
       canvas.width = W;
@@ -226,7 +234,7 @@ test("GPU worker: CursorState uploads cursor image from guest memory and screens
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
           worker.terminate();
         } catch (err) {
-          window.__AERO_CURSOR_STATE_RESULT__ = { pass: false, error: String(err) };
+          window.__AERO_CURSOR_STATE_RESULT__ = { pass: false, error: formatOneLineError(err) };
         }
       })();
     </script>

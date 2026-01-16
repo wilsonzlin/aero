@@ -60,7 +60,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
     const ioWorkerWrapperUrl = URL.createObjectURL(
       new Blob(
         [
-          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+          `\n            (async () => {\n              const MAX_ERROR_CHARS = 512;\n              const fallbackFormatErr = (err) => {\n                const msg = err instanceof Error ? err.message : err;\n                return String(msg ?? \"Error\")\n                  .replace(/[\\x00-\\x1F\\x7F]/g, \" \")\n                  .replace(/\\s+/g, \" \")\n                  .trim()\n                  .slice(0, MAX_ERROR_CHARS);\n              };\n\n              let formatErr = fallbackFormatErr;\n              try {\n                const mod = await import(\"/web/src/text.ts\");\n                const formatOneLineUtf8 = mod?.formatOneLineUtf8;\n                if (typeof formatOneLineUtf8 === \"function\") {\n                  formatErr = (err) => {\n                    const msg = err instanceof Error ? err.message : err;\n                    return formatOneLineUtf8(String(msg ?? \"\"), 512) || \"Error\";\n                  };\n                }\n              } catch {\n                // ignore: keep fallbackFormatErr\n              }\n\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: formatErr(err) }), 0);\n              }\n            })();\n          `,
         ],
         { type: "text/javascript" },
       ),
@@ -838,7 +838,12 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
 
         self.postMessage({ type: "error", message: "unknown mode" });
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const msg = err instanceof Error ? err.message : err;
+            const message = String(msg ?? "Error")
+              .replace(/[\\x00-\\x1F\\x7F]/g, " ")
+              .replace(/\\s+/g, " ")
+              .trim()
+              .slice(0, 512);
             self.postMessage({ type: "error", message });
           }
       };
@@ -853,7 +858,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       const wrapperUrl = URL.createObjectURL(
         new Blob(
           [
-            `\n              (async () => {\n                try {\n                  await import(${JSON.stringify(entrypoint)});\n                  setTimeout(() => self.postMessage({ type: \"__aero_guest_worker_imported\" }), 0);\n                } catch (err) {\n                  const msg = err instanceof Error ? err.message : String(err);\n                  setTimeout(() => self.postMessage({ type: \"__aero_guest_worker_import_failed\", message: msg }), 0);\n                }\n              })();\n            `,
+            `\n              (async () => {\n                const MAX_ERROR_CHARS = 512;\n                const fallbackFormatErr = (err) => {\n                  const msg = err instanceof Error ? err.message : err;\n                  return String(msg ?? \"Error\")\n                    .replace(/[\\x00-\\x1F\\x7F]/g, \" \")\n                    .replace(/\\s+/g, \" \")\n                    .trim()\n                    .slice(0, MAX_ERROR_CHARS);\n                };\n\n                let formatErr = fallbackFormatErr;\n                try {\n                  const mod = await import(\"/web/src/text.ts\");\n                  const formatOneLineUtf8 = mod?.formatOneLineUtf8;\n                  if (typeof formatOneLineUtf8 === \"function\") {\n                    formatErr = (err) => {\n                      const msg = err instanceof Error ? err.message : err;\n                      return formatOneLineUtf8(String(msg ?? \"\"), 512) || \"Error\";\n                    };\n                  }\n                } catch {\n                  // ignore: keep fallbackFormatErr\n                }\n\n                try {\n                  await import(${JSON.stringify(entrypoint)});\n                  setTimeout(() => self.postMessage({ type: \"__aero_guest_worker_imported\" }), 0);\n                } catch (err) {\n                  setTimeout(() => self.postMessage({ type: \"__aero_guest_worker_import_failed\", message: formatErr(err) }), 0);\n                }\n              })();\n            `,
           ],
           { type: "text/javascript" },
         ),

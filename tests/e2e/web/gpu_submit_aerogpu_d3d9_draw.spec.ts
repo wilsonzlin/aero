@@ -140,6 +140,7 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
           AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
         } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
       import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+      import { formatOneLineUtf8 } from "/web/src/text.ts";
 
       const FORCE_BACKEND = ${JSON.stringify(forceBackend)};
 
@@ -147,6 +148,13 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
       const W = 64;
       const H = 64;
       const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+
+      const MAX_ERROR_BYTES = 512;
+
+      function formatOneLineError(err) {
+        const msg = err instanceof Error ? err.message : err;
+        return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+      }
 
       function solidRgba(w, h, r, g, b, a) {
         const out = new Uint8Array(w * h * 4);
@@ -455,7 +463,7 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
           worker.terminate();
         } catch (e) {
-          window.__AERO_D3D9_DRAW_RESULT__ = { pass: false, error: String(e) };
+          window.__AERO_D3D9_DRAW_RESULT__ = { pass: false, error: formatOneLineError(e) };
         }
       })();
     </script>

@@ -61,7 +61,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     const ioWorkerWrapperUrl = URL.createObjectURL(
       new Blob(
         [
-          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+          `\n            (async () => {\n              const MAX_ERROR_CHARS = 512;\n              const fallbackFormatErr = (err) => {\n                const msg = err instanceof Error ? err.message : err;\n                return String(msg ?? \"Error\")\n                  .replace(/[\\x00-\\x1F\\x7F]/g, \" \")\n                  .replace(/\\s+/g, \" \")\n                  .trim()\n                  .slice(0, MAX_ERROR_CHARS);\n              };\n\n              let formatErr = fallbackFormatErr;\n              try {\n                const mod = await import(\"/web/src/text.ts\");\n                const formatOneLineUtf8 = mod?.formatOneLineUtf8;\n                if (typeof formatOneLineUtf8 === \"function\") {\n                  formatErr = (err) => {\n                    const msg = err instanceof Error ? err.message : err;\n                    return formatOneLineUtf8(String(msg ?? \"\"), 512) || \"Error\";\n                  };\n                }\n              } catch {\n                // ignore: keep fallbackFormatErr\n              }\n\n              try {\n                await import(${JSON.stringify(ioWorkerEntrypoint)});\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_imported\" }), 0);\n              } catch (err) {\n                setTimeout(() => self.postMessage({ type: \"__aero_io_worker_import_failed\", message: formatErr(err) }), 0);\n              }\n            })();\n          `,
         ],
         { type: "text/javascript" },
       ),
@@ -172,6 +172,32 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
 
       const VIRTIO_INPUT_ID_DWORD = 0x1052_1af4;
       const VIRTIO_INPUT_SUBSYS_MOUSE_DWORD = 0x0011_1af4;
+
+      const MAX_ERROR_CHARS = 512;
+      const fallbackFormatErr = (err) => {
+        const msg = err instanceof Error ? err.message : err;
+        return String(msg ?? "Error")
+          .replace(/[\\x00-\\x1F\\x7F]/g, " ")
+          .replace(/\\s+/g, " ")
+          .trim()
+          .slice(0, MAX_ERROR_CHARS);
+      };
+
+      let formatErr = fallbackFormatErr;
+      (async () => {
+        try {
+          const mod = await import("${location.origin}/web/src/text.ts");
+          const formatOneLineUtf8 = mod?.formatOneLineUtf8;
+          if (typeof formatOneLineUtf8 === "function") {
+            formatErr = (err) => {
+              const msg = err instanceof Error ? err.message : err;
+              return formatOneLineUtf8(String(msg ?? ""), 512) || "Error";
+            };
+          }
+        } catch {
+          // ignore: keep fallbackFormatErr
+        }
+      })();
 
       function cfgAddr(bus, dev, func, off) {
         return (0x8000_0000 | ((bus & 0xff) << 16) | ((dev & 0x1f) << 11) | ((func & 0x07) << 8) | (off & 0xfc)) >>> 0;
@@ -547,8 +573,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
           }
           self.postMessage({ id, ok: false, error: "unknown cmd" });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          self.postMessage({ id, ok: false, error: message });
+          self.postMessage({ id, ok: false, error: formatErr(err) });
         }
       };
     `;
@@ -557,7 +582,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     const cpuWrapperUrl = URL.createObjectURL(
       new Blob(
         [
-          `\n            (async () => {\n              try {\n                await import(${JSON.stringify(cpuModuleUrl)});\n                setTimeout(() => self.postMessage({ type: \"__aero_cpu_worker_imported\" }), 0);\n              } catch (err) {\n                const msg = err instanceof Error ? err.message : String(err);\n                setTimeout(() => self.postMessage({ type: \"__aero_cpu_worker_import_failed\", message: msg }), 0);\n              }\n            })();\n          `,
+          `\n            (async () => {\n              const MAX_ERROR_CHARS = 512;\n              const fallbackFormatErr = (err) => {\n                const msg = err instanceof Error ? err.message : err;\n                return String(msg ?? \"Error\")\n                  .replace(/[\\x00-\\x1F\\x7F]/g, \" \")\n                  .replace(/\\s+/g, \" \")\n                  .trim()\n                  .slice(0, MAX_ERROR_CHARS);\n              };\n\n              let formatErr = fallbackFormatErr;\n              try {\n                const mod = await import(\"/web/src/text.ts\");\n                const formatOneLineUtf8 = mod?.formatOneLineUtf8;\n                if (typeof formatOneLineUtf8 === \"function\") {\n                  formatErr = (err) => {\n                    const msg = err instanceof Error ? err.message : err;\n                    return formatOneLineUtf8(String(msg ?? \"\"), 512) || \"Error\";\n                  };\n                }\n              } catch {\n                // ignore: keep fallbackFormatErr\n              }\n\n              try {\n                await import(${JSON.stringify(cpuModuleUrl)});\n                setTimeout(() => self.postMessage({ type: \"__aero_cpu_worker_imported\" }), 0);\n              } catch (err) {\n                setTimeout(() => self.postMessage({ type: \"__aero_cpu_worker_import_failed\", message: formatErr(err) }), 0);\n              }\n            })();\n          `,
         ],
         { type: "text/javascript" },
       ),

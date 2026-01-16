@@ -20,12 +20,19 @@ test('GPU worker: submit_aerogpu COPY_TEXTURE2D copies sub-rects (with BGRX uplo
           AEROGPU_RESOURCE_USAGE_TEXTURE,
         } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
         import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+        import { formatOneLineUtf8 } from "/web/src/text.ts";
   
         const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
   
         const W = 64;
         const H = 64;
         const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+
+      const MAX_ERROR_BYTES = 512;
+      function formatOneLineError(err) {
+        const msg = err instanceof Error ? err.message : err;
+        return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+      }
 
         function triangleRgba(w, h) {
           const out = new Uint8Array(w * h * 4);
@@ -220,7 +227,7 @@ test('GPU worker: submit_aerogpu COPY_TEXTURE2D copies sub-rects (with BGRX uplo
             worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
             worker.terminate();
           } catch (e) {
-            window.__AERO_COPY_RESULT__ = { pass: false, error: String(e) };
+            window.__AERO_COPY_RESULT__ = { pass: false, error: formatOneLineError(e) };
           }
         })();
     </script>

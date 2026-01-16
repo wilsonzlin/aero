@@ -167,7 +167,13 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
       await coord.snapshotSaveToOpfs(path);
       return { ok: true as const };
     } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      const msg = err instanceof Error ? err.message : err;
+      const error = String(msg ?? "Error")
+        .replace(/[\\x00-\\x1F\\x7F]/g, " ")
+        .replace(/\\s+/g, " ")
+        .trim()
+        .slice(0, 512);
+      return { ok: false as const, error };
     }
   }, snapshotPath);
 
@@ -214,7 +220,13 @@ test("AudioWorklet producer does not burst after worker-VM snapshot restore", as
       await coord.snapshotRestoreFromOpfs(path);
       return { ok: true as const };
     } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      const msg = err instanceof Error ? err.message : err;
+      const error = String(msg ?? "Error")
+        .replace(/[\\x00-\\x1F\\x7F]/g, " ")
+        .replace(/\\s+/g, " ")
+        .trim()
+        .slice(0, 512);
+      return { ok: false as const, error };
     }
   }, snapshotPath);
 

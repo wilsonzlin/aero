@@ -2,6 +2,12 @@ import http from "node:http";
 import { once } from "node:events";
 import type { IncomingHttpHeaders, IncomingMessage, Server, ServerResponse } from "node:http";
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+const MAX_ORIGIN_LEN = 4 * 1024;
+const MAX_CORS_REQUEST_HEADERS_LEN = 4 * 1024;
+const MAX_RANGE_HEADER_LEN = 16 * 1024;
+
 export function buildTestImage(size: number): Buffer {
   const buf = Buffer.alloc(size);
   for (let i = 0; i < size; i += 1) buf[i] = i & 0xff;
@@ -18,6 +24,45 @@ function rangeTestPageHtml(): string {
   </head>
   <body>
     <script>
+      const UTF8 = Object.freeze({ encoding: "utf-8" });
+      const MAX_ERROR_BYTES = 512;
+
+      function sanitizeOneLine(input) {
+        let out = "";
+        let pendingSpace = false;
+        for (const ch of String(input ?? "")) {
+          const code = ch.codePointAt(0) ?? 0;
+          const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+          if (forbidden || /\\s/u.test(ch)) {
+            pendingSpace = out.length > 0;
+            continue;
+          }
+          if (pendingSpace) {
+            out += " ";
+            pendingSpace = false;
+          }
+          out += ch;
+        }
+        return out.trim();
+      }
+
+      function truncateUtf8(input, maxBytes) {
+        if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
+        const s = String(input ?? "");
+        const enc = new TextEncoder();
+        const bytes = enc.encode(s);
+        if (bytes.byteLength <= maxBytes) return s;
+        let cut = maxBytes;
+        while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut -= 1;
+        if (cut <= 0) return "";
+        const dec = new TextDecoder(UTF8.encoding);
+        return dec.decode(bytes.subarray(0, cut));
+      }
+
+      function formatOneLineUtf8(input, maxBytes) {
+        return truncateUtf8(sanitizeOneLine(input), maxBytes);
+      }
+
       window.__rangeFetch = async function (url, rangeHeaderValue, extraHeaders) {
         try {
           const headers = {
@@ -39,7 +84,7 @@ function rangeTestPageHtml(): string {
             bytes: Array.from(bytes),
           };
         } catch (err) {
-          return { ok: false, error: String(err) };
+          return { ok: false, error: formatOneLineUtf8(err, MAX_ERROR_BYTES) || "Error" };
         }
       };
     </script>
@@ -71,22 +116,107 @@ async function listen(server: Server): Promise<ListeningServer> {
   };
 }
 
+function asciiLowerCode(code: number): number {
+  return code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
+}
+
+function isTcharCode(code: number): boolean {
+  // RFC 7230 tchar:
+  // "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+  if (code >= 0x30 && code <= 0x39) return true; // 0-9
+  if (code >= 0x41 && code <= 0x5a) return true; // A-Z
+  if (code >= 0x61 && code <= 0x7a) return true; // a-z
+  switch (code) {
+    case 0x21: // !
+    case 0x23: // #
+    case 0x24: // $
+    case 0x25: // %
+    case 0x26: // &
+    case 0x27: // '
+    case 0x2a: // *
+    case 0x2b: // +
+    case 0x2d: // -
+    case 0x2e: // .
+    case 0x5e: // ^
+    case 0x5f: // _
+    case 0x60: // `
+    case 0x7c: // |
+    case 0x7e: // ~
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isSafeHeaderListValue(value: string): boolean {
+  // Allow only: tchar tokens separated by commas and optional whitespace.
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (isTcharCode(code)) continue;
+    if (code === 0x2c /* , */ || code === 0x20 /* space */ || code === 0x09 /* tab */) continue;
+    return false;
+  }
+  return true;
+}
+
+function headerListHasToken(value: string, tokenLower: string): boolean {
+  // Scans an RFC7230-ish token list like: "a, b, c".
+  const targetLen = tokenLower.length;
+  const valueLen = value.length;
+  let i = 0;
+  while (i < valueLen) {
+    // Skip OWS and commas.
+    while (i < valueLen) {
+      const c = value.charCodeAt(i);
+      if (c === 0x20 /* space */ || c === 0x09 /* tab */ || c === 0x2c /* , */) i += 1;
+      else break;
+    }
+    const start = i;
+    while (i < valueLen && isTcharCode(value.charCodeAt(i))) i += 1;
+    const end = i;
+    if (end > start && end - start === targetLen) {
+      let match = true;
+      for (let j = 0; j < targetLen; j += 1) {
+        if (asciiLowerCode(value.charCodeAt(start + j)) !== tokenLower.charCodeAt(j)) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return true;
+    }
+    // Skip any trailing OWS before the next comma.
+    while (i < valueLen) {
+      const c = value.charCodeAt(i);
+      if (c === 0x20 /* space */ || c === 0x09 /* tab */) i += 1;
+      else break;
+    }
+    if (i < valueLen && value.charCodeAt(i) === 0x2c /* , */) i += 1;
+  }
+  return false;
+}
+
+function corsAllowHeadersValue(req: IncomingMessage): string {
+  const requestedHeaders = req.headers["access-control-request-headers"];
+  if (typeof requestedHeaders !== "string") return "Range";
+  const requested = requestedHeaders;
+  if (requested.length > MAX_CORS_REQUEST_HEADERS_LEN) return "Range";
+  if (!isSafeHeaderListValue(requested)) return "Range";
+  if (headerListHasToken(requested, "range")) return requested;
+  return requested.trim() ? `Range, ${requested}` : "Range";
+}
+
 function setCorsHeaders(res: ServerResponse, req: IncomingMessage): void {
-  const requestOrigin = req.headers.origin;
+  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
   // Echo the request origin if one is provided so that we can still pass CORS
   // checks even if clients opt into credentials in the future.
-  res.setHeader("Access-Control-Allow-Origin", requestOrigin ?? "*");
-  if (requestOrigin) res.setHeader("Vary", "Origin");
+  if (requestOrigin && requestOrigin.length <= MAX_ORIGIN_LEN) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  const requestedHeaders = req.headers["access-control-request-headers"];
-  const requestedHeadersValue = typeof requestedHeaders === "string" ? requestedHeaders : "";
-  const hasRange = requestedHeadersValue.toLowerCase().includes("range");
-  const allowHeaders = requestedHeadersValue
-    ? hasRange
-      ? requestedHeadersValue
-      : `Range, ${requestedHeadersValue}`
-    : "Range";
-  res.setHeader("Access-Control-Allow-Headers", allowHeaders);
+  res.setHeader("Access-Control-Allow-Headers", corsAllowHeadersValue(req));
   res.setHeader("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length");
 }
 
@@ -124,10 +254,39 @@ export async function startDiskImageServer(opts: {
 }): Promise<DiskImageServer> {
   const requests: RequestRecord[] = [];
 
-  const server = http.createServer((req, res) => {
+  // Increase the server-side header limit so we can exercise our own request
+  // caps deterministically in tests (Node's default maxHeaderSize is otherwise
+  // close enough to our Range cap that large requests can be rejected as 431
+  // before reaching this handler).
+  const server = http.createServer({ maxHeaderSize: 64 * 1024 }, (req, res) => {
     requests.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers });
+    if (opts.enableCors) setCorsHeaders(res, req);
 
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const rawUrl = req.url ?? "/";
+    if (typeof rawUrl !== "string") {
+      res.statusCode = 400;
+      res.end("Bad Request");
+      return;
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      res.statusCode = 414;
+      res.end("URI Too Long");
+      return;
+    }
+
+    let url: URL;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      res.statusCode = 400;
+      res.end("Bad Request");
+      return;
+    }
+    if (url.pathname.length > MAX_PATHNAME_LEN) {
+      res.statusCode = 414;
+      res.end("URI Too Long");
+      return;
+    }
 
     if (opts.serveTestPage && req.method === "GET" && url.pathname === "/") {
       res.statusCode = 200;
@@ -141,8 +300,6 @@ export async function startDiskImageServer(opts: {
       res.end("Not found");
       return;
     }
-
-    if (opts.enableCors) setCorsHeaders(res, req);
 
     if (req.method === "OPTIONS") {
       res.statusCode = 204;
@@ -164,6 +321,11 @@ export async function startDiskImageServer(opts: {
 
     const rangeHeader = req.headers.range;
     if (typeof rangeHeader === "string") {
+      if (rangeHeader.length > MAX_RANGE_HEADER_LEN) {
+        res.statusCode = 413;
+        res.end();
+        return;
+      }
       const parsedRange = parseRangeHeader(rangeHeader, opts.data.length);
       if (!parsedRange) {
         res.statusCode = 416;
@@ -218,7 +380,31 @@ export type PageServer = { origin: string; port: number; close: () => Promise<vo
 
 export async function startPageServer({ coopCoep = false }: { coopCoep?: boolean } = {}): Promise<PageServer> {
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const rawUrl = req.url ?? "/";
+    if (typeof rawUrl !== "string") {
+      res.statusCode = 400;
+      res.end("Bad Request");
+      return;
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      res.statusCode = 414;
+      res.end("URI Too Long");
+      return;
+    }
+
+    let url: URL;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      res.statusCode = 400;
+      res.end("Bad Request");
+      return;
+    }
+    if (url.pathname.length > MAX_PATHNAME_LEN) {
+      res.statusCode = 414;
+      res.end("URI Too Long");
+      return;
+    }
     if (url.pathname !== "/") {
       res.statusCode = 404;
       res.end("Not found");

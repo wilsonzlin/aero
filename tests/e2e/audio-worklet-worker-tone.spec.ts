@@ -95,7 +95,13 @@ test("AudioWorklet output runs and does not underrun with CPU-worker tone produc
         head: Array.from(bytes.slice(0, 4)),
       };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      const msg = err instanceof Error ? err.message : err;
+      const error = String(msg ?? "Error")
+        .replace(/[\\x00-\\x1F\\x7F]/g, " ")
+        .replace(/\\s+/g, " ")
+        .trim()
+        .slice(0, 512);
+      return { ok: false, error };
     }
   });
 

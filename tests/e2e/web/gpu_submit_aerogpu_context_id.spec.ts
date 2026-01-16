@@ -13,8 +13,15 @@ test("GPU worker: contextId isolates AeroGPU per-context state across submission
         AEROGPU_RESOURCE_USAGE_TEXTURE,
       } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
       import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+      import { formatOneLineUtf8 } from "/web/src/text.ts";
 
       const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+      const MAX_ERROR_BYTES = 512;
+
+      function formatOneLineError(err) {
+        const msg = err instanceof Error ? err.message : err;
+        return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+      }
       const H = 64;
       const fmt = AerogpuFormat.R8G8B8A8UnormSrgb ?? AerogpuFormat.R8G8B8A8Unorm;
 
@@ -161,7 +168,7 @@ test("GPU worker: contextId isolates AeroGPU per-context state across submission
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
           worker.terminate();
         } catch (err) {
-          window.__AERO_CONTEXT_ID_RESULT__ = { error: String(err) };
+          window.__AERO_CONTEXT_ID_RESULT__ = { error: formatOneLineError(err) };
         }
       })();
     </script>

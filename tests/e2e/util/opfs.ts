@@ -51,6 +51,8 @@ export async function removeOpfsEntryBestEffort(page: Page, path: string): Promi
  */
 export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAccessHandleProbeResult> {
   return await page.evaluate(async () => {
+    const { formatOneLineUtf8 } = await import("/web/src/text.ts");
+    const MAX_ERROR_BYTES = 512;
     try {
       const storage = navigator.storage as StorageManager & { getDirectory?: () => Promise<FileSystemDirectoryHandle> };
       if (typeof storage?.getDirectory !== "function") {
@@ -63,6 +65,16 @@ export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAcc
         new Blob(
           [
             `
+              const MAX_ERROR_CHARS = 512;
+              const formatErr = (err) => {
+                const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
+                return msg
+                  .replace(/[\\x00-\\x1F\\x7F]/g, ' ')
+                  .replace(/\\s+/g, ' ')
+                  .trim()
+                  .slice(0, MAX_ERROR_CHARS);
+              };
+
               self.onmessage = async () => {
                 try {
                   const storage = navigator.storage;
@@ -101,16 +113,14 @@ export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAcc
                     }
                   } catch (err) {
                     await cleanupProbeFile();
-                    const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
-                    self.postMessage({ supported: false, reason: msg });
+                    self.postMessage({ supported: false, reason: formatErr(err) });
                     return;
                   }
 
                   await cleanupProbeFile();
                   self.postMessage({ supported: true });
                 } catch (err) {
-                  const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
-                  self.postMessage({ supported: false, reason: msg });
+                  self.postMessage({ supported: false, reason: formatErr(err) });
                 }
               };
             `,
@@ -176,10 +186,11 @@ export async function probeOpfsSyncAccessHandle(page: Page): Promise<OpfsSyncAcc
             reason: workerResult.reason ?? "FileSystemFileHandle.createSyncAccessHandle unavailable",
           } satisfies OpfsSyncAccessHandleProbeResult);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : err;
       return {
         ok: false as const,
         supported: false as const,
-        reason: err instanceof Error ? err.message : String(err),
+        reason: formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error",
       } satisfies OpfsSyncAccessHandleProbeResult;
     }
   });

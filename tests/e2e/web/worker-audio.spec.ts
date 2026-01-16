@@ -67,8 +67,15 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
      <script type="module">
         import { WorkerCoordinator } from "/web/src/runtime/coordinator.ts";
         import { createAudioOutput } from "/web/src/platform/audio.ts";
+        import { formatOneLineUtf8 } from "/web/src/text.ts";
 
         const log = document.getElementById("log");
+        const MAX_ERROR_BYTES = 512;
+
+        function formatOneLineError(err) {
+          const msg = err instanceof Error ? err.message : err;
+          return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+        }
         const coordinator = new WorkerCoordinator();
         window.__coordinator = coordinator;
 
@@ -91,7 +98,7 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
           coordinator.start(config);
           coordinator.setBootDisks({}, null, null);
         } catch (err) {
-          log.textContent = err instanceof Error ? err.message : String(err);
+          log.textContent = formatOneLineError(err);
         }
 
         document.getElementById("start").addEventListener("click", async () => {

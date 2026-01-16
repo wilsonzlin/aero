@@ -183,7 +183,13 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
       await coord.snapshotSaveToOpfs(path);
       return { ok: true as const };
     } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      const msg = err instanceof Error ? err.message : err;
+      const error = String(msg ?? "Error")
+        .replace(/[\\x00-\\x1F\\x7F]/g, " ")
+        .replace(/\\s+/g, " ")
+        .trim()
+        .slice(0, 512);
+      return { ok: false as const, error };
     }
   }, snapshotPath);
 
@@ -288,7 +294,13 @@ test("IO-worker HDA PCI audio does not fast-forward after worker snapshot restor
           if (resolved) return;
           resolved = true;
           cleanup();
-          resolve({ ok: false as const, error: err instanceof Error ? err.message : String(err) });
+          const msg = err instanceof Error ? err.message : err;
+          const error = String(msg ?? "Error")
+            .replace(/[\\x00-\\x1F\\x7F]/g, " ")
+            .replace(/\\s+/g, " ")
+            .trim()
+            .slice(0, 512);
+          resolve({ ok: false as const, error });
         };
 
         const timeout = setTimeout(() => fail(new Error("Timed out waiting for snapshot restore burst probe.")), 180_000);

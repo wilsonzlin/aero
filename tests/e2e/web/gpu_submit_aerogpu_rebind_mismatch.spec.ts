@@ -19,12 +19,19 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
           AEROGPU_RESOURCE_USAGE_TEXTURE,
         } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
         import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+        import { formatOneLineUtf8 } from "/web/src/text.ts";
   
         const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById("c"));
   
         const W = 64;
         const H = 64;
         const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+
+      const MAX_ERROR_BYTES = 512;
+      function formatOneLineError(err) {
+        const msg = err instanceof Error ? err.message : err;
+        return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+      }
         const fmt = AerogpuFormat.R8G8B8A8UnormSrgb ?? AerogpuFormat.R8G8B8A8Unorm;
 
         function triangleRgba(w, h) {
@@ -232,7 +239,7 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
             worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
             worker.terminate();
           } catch (e) {
-            window.__AERO_REBIND_MISMATCH_RESULT__ = { pass: false, error: String(e) };
+            window.__AERO_REBIND_MISMATCH_RESULT__ = { pass: false, error: formatOneLineError(e) };
           }
         })();
      </script>

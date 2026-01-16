@@ -13,8 +13,15 @@ test("GPU worker: submit_aerogpu with VSYNC present completes without requiring 
         isGpuWorkerMessageBase,
       } from "/web/src/ipc/gpu-protocol.ts";
       import { AerogpuCmdWriter, AEROGPU_PRESENT_FLAG_VSYNC } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
+      import { formatOneLineUtf8 } from "/web/src/text.ts";
 
        const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+       const MAX_ERROR_BYTES = 512;
+
+       function formatOneLineError(err) {
+         const msg = err instanceof Error ? err.message : err;
+         return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+       }
 
        const withTimeout = (promise, ms) =>
          Promise.race([
@@ -141,7 +148,7 @@ test("GPU worker: submit_aerogpu with VSYNC present completes without requiring 
            worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
            worker.terminate();
          } catch (err) {
-           window.__AERO_VSYNC_SUBMIT_RESULT__ = { error: String(err) };
+           window.__AERO_VSYNC_SUBMIT_RESULT__ = { error: formatOneLineError(err) };
         }
       })();
     </script>
@@ -173,8 +180,15 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions arrive without ticks
         isGpuWorkerMessageBase,
       } from "/web/src/ipc/gpu-protocol.ts";
       import { AerogpuCmdWriter, AEROGPU_PRESENT_FLAG_VSYNC } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
+      import { formatOneLineUtf8 } from "/web/src/text.ts";
 
        const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION };
+       const MAX_ERROR_BYTES = 512;
+
+       function formatOneLineError(err) {
+         const msg = err instanceof Error ? err.message : err;
+         return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+       }
        const withTimeout = (promise, ms) =>
          Promise.race([
            promise.then((value) => ({ kind: "value", value })),
@@ -298,7 +312,7 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions arrive without ticks
           worker.postMessage({ ...GPU_MESSAGE_BASE, type: "shutdown" });
           worker.terminate();
         } catch (err) {
-          window.__AERO_VSYNC_MULTI_RESULT__ = { error: String(err) };
+          window.__AERO_VSYNC_MULTI_RESULT__ = { error: formatOneLineError(err) };
         }
       })();
     </script>

@@ -50,6 +50,14 @@ test("aero-gpu-wasm: destroy_gpu resets submit_aerogpu command processor state",
         AEROGPU_RESOURCE_USAGE_TEXTURE,
       } from "/emulator/protocol/aerogpu/aerogpu_cmd.ts";
       import { AerogpuFormat } from "/emulator/protocol/aerogpu/aerogpu_pci.ts";
+      import { formatOneLineUtf8 } from "/web/src/text.ts";
+
+      const MAX_ERROR_BYTES = 512;
+
+      function formatOneLineError(err) {
+        const msg = err instanceof Error ? err.message : err;
+        return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+      }
 
       (async () => {
         try {
@@ -88,7 +96,7 @@ test("aero-gpu-wasm: destroy_gpu resets submit_aerogpu command processor state",
           try {
             result1 = submit_aerogpu(stream1, 2n);
           } catch (err) {
-            err1 = String(err);
+            err1 = formatOneLineError(err);
           }
 
           window.__AERO_WASM_DESTROY_GPU_RESULT__ = {
@@ -97,7 +105,7 @@ test("aero-gpu-wasm: destroy_gpu resets submit_aerogpu command processor state",
             err1,
           };
         } catch (err) {
-          window.__AERO_WASM_DESTROY_GPU_RESULT__ = { error: String(err) };
+          window.__AERO_WASM_DESTROY_GPU_RESULT__ = { error: formatOneLineError(err) };
         }
       })();
     </script>

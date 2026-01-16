@@ -12,6 +12,14 @@ test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 ->
     const sharedLayout = await import("/web/src/runtime/shared_layout.ts");
     const scanout = await import("/web/src/ipc/scanout_state.ts");
     const sharedFb = await import("/web/src/ipc/shared-layout.ts");
+    const { formatOneLineUtf8 } = await import("/web/src/text.ts");
+
+    const MAX_ERROR_BYTES = 512;
+
+    function formatOneLineError(err: unknown): string {
+      const msg = err instanceof Error ? err.message : err;
+      return formatOneLineUtf8(String(msg ?? ""), MAX_ERROR_BYTES) || "Error";
+    }
 
     const coordinator = new WorkerCoordinator();
     const support = coordinator.checkSupport();
@@ -282,7 +290,7 @@ test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 ->
 
       return { ok: true, legacyOk, scanoutOk, wddmOk, legacyWidth, legacyHeight, lastMismatch, lastMismatchWddm };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, error: formatOneLineError(err) };
     } finally {
       scheduler.stop();
       coordinator.stop();
