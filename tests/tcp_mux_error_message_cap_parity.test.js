@@ -14,6 +14,7 @@ const FILES = [
   "net-proxy/src/tcpMuxProtocol.ts",
   "tools/net-proxy-server/src/protocol.js",
   "tools/net-proxy-server/src/server.js",
+  "web/src/net/tcpMuxProxy.ts",
 ].map((p) => path.join(repoRoot, p));
 
 function extractCap(source) {
