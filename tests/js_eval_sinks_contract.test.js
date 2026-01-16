@@ -34,6 +34,16 @@ function findEvalSinks(content) {
     hits.push({ kind: "newFunction", index: m.index });
   }
 
+  // Function() call is also an eval sink (same as new Function()).
+  // Avoid double-counting `new Function(` as both.
+  const functionCallRe = /\bFunction\s*\(/gmu;
+  for (;;) {
+    const m = functionCallRe.exec(content);
+    if (!m) break;
+    if (/\bnew\s+Function\s*\(/gmu.test(content.slice(Math.max(0, m.index - 16), m.index + 16))) continue;
+    hits.push({ kind: "Function", index: m.index });
+  }
+
   return hits;
 }
 
