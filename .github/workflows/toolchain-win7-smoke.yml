@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload validation logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: toolchain-win7-smoke-logs
           if-no-files-found: warn

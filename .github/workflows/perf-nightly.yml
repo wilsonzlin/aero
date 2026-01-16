@@ -242,7 +242,7 @@ jobs:
 
       - name: Upload perf artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: perf-nightly-${{ github.run_id }}
           path: perf-results
@@ -312,7 +312,7 @@ jobs:
           cp bench/history.schema.json dist/perf-dashboard/history.schema.json
 
       - name: Upload history + dashboard artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: perf-history-dashboard
           path: dist/perf-dashboard

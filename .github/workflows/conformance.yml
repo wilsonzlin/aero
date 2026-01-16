@@ -33,7 +33,7 @@ jobs:
         run: cargo xtask conformance -- --nocapture
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: conformance-report-pr
           path: target/conformance/report.json
@@ -57,7 +57,7 @@ jobs:
         run: cargo xtask conformance -- --nocapture
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: conformance-report-scheduled
           path: target/conformance/report.json

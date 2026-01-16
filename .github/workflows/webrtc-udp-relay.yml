@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload Playwright artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: webrtc-udp-relay-playwright-artifacts
           path: |
