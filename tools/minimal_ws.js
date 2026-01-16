@@ -3,8 +3,17 @@ import https from "node:https";
 import net from "node:net";
 import { EventEmitter } from "node:events";
 import { createHash, randomBytes } from "node:crypto";
+import { formatOneLineUtf8 } from "../src/text.js";
+import { isValidHttpToken } from "../src/httpTokens.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+const MAX_SUBPROTOCOL_HEADER_LEN = 4 * 1024;
+const MAX_SUBPROTOCOL_TOKENS = 32;
+const MAX_WS_KEY_LEN = 256;
+const MAX_WS_URL_LEN = 8 * 1024;
+// RFC 6455 close reason is limited to 123 bytes (125 total payload bytes incl. 2-byte code).
+const MAX_WS_CLOSE_REASON_BYTES = 123;
 
 function computeAccept(key) {
   return createHash("sha1")
@@ -12,13 +21,57 @@ function computeAccept(key) {
     .digest("base64");
 }
 
+function commaSeparatedTokens(raw, { maxLen, maxTokens }) {
+  if (typeof raw !== "string") return null;
+  if (raw.length > maxLen) return null;
+  if (raw.length === 0) return [];
+
+  const out = [];
+  let i = 0;
+  while (i < raw.length) {
+    let end = raw.indexOf(",", i);
+    if (end === -1) end = raw.length;
+
+    let start = i;
+    while (start < end && raw.charCodeAt(start) <= 0x20) start++;
+    while (end > start && raw.charCodeAt(end - 1) <= 0x20) end--;
+
+    if (end > start) {
+      if (out.length >= maxTokens) return null;
+      const token = raw.slice(start, end);
+      if (!isValidHttpToken(token)) return null;
+      out.push(token);
+    }
+
+    i = end + 1;
+  }
+
+  return out;
+}
+
 function parseProtocolsHeader(header) {
-  const raw = Array.isArray(header) ? header.join(",") : typeof header === "string" ? header : "";
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+  if (typeof header === "string") {
+    return commaSeparatedTokens(header, { maxLen: MAX_SUBPROTOCOL_HEADER_LEN, maxTokens: MAX_SUBPROTOCOL_TOKENS });
+  }
+  if (!Array.isArray(header)) return [];
+
+  let totalLen = 0;
+  const out = [];
+  for (const part of header) {
+    if (typeof part !== "string") return null;
+    totalLen += part.length;
+    if (totalLen > MAX_SUBPROTOCOL_HEADER_LEN) return null;
+
+    const tokens = commaSeparatedTokens(part, {
+      maxLen: MAX_SUBPROTOCOL_HEADER_LEN,
+      maxTokens: MAX_SUBPROTOCOL_TOKENS - out.length,
+    });
+    if (tokens === null) return null;
+    out.push(...tokens);
+    if (out.length >= MAX_SUBPROTOCOL_TOKENS) break;
+  }
+
+  return out;
 }
 
 function encodeFrame(opcode, payload, { mask }) {
@@ -127,7 +180,27 @@ class WebSocket extends EventEmitter {
   }
 
   _connect(url, protocols, options) {
-    const u = new URL(url);
+    let urlStr;
+    let u;
+    if (typeof url === "string") {
+      urlStr = url;
+      if (urlStr.length === 0 || urlStr.length > MAX_WS_URL_LEN) {
+        throw new RangeError("WebSocket URL is invalid or too long");
+      }
+      try {
+        u = new URL(urlStr);
+      } catch {
+        throw new TypeError("Invalid WebSocket URL");
+      }
+    } else if (url instanceof URL) {
+      u = url;
+      urlStr = u.href;
+      if (urlStr.length === 0 || urlStr.length > MAX_WS_URL_LEN) {
+        throw new RangeError("WebSocket URL is invalid or too long");
+      }
+    } else {
+      throw new TypeError("WebSocket URL must be a string or URL");
+    }
     if (u.protocol !== "ws:" && u.protocol !== "wss:") {
       queueMicrotask(() => this.emit("error", new Error(`Unsupported WebSocket URL scheme: ${u.protocol}`)));
       return;
@@ -137,6 +210,31 @@ class WebSocket extends EventEmitter {
     const mod = secure ? https : http;
     const port = u.port ? Number.parseInt(u.port, 10) : secure ? 443 : 80;
 
+    if (!Array.isArray(protocols)) {
+      throw new TypeError("WebSocket protocols must be an array");
+    }
+    if (protocols.length > MAX_SUBPROTOCOL_TOKENS) {
+      throw new RangeError("Too many WebSocket subprotocols");
+    }
+    let protocolHeader = null;
+    if (protocols.length > 0) {
+      let totalLen = 0;
+      for (const proto of protocols) {
+        if (!isValidHttpToken(proto)) {
+          throw new TypeError("WebSocket subprotocol must be a valid token");
+        }
+        totalLen += proto.length;
+        if (totalLen > MAX_SUBPROTOCOL_HEADER_LEN) {
+          throw new RangeError("WebSocket subprotocol header is too long");
+        }
+      }
+      const joinedLen = totalLen + (protocols.length - 1) * 2; // ", "
+      if (joinedLen > MAX_SUBPROTOCOL_HEADER_LEN) {
+        throw new RangeError("WebSocket subprotocol header is too long");
+      }
+      protocolHeader = protocols.join(", ");
+    }
+
     const key = randomBytes(16).toString("base64");
     const expectedAccept = computeAccept(key);
 
@@ -145,7 +243,7 @@ class WebSocket extends EventEmitter {
       Upgrade: "websocket",
       "Sec-WebSocket-Version": "13",
       "Sec-WebSocket-Key": key,
-      ...(protocols.length > 0 ? { "Sec-WebSocket-Protocol": protocols.join(", ") } : null),
+      ...(protocolHeader ? { "Sec-WebSocket-Protocol": protocolHeader } : null),
       ...(options.headers ?? {}),
     };
 
@@ -350,7 +448,9 @@ function normalizeSendData(data) {
 }
 
 function encodeClosePayload(code, reason) {
-  const reasonBuf = Buffer.isBuffer(reason) ? reason : Buffer.from(reason ?? "", "utf8");
+  const reasonBuf = Buffer.isBuffer(reason)
+    ? reason.subarray(0, MAX_WS_CLOSE_REASON_BYTES)
+    : Buffer.from(formatOneLineUtf8(reason, MAX_WS_CLOSE_REASON_BYTES), "utf8");
   const buf = Buffer.allocUnsafe(2 + reasonBuf.length);
   buf.writeUInt16BE(code, 0);
   reasonBuf.copy(buf, 2);
@@ -406,23 +506,30 @@ class WebSocketServer extends EventEmitter {
   handleUpgrade(req, socket, head, cb) {
     try {
       const key = req.headers["sec-websocket-key"];
-      if (typeof key !== "string" || key.length === 0) {
+      if (typeof key !== "string" || key.length === 0 || key.length > MAX_WS_KEY_LEN) {
         socket.destroy();
         return;
       }
 
       const offered = parseProtocolsHeader(req.headers["sec-websocket-protocol"]);
+      if (offered === null) {
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        return;
+      }
       const offeredSet = new Set(offered);
       let selected = "";
       if (this._handleProtocols) {
         const res = this._handleProtocols(offeredSet, req);
-        if (res === false) {
+        if (res === false || typeof res !== "string") {
           socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
           return;
         }
-        if (typeof res === "string") {
-          selected = res;
+        const trimmed = res.trim();
+        if (trimmed === "" || !offeredSet.has(trimmed)) {
+          socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          return;
         }
+        selected = trimmed;
       }
 
       const accept = computeAccept(key);

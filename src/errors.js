@@ -1,4 +1,9 @@
 import { formatBytes } from './utils.js';
+import { formatOneLineUtf8, truncateUtf8 } from './text.js';
+
+const MAX_ERROR_NAME_BYTES = 128;
+const MAX_ERROR_MESSAGE_BYTES = 512;
+const MAX_ERROR_STACK_BYTES = 8 * 1024;
 
 export const ErrorCode = Object.freeze({
   WatchdogTimeout: 'WatchdogTimeout',
@@ -22,31 +27,40 @@ export class EmulatorError extends Error {
 
 export function serializeError(err, fallback = {}) {
   if (err && typeof err === 'object' && err.name === 'EmulatorError' && typeof err.code === 'string') {
+    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
+    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+    const stack = typeof err.stack === 'string' ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
     return {
-      name: err.name,
+      name,
       code: err.code,
-      message: err.message,
+      message,
       details: err.details,
       suggestion: err.suggestion,
-      stack: err.stack,
+      ...(stack ? { stack } : {}),
     };
   }
 
   if (err instanceof Error) {
+    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
+    const messageRaw = typeof fallback.message === 'string' ? fallback.message : err.message;
+    const message = formatOneLineUtf8(messageRaw, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+    const stack = typeof err.stack === 'string' ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
     return {
-      name: err.name,
+      name,
       code: fallback.code ?? ErrorCode.InternalError,
-      message: fallback.message ?? err.message,
+      message,
       details: fallback.details,
       suggestion: fallback.suggestion,
-      stack: err.stack,
+      ...(stack ? { stack } : {}),
     };
   }
 
+  const messageRaw = typeof fallback.message === 'string' ? fallback.message : String(err);
+  const message = formatOneLineUtf8(messageRaw, MAX_ERROR_MESSAGE_BYTES) || 'Error';
   return {
     name: 'Error',
     code: fallback.code ?? ErrorCode.InternalError,
-    message: fallback.message ?? String(err),
+    message,
     details: fallback.details,
     suggestion: fallback.suggestion,
   };

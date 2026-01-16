@@ -19,6 +19,12 @@
 //
 // Deletion target per docs/adr/0015-canonical-usb-stack.md.
 
+import { formatOneLineUtf8, truncateUtf8 } from '../../text.js';
+
+const MAX_ERROR_NAME_BYTES = 128;
+const MAX_ERROR_MESSAGE_BYTES = 512;
+const MAX_ERROR_STACK_BYTES = 8 * 1024;
+
 /** @deprecated Legacy demo-only WebUSB demo RPC constant. Do not use for production guest USB passthrough; use `web/src/usb/*` + `crates/aero-usb` (ADR 0015). */
 export const WEBUSB_BROKER_PORT_MESSAGE_TYPE = 'WebUsbBrokerPort' as const;
 
@@ -311,10 +317,13 @@ export type WebUsbBrokerPortMessage = {
 /** @deprecated Legacy demo-only WebUSB demo RPC error serialization helper. Do not use for production guest USB passthrough; use `web/src/usb/*` + `crates/aero-usb` (ADR 0015). */
 export function serializeWebUsbError(err: unknown): WebUsbSerializedError {
   if (err instanceof Error) {
+    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
+    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+    const stack = typeof err.stack === 'string' ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
     return {
-      name: err.name,
-      message: err.message,
-      stack: typeof err.stack === 'string' ? err.stack : undefined,
+      name,
+      message,
+      stack,
     };
   }
 
@@ -326,10 +335,14 @@ export function serializeWebUsbError(err: unknown): WebUsbSerializedError {
     const name = typeof maybe.name === 'string' ? maybe.name : undefined;
     const message = typeof maybe.message === 'string' ? maybe.message : String(err);
     const stack = typeof maybe.stack === 'string' ? maybe.stack : undefined;
-    return { name, message, stack };
+    const safeName = name ? formatOneLineUtf8(name, MAX_ERROR_NAME_BYTES) : undefined;
+    const safeMessage = formatOneLineUtf8(message, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+    const safeStack = stack ? truncateUtf8(stack, MAX_ERROR_STACK_BYTES) : undefined;
+    return { name: safeName, message: safeMessage, ...(safeStack ? { stack: safeStack } : {}) };
   }
 
-  return { message: String(err) };
+  const safeMessage = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || 'Error';
+  return { message: safeMessage };
 }
 
 /** @deprecated Legacy demo-only WebUSB demo RPC error deserialization helper. Do not use for production guest USB passthrough; use `web/src/usb/*` + `crates/aero-usb` (ADR 0015). */

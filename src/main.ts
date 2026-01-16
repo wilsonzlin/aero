@@ -5,6 +5,8 @@
 // entrypoint (`web/index.html`) is legacy/experimental.
 import './style.css';
 
+import { formatOneLineUtf8 } from './text.js';
+
 import { installPerfHud } from '../web/src/perf/hud_entry';
 import { perf } from '../web/src/perf/perf';
 import { installAeroGlobal } from '../web/src/runtime/aero_global';
@@ -36,6 +38,9 @@ import { WorkerCoordinator } from '../web/src/runtime/coordinator';
 import { StatusIndex } from '../web/src/runtime/shared_layout';
 import { decodeInputBackendStatus } from '../web/src/input/input_backend_status';
 import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webusb_troubleshooting';
+
+const MAX_UI_ERROR_NAME_BYTES = 128;
+const MAX_UI_ERROR_MESSAGE_BYTES = 512;
 
 declare global {
   interface Window {
@@ -401,15 +406,26 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   let workerProbeError: { name: string; message: string } | null = null;
 
   function serializeError(err: unknown): { name: string; message: string } {
-    if (err instanceof DOMException) return { name: err.name, message: err.message };
-    if (err instanceof Error) return { name: err.name, message: err.message };
+    if (err instanceof DOMException) {
+      const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || 'Error';
+      const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
+      return { name, message };
+    }
+    if (err instanceof Error) {
+      const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || 'Error';
+      const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
+      return { name, message };
+    }
     if (err && typeof err === 'object') {
       const maybe = err as { name?: unknown; message?: unknown };
       const name = typeof maybe.name === 'string' ? maybe.name : 'Error';
       const message = typeof maybe.message === 'string' ? maybe.message : String(err);
-      return { name, message };
+      const safeName = formatOneLineUtf8(name, MAX_UI_ERROR_NAME_BYTES) || 'Error';
+      const safeMessage = formatOneLineUtf8(message, MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
+      return { name: safeName, message: safeMessage };
     }
-    return { name: 'Error', message: String(err) };
+    const message = formatOneLineUtf8(String(err), MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
+    return { name: 'Error', message };
   }
 
   function clearError(): void {
