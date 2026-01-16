@@ -109,6 +109,12 @@ The unified runner executes (in order):
 8. `npm run test:unit`
 9. `npm run test:e2e`
 
+For a **fast Node-only sanity check** (no TypeScript typecheck, no Playwright), run:
+
+```bash
+npm run test:contracts
+```
+
 By default it sets `AERO_REQUIRE_WEBGPU=0` (matching CI) unless you explicitly enable it.
 
 Common options:
