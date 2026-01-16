@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { createRequire } from "node:module";
+import { formatOneLineError, truncateUtf8 } from "../src/text.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -333,6 +334,15 @@ async function main() {
 try {
   await main();
 } catch (err) {
-  console.error(err?.stack ?? String(err));
+  let stack = null;
+  if (err && typeof err === "object") {
+    try {
+      const raw = err.stack;
+      if (typeof raw === "string" && raw) stack = raw;
+    } catch {
+      // ignore getters throwing
+    }
+  }
+  console.error(stack ? truncateUtf8(stack, 8 * 1024) : formatOneLineError(err, 512));
   process.exitCode = 1;
 }

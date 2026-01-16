@@ -60,6 +60,17 @@ export const guestCpuScenario: Scenario = {
       })) as unknown;
       const runRecord = run && typeof run === "object" ? (run as Record<string, unknown>) : null;
 
+      const formatChecksum = (value: unknown): string => {
+        if (typeof value === "string") {
+          const oneLine = value.replace(/\s+/g, " ").trim();
+          return oneLine ? oneLine.slice(0, 128) : "<empty>";
+        }
+        if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+          return String(value);
+        }
+        return "unknown";
+      };
+
       if (
         runRecord &&
         "expected_checksum" in runRecord &&
@@ -67,7 +78,7 @@ export const guestCpuScenario: Scenario = {
         runRecord.expected_checksum !== runRecord.observed_checksum
       ) {
         throw new Error(
-          `Guest CPU checksum mismatch: expected=${String(runRecord.expected_checksum)} observed=${String(runRecord.observed_checksum)}`,
+          `Guest CPU checksum mismatch: expected=${formatChecksum(runRecord.expected_checksum)} observed=${formatChecksum(runRecord.observed_checksum)}`,
         );
       }
 
@@ -91,9 +102,9 @@ export const guestCpuScenario: Scenario = {
 
       const variant = typeof runRecord?.variant === "string" ? runRecord.variant : "unknown";
       const mode = typeof runRecord?.mode === "string" ? runRecord.mode : "unknown";
-      const checksum = runRecord?.observed_checksum ?? "unknown";
+      const checksum = formatChecksum(runRecord?.observed_checksum);
       ctx.log(
-        `guest_cpu: variant=${variant} mode=${mode} mips_mean=${mipsMean.toFixed(2)} checksum=${String(checksum)}`,
+        `guest_cpu: variant=${variant} mode=${mode} mips_mean=${mipsMean.toFixed(2)} checksum=${checksum}`,
       );
     } finally {
       try {

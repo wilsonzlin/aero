@@ -5,6 +5,7 @@ import { FileArtifactWriter } from './artifacts.ts';
 import { DefaultMilestoneClient } from './milestones.ts';
 import { checkScenarioRequirements } from './requirements.ts';
 import { NullEmulatorDriver } from './null_emulator.ts';
+import { formatOneLineError } from '../../src/text.js';
 import {
   MetricsRecorder,
   ScenarioSkippedError,
@@ -87,14 +88,15 @@ export async function runScenario(scenario: Scenario, config: RunnerConfig, opti
         error = { message: caught.message, stack: caught.stack };
       } else {
         status = 'error';
-        error = { message: String(caught) };
+        error = { message: formatOneLineError(caught, 512) };
       }
     } finally {
       if (traceStarted && emulator.stopTrace) {
         try {
           await artifacts.writeBinary('trace.bin', await emulator.stopTrace(), 'trace');
         } catch (caught) {
-          log(`Failed to save trace: ${caught instanceof Error ? caught.message : String(caught)}`);
+          const msg = formatOneLineError(caught, 512);
+          log(`Failed to save trace: ${msg}`);
         }
       }
 
@@ -103,7 +105,8 @@ export async function runScenario(scenario: Scenario, config: RunnerConfig, opti
           await scenario.teardown?.(ctx);
         }
       } catch (caught) {
-        log(`Scenario teardown failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+        const msg = formatOneLineError(caught, 512);
+        log(`Scenario teardown failed: ${msg}`);
       }
     }
   }

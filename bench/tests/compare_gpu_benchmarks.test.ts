@@ -4,6 +4,12 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "..", "..");
+const compareScriptPath = path.join(repoRoot, "scripts", "compare_gpu_benchmarks.ts");
 
 const writeJson = async (filePath: string, value: unknown) => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
@@ -39,7 +45,7 @@ const runCompare = ({
     process.execPath,
     [
       "--experimental-strip-types",
-      "scripts/compare_gpu_benchmarks.ts",
+      compareScriptPath,
       "--baseline",
       baseline,
       "--candidate",
@@ -51,7 +57,7 @@ const runCompare = ({
       "--profile",
       "pr-smoke",
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", cwd: repoRoot },
   );
 
 test("compare_gpu_benchmarks exits 1 on regression beyond threshold", async () => {

@@ -4,5 +4,10 @@
   "type": "module",
   "engines": {
     "node": ">=22.11.0 <23"
+  },
+  "scripts": {
+    "check:node": "node ../scripts/check-node-version.mjs",
+    "pretest": "npm run check:node",
+    "test": "node --test --experimental-strip-types --import ../scripts/register-ts-strip-loader.mjs history.test.js tests/*.test.ts"
   }
 }

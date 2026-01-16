@@ -4,6 +4,8 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
+import { formatOneLineError } from "../src/text.js";
+
 function parseArgs(argv) {
   const options = {
     out: undefined,
@@ -188,7 +190,7 @@ if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
   try {
     main();
   } catch (err) {
-    console.error(err instanceof Error ? err.message : err);
+    console.error(formatOneLineError(err, 512));
     process.exitCode = 1;
   }
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
+import { formatOneLineError } from "../src/text.js";
 import { SCHEMA_VERSION } from "./schema.js";
 import { startStaticServer } from "./server.js";
 import { SCENARIOS, getScenario } from "./scenarios/index.js";
@@ -75,8 +76,9 @@ async function maybeBuild(projectRoot, opts) {
   } catch (err) {
     // For CI/dev ergonomics, prefer falling back to the built-in fixture over hard-failing.
     // If callers need to enforce a successful build, they can do so before invoking the runner.
+    const msg = formatOneLineError(err, 512);
     // eslint-disable-next-line no-console
-    console.warn(`[bench] build failed; will attempt to continue.`, err?.message ?? err);
+    console.warn(`[bench] build failed; will attempt to continue. ${msg}`);
   }
 }
 
@@ -146,9 +148,10 @@ function loadPlaywright() {
       // Fallback: Playwright test runner package (commonly present in repos).
       return require('@playwright/test');
     } catch (err) {
+      const msg = formatOneLineError(err, 512);
       throw new Error(
         `Playwright is not installed. Install either 'playwright' or '@playwright/test'.\n` +
-          `Original error: ${err?.message ?? err}`
+          `Original error: ${msg}`
       );
     }
   }

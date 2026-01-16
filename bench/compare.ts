@@ -10,6 +10,7 @@ import {
   loadThresholdPolicy,
   pickThresholdProfile,
 } from "../tools/perf/lib/thresholds.mjs";
+import { formatOneLineError, truncateUtf8 } from "../src/text.js";
 
 export type StorageContextStatus = "ok" | "warn" | "fail";
 
@@ -76,8 +77,22 @@ function isFiniteNumber(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n);
 }
 
+function coerceScalarString(value: unknown): string {
+  if (value == null) return "";
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    default:
+      return "";
+  }
+}
+
 function mdEscape(text: unknown): string {
-  return String(text).replaceAll("|", "\\|");
+  return coerceScalarString(text).replaceAll("|", "\\|");
 }
 
 async function readJson(file: string): Promise<any> {
@@ -121,7 +136,15 @@ function formatConfigSummary(cfg: any): string | null {
   const parts: string[] = [];
   for (const key of keys) {
     const value = (cfg as Record<string, unknown>)[key];
-    parts.push(`config.${key}=${value === undefined ? "unset" : String(value)}`);
+    const rendered =
+      value === undefined
+        ? "unset"
+        : value === null
+          ? "null"
+          : typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
+            ? String(value)
+            : "<non-scalar>";
+    parts.push(`config.${key}=${rendered}`);
   }
   return parts.join(" ");
 }
@@ -486,7 +509,16 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error(err?.stack ?? String(err));
+    let stack: string | null = null;
+    if (err && typeof err === "object") {
+      try {
+        const raw = (err as { stack?: unknown }).stack;
+        if (typeof raw === "string" && raw) stack = raw;
+      } catch {
+        // ignore getters throwing
+      }
+    }
+    console.error(stack ? truncateUtf8(stack, 8 * 1024) : formatOneLineError(err, 512));
     process.exitCode = 1;
   });
 }

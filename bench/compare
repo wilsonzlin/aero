@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { buildCompareResult, exitCodeForStatus, renderCompareMarkdown, statsFromSamples } from "../tools/perf/lib/compare_core.mjs";
 import { DEFAULT_PROFILE, loadThresholdPolicy, pickThresholdProfile, getSuiteThresholds } from "../tools/perf/lib/thresholds.mjs";
+import { formatOneLineError, truncateUtf8 } from "../src/text.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -108,6 +109,20 @@ async function readJsonFile(filePath) {
   return JSON.parse(await fs.readFile(filePath, 'utf8'));
 }
 
+function coerceScalarString(value) {
+  if (value == null) return "";
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    default:
+      return "";
+  }
+}
+
 function findMetric(result, metricName) {
   const scenarios = result?.scenarios && typeof result.scenarios === 'object' ? result.scenarios : {};
   const matches = [];
@@ -149,7 +164,7 @@ async function main() {
     const b = findMetric(baseline, metricName);
     const c = findMetric(current, metricName);
     const scenario = c?.scenarioName ?? b?.scenarioName ?? options.suite;
-    const unit = (b?.metric?.unit ?? c?.metric?.unit ?? '').toString();
+    const unit = coerceScalarString(b?.metric?.unit ?? c?.metric?.unit).slice(0, 64);
 
     const baselineStats = b?.metric?.samples ? statsFromSamples(b.metric.samples) : null;
     const currentStats = c?.metric?.samples ? statsFromSamples(c.metric.samples) : null;
@@ -192,6 +207,15 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err?.stack ?? String(err));
+  let stack = null;
+  if (err && typeof err === "object") {
+    try {
+      const raw = err.stack;
+      if (typeof raw === "string" && raw) stack = raw;
+    } catch {
+      // ignore getters throwing
+    }
+  }
+  console.error(stack ? truncateUtf8(stack, 8 * 1024) : formatOneLineError(err, 512));
   process.exitCode = 1;
 });

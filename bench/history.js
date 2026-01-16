@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RunningStats } from "../packages/aero-stats/src/running-stats.js";
+import { formatOneLineError, formatOneLineUtf8 } from "../src/text.js";
 
 export const HISTORY_SCHEMA_VERSION = 1;
 
@@ -15,7 +16,15 @@ export function computeStats(samples) {
   const stats = new RunningStats();
   for (const v of samples) {
     if (typeof v !== "number" || !Number.isFinite(v)) {
-      throw new Error(`Invalid sample value: ${String(v)}`);
+      const observed =
+        typeof v === "string"
+          ? (formatOneLineUtf8(v, 64) || "<empty>")
+          : v === null
+            ? "null"
+            : typeof v === "number" || typeof v === "boolean" || typeof v === "bigint"
+              ? String(v)
+              : `<${typeof v}>`;
+      throw new Error(`Invalid sample value (expected finite number): ${observed}`);
     }
     stats.push(v);
   }
@@ -47,8 +56,12 @@ export function loadHistory(historyPath) {
   const history = readJson(historyPath);
 
   if (history.schemaVersion !== HISTORY_SCHEMA_VERSION) {
+    const got =
+      typeof history.schemaVersion === "number" || typeof history.schemaVersion === "string"
+        ? history.schemaVersion
+        : "unknown";
     throw new Error(
-      `Unsupported history schemaVersion ${String(history.schemaVersion)}; expected ${HISTORY_SCHEMA_VERSION}`,
+      `Unsupported history schemaVersion ${got}; expected ${HISTORY_SCHEMA_VERSION}`,
     );
   }
 
@@ -538,7 +551,11 @@ function inferBetter(name, unit) {
 
 function normaliseScenarioRunnerReport(result) {
   if (result.status && result.status !== "ok") {
-    throw new Error(`Scenario runner report status is ${String(result.status)} (expected ok)`);
+    const status =
+      typeof result.status === "string" || typeof result.status === "number" || typeof result.status === "boolean" || typeof result.status === "bigint"
+        ? String(result.status)
+        : "unknown";
+    throw new Error(`Scenario runner report status is ${status} (expected ok)`);
   }
 
   const metrics = {};
@@ -715,7 +732,7 @@ export function appendHistoryEntry({ historyPath, inputPath, timestamp, commitSh
   if (existing) {
     if (existing.commit?.sha !== commitSha) {
       throw new Error(
-        `History entry id collision: ${entryId} already exists for sha=${String(existing.commit?.sha)}`,
+        `History entry id collision: ${entryId} already exists for sha=${typeof existing.commit?.sha === "string" ? existing.commit.sha : "unknown"}`,
       );
     }
     if (existing.commit?.url && existing.commit.url !== url) {
@@ -888,12 +905,13 @@ async function main() {
     return;
   }
 
-  throw new Error(`Unknown command: ${String(command)}`);
+  const cmd = typeof command === "string" ? (formatOneLineUtf8(command, 64) || "<empty>") : "unknown";
+  throw new Error(`Unknown command: ${cmd}`);
 }
 
 if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
   main().catch((err) => {
-    console.error(err instanceof Error ? err.message : err);
+    console.error(formatOneLineError(err, 512));
     process.exitCode = 1;
   });
 }

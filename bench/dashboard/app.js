@@ -1,5 +1,71 @@
 /* global document, fetch */
 
+const UTF8 = Object.freeze({ encoding: "utf-8" });
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder(UTF8.encoding);
+
+function formatOneLineUtf8(input, maxBytes) {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
+  if (maxBytes === 0) return "";
+
+  const buf = new Uint8Array(maxBytes);
+  let written = 0;
+  let pendingSpace = false;
+  for (const ch of String(input ?? "")) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) {
+      pendingSpace = written > 0;
+      continue;
+    }
+
+    if (pendingSpace) {
+      const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
+      if (spaceRes.written === 0) break;
+      written += spaceRes.written;
+      pendingSpace = false;
+      if (written >= maxBytes) break;
+    }
+
+    const res = textEncoder.encodeInto(ch, buf.subarray(written));
+    if (res.written === 0) break;
+    written += res.written;
+    if (written >= maxBytes) break;
+  }
+  return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
+}
+
+function safeErrorMessageInput(err) {
+  if (err === null) return "null";
+
+  const t = typeof err;
+  if (t === "string") return err;
+  if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
+
+  if (t === "object") {
+    try {
+      const msg = typeof err.message === "string" ? err.message : null;
+      if (msg) return msg;
+    } catch {
+      // ignore getters throwing
+    }
+    try {
+      const name = typeof err.name === "string" ? err.name : null;
+      if (name) return name;
+    } catch {
+      // ignore getters throwing
+    }
+  }
+
+  // Avoid calling toString() on arbitrary objects/functions (can throw / be expensive).
+  return "Error";
+}
+
+function formatOneLineError(err, maxBytes) {
+  const raw = safeErrorMessageInput(err);
+  return formatOneLineUtf8(raw, maxBytes) || "Error";
+}
+
 function byId(id) {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing element #${id}`);
@@ -12,12 +78,23 @@ function prettyName(name) {
 
 function sortEntries(history) {
   const entries = Object.values(history.entries ?? {});
-  entries.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+  entries.sort((a, b) => {
+    const at =
+      typeof a?.timestamp === "string" || typeof a?.timestamp === "number" || typeof a?.timestamp === "bigint"
+        ? String(a.timestamp)
+        : "";
+    const bt =
+      typeof b?.timestamp === "string" || typeof b?.timestamp === "number" || typeof b?.timestamp === "bigint"
+        ? String(b.timestamp)
+        : "";
+    return at.localeCompare(bt);
+  });
   return entries;
 }
 
 function formatValue(value) {
-  if (!Number.isFinite(value)) return String(value);
+  if (typeof value !== "number") return "n/a";
+  if (!Number.isFinite(value)) return value > 0 ? "∞" : value < 0 ? "-∞" : "n/a";
   if (Math.abs(value) >= 1000) return value.toFixed(0);
   if (Math.abs(value) >= 10) return value.toFixed(2);
   return value.toFixed(3);
@@ -162,8 +239,6 @@ function renderDashboard(history) {
     );
   }
 
-  const envHtml = envParts.length ? `<div><strong>Env:</strong> ${envParts.join(" • ")}</div>` : "";
-
   const metricIndex = new Map();
 
   for (const entry of entries) {
@@ -217,38 +292,115 @@ function renderDashboard(history) {
     .sort(sortByMagnitudeDesc)
     .slice(0, 5);
 
-  const renderChangeList = (label, items) => {
-    if (items.length === 0) return "";
-    return `
-      <div class="delta-list">
-        <div class="delta-list-title">${label}</div>
-        <ul>
-          ${items
-            .map(
-              (c) =>
-                `<li><code>${c.id}</code> <span class="delta-text ${c.delta.className}">${c.delta.text}</span></li>`,
-            )
-            .join("")}
-        </ul>
-      </div>
-    `;
+  const buildChangeList = (label, items) => {
+    if (!items.length) return null;
+
+    const wrap = document.createElement("div");
+    wrap.className = "delta-list";
+
+    const title = document.createElement("div");
+    title.className = "delta-list-title";
+    title.textContent = label;
+    wrap.appendChild(title);
+
+    const ul = document.createElement("ul");
+    for (const c of items) {
+      const li = document.createElement("li");
+
+      const code = document.createElement("code");
+      code.textContent = c.id;
+      li.appendChild(code);
+
+      li.appendChild(document.createTextNode(" "));
+
+      const span = document.createElement("span");
+      span.className = `delta-text ${c.delta.className}`;
+      span.textContent = c.delta.text;
+      li.appendChild(span);
+
+      ul.appendChild(li);
+    }
+    wrap.appendChild(ul);
+    return wrap;
   };
 
-  summary.innerHTML = `
-    <div><strong>Runs:</strong> ${entries.length}</div>
-    <div><strong>Schema:</strong> v${history.schemaVersion ?? "?"} • <strong>Updated:</strong> ${history.generatedAt ?? "—"}</div>
-    <div><strong>Latest:</strong> ${latest.timestamp} • <a href="${latest.commit.url}" target="_blank" rel="noreferrer">${latest.commit.sha.slice(0, 7)}</a></div>
-    ${envHtml}
-    ${renderChangeList("Top regressions (vs prev):", topRegressions)}
-    ${renderChangeList("Top improvements (vs prev):", topImprovements)}
-    <div class="links">
-      <a href="./history.json">history.json</a>
-      <a href="./history.md">history.md</a>
-      <a href="./history.schema.json">history.schema.json</a>
-    </div>
-  `;
+  summary.replaceChildren();
 
-  metricsContainer.innerHTML = "";
+  const addSummaryLine = (labelText, valueNodes) => {
+    const div = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = labelText;
+    div.appendChild(strong);
+    div.appendChild(document.createTextNode(" "));
+    for (const node of valueNodes) div.appendChild(node);
+    summary.appendChild(div);
+  };
+
+  addSummaryLine("Runs:", [document.createTextNode(String(entries.length))]);
+
+  const schemaVersion =
+    typeof history?.schemaVersion === "string" || typeof history?.schemaVersion === "number" || typeof history?.schemaVersion === "bigint"
+      ? String(history.schemaVersion)
+      : "?";
+  const updatedAt =
+    typeof history?.generatedAt === "string" || typeof history?.generatedAt === "number" || typeof history?.generatedAt === "bigint"
+      ? String(history.generatedAt)
+      : "—";
+  addSummaryLine("Schema:", [document.createTextNode(`v${schemaVersion} • Updated: ${updatedAt}`)]);
+
+  const latestLine = document.createElement("span");
+  const latestTimestamp =
+    typeof latest?.timestamp === "string" || typeof latest?.timestamp === "number" || typeof latest?.timestamp === "bigint"
+      ? String(latest.timestamp)
+      : "";
+  latestLine.appendChild(document.createTextNode(`${latestTimestamp} • `));
+
+  const latestShaFull = typeof latest?.commit?.sha === "string" ? latest.commit.sha : "";
+  const latestSha = latestShaFull.slice(0, 7);
+  const latestUrlRaw = typeof latest?.commit?.url === "string" ? latest.commit.url : "";
+  let latestHref = "";
+  try {
+    const u = new URL(latestUrlRaw);
+    if (u.protocol === "https:" || u.protocol === "http:") latestHref = u.href;
+  } catch {
+    // ignore invalid URLs
+  }
+  if (latestHref) {
+    const a = document.createElement("a");
+    a.href = latestHref;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    a.textContent = latestSha;
+    latestLine.appendChild(a);
+  } else {
+    latestLine.appendChild(document.createTextNode(latestSha));
+  }
+  addSummaryLine("Latest:", [latestLine]);
+
+  if (envParts.length) {
+    addSummaryLine("Env:", [document.createTextNode(envParts.join(" • "))]);
+  }
+
+  const regressionsEl = buildChangeList("Top regressions (vs prev):", topRegressions);
+  if (regressionsEl) summary.appendChild(regressionsEl);
+  const improvementsEl = buildChangeList("Top improvements (vs prev):", topImprovements);
+  if (improvementsEl) summary.appendChild(improvementsEl);
+
+  const links = document.createElement("div");
+  links.className = "links";
+  for (const { href, text } of [
+    { href: "./history.json", text: "history.json" },
+    { href: "./history.md", text: "history.md" },
+    { href: "./history.schema.json", text: "history.schema.json" },
+  ]) {
+    const a = document.createElement("a");
+    a.href = href;
+    a.textContent = text;
+    links.appendChild(a);
+  }
+  summary.appendChild(links);
+
+  metricsContainer.replaceChildren();
 
   const grouped = new Map();
   for (const metric of metricIndex.values()) {
@@ -260,7 +412,9 @@ function renderDashboard(history) {
   for (const [scenarioName, metrics] of groupedSorted) {
     const section = document.createElement("section");
     section.className = "scenario";
-    section.innerHTML = `<h2>${prettyName(scenarioName)}</h2>`;
+    const h2 = document.createElement("h2");
+    h2.textContent = prettyName(scenarioName);
+    section.appendChild(h2);
 
     metrics.sort((a, b) => a.metricName.localeCompare(b.metricName));
 
@@ -278,16 +432,47 @@ function renderDashboard(history) {
       if (Number.isFinite(last.n)) samplesText.push(`n=${last.n}`);
       if (Number.isFinite(last.cv)) samplesText.push(`CV ${(last.cv * 100).toFixed(2)}%`);
 
-      card.innerHTML = `
-        <div class="metric-header">
-          <div class="metric-title">${prettyName(metric.metricName)} <span class="metric-unit">(${metric.unit}, ${metric.better} is better)</span></div>
-          <div class="metric-latest">
-            <span class="metric-value">${formatValue(last.y)} ${metric.unit}</span>
-            <span class="metric-delta ${delta.className}">${delta.text}</span>
-            ${samplesText.length ? `<span class="metric-samples">${samplesText.join(" • ")}</span>` : ""}
-          </div>
-        </div>
-      `;
+      const header = document.createElement("div");
+      header.className = "metric-header";
+
+      const title = document.createElement("div");
+      title.className = "metric-title";
+      title.appendChild(document.createTextNode(prettyName(metric.metricName)));
+
+      const unitText =
+        typeof metric.unit === "string" || typeof metric.unit === "number" || typeof metric.unit === "bigint"
+          ? String(metric.unit)
+          : "";
+      const betterText = metric.better === "lower" || metric.better === "higher" ? metric.better : "unknown";
+      const unitSpan = document.createElement("span");
+      unitSpan.className = "metric-unit";
+      unitSpan.textContent = `(${unitText}, ${betterText} is better)`;
+      title.appendChild(document.createTextNode(" "));
+      title.appendChild(unitSpan);
+
+      const latestEl = document.createElement("div");
+      latestEl.className = "metric-latest";
+
+      const valueSpan = document.createElement("span");
+      valueSpan.className = "metric-value";
+      valueSpan.textContent = `${formatValue(last.y)}${unitText ? ` ${unitText}` : ""}`;
+      latestEl.appendChild(valueSpan);
+
+      const deltaSpan = document.createElement("span");
+      deltaSpan.className = `metric-delta ${delta.className}`;
+      deltaSpan.textContent = delta.text;
+      latestEl.appendChild(deltaSpan);
+
+      if (samplesText.length) {
+        const samplesSpan = document.createElement("span");
+        samplesSpan.className = "metric-samples";
+        samplesSpan.textContent = samplesText.join(" • ");
+        latestEl.appendChild(samplesSpan);
+      }
+
+      header.appendChild(title);
+      header.appendChild(latestEl);
+      card.appendChild(header);
 
       const chart = createSvgLineChart(
         pts.map((p) => ({
@@ -310,11 +495,41 @@ function renderDashboard(history) {
   }
 
   const runsBody = byId("runs-table").querySelector("tbody");
-  runsBody.innerHTML = "";
+  runsBody.replaceChildren();
   for (const entry of entries.slice().reverse()) {
     const tr = document.createElement("tr");
-    const sha = entry.commit.sha.slice(0, 7);
-    tr.innerHTML = `<td>${entry.timestamp}</td><td><a href="${entry.commit.url}" target="_blank" rel="noreferrer">${sha}</a></td>`;
+    const timestampText =
+      typeof entry?.timestamp === "string" || typeof entry?.timestamp === "number" || typeof entry?.timestamp === "bigint"
+        ? String(entry.timestamp)
+        : "";
+
+    const shaFull = typeof entry?.commit?.sha === "string" ? entry.commit.sha : "";
+    const sha = shaFull.slice(0, 7);
+
+    const tdTs = document.createElement("td");
+    tdTs.textContent = timestampText;
+    tr.appendChild(tdTs);
+
+    const tdCommit = document.createElement("td");
+    const urlRaw = typeof entry?.commit?.url === "string" ? entry.commit.url : "";
+    let href = "";
+    try {
+      const u = new URL(urlRaw);
+      if (u.protocol === "https:" || u.protocol === "http:") href = u.href;
+    } catch {
+      // ignore invalid URLs
+    }
+    if (href) {
+      const a = document.createElement("a");
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.textContent = sha;
+      tdCommit.appendChild(a);
+    } else {
+      tdCommit.textContent = sha;
+    }
+    tr.appendChild(tdCommit);
     runsBody.appendChild(tr);
   }
 }
@@ -331,7 +546,7 @@ async function main() {
     renderDashboard(history);
   } catch (err) {
     const status = byId("status");
-    status.textContent = err instanceof Error ? err.message : String(err);
+    status.textContent = formatOneLineError(err, 512);
     status.classList.add("error");
   }
 }
