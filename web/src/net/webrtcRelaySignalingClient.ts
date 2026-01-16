@@ -26,6 +26,14 @@ const DEFAULT_SIGNALING_ANSWER_TIMEOUT_MS = 10_000;
 // pathological allocations if a relay/gateway is misconfigured or attacker-controlled.
 const MAX_SIGNALING_RESPONSE_BYTES = 1024 * 1024; // 1 MiB
 
+function sanitizeSignalingErrorCode(code: string): string {
+  const trimmed = code.trim();
+  if (!trimmed) return "unknown";
+  // Keep error strings short and token-ish to avoid reflecting arbitrary server text.
+  const safe = trimmed.replace(/[^A-Za-z0-9._-]/g, "_");
+  return safe.length > 64 ? safe.slice(0, 64) : safe;
+}
+
 export async function connectRelaySignaling(
   opts: ConnectRelaySignalingOptions,
   createDataChannel: (pc: RTCPeerConnection) => RTCDataChannel,
@@ -586,7 +594,8 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
           break;
         case "error":
           if (!haveAnswer) {
-            settleAnswer(new Error(`signaling error (${msg.code}): ${msg.message}`));
+            // Do not reflect server-provided error messages into user-visible errors.
+            settleAnswer(new Error(`signaling error (${sanitizeSignalingErrorCode(msg.code)})`));
           } else {
             pc.close();
           }
@@ -611,7 +620,8 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     const onClose = (evt: CloseEvent) => {
       if (currentAttempt !== attemptId) return;
       if (!haveAnswer) {
-        settleAnswer(new Error(`signaling websocket closed (${evt.code}): ${evt.reason}`));
+        // Close reasons are server-controlled; do not reflect them in user-visible errors.
+        settleAnswer(new Error(`signaling websocket closed (${evt.code})`));
         return;
       }
       pc.close();
