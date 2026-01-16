@@ -8,10 +8,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
-function basename(p) {
-  return p.split("/").pop() ?? p;
-}
-
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -131,7 +127,7 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
   }
 
   const files = all
-    .filter((p) => basename(p) !== basename(__filename))
+    .filter((p) => path.basename(p) !== path.basename(__filename))
     .map((p) => path.relative(repoRoot, p))
     .sort();
 
