@@ -47,6 +47,7 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { stat
         headers: {
           "Content-Length": String(data.byteLength),
           "Accept-Ranges": "bytes",
+          "Cache-Control": "no-transform",
           ETag: opts.etag,
         },
       });
@@ -59,6 +60,7 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { stat
         headers: {
           "Content-Length": String(data.byteLength),
           "Accept-Ranges": "bytes",
+          "Cache-Control": "no-transform",
           ETag: opts.etag,
         },
       });
@@ -81,6 +83,7 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { stat
         "Accept-Ranges": "bytes",
         "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
         "Content-Length": String(body.byteLength),
+        "Cache-Control": "no-transform",
         ETag: opts.etag,
       },
     });
@@ -138,27 +141,28 @@ test("RemoteStreamingDisk (OPFS cache)", async (t) => {
       prefetchSequentialBlocks: 0,
       credentials: "omit",
     });
+    const base = mock.stats.chunkRangeCalls;
 
     // Cache blocks 0 and 1.
     await disk.read(0, 1);
     await disk.read(blockSize, 1);
-    assert.equal(mock.stats.chunkRangeCalls, 2);
+    assert.equal(mock.stats.chunkRangeCalls, base + 2);
 
     // Touch block 0 so block 1 becomes LRU.
     await disk.read(0, 1);
-    assert.equal(mock.stats.chunkRangeCalls, 2);
+    assert.equal(mock.stats.chunkRangeCalls, base + 2);
 
     // Fetch block 2; should evict block 1.
     await disk.read(blockSize * 2, 1);
-    assert.equal(mock.stats.chunkRangeCalls, 3);
+    assert.equal(mock.stats.chunkRangeCalls, base + 3);
 
     // Block 0 should still be cached.
     await disk.read(0, 1);
-    assert.equal(mock.stats.chunkRangeCalls, 3);
+    assert.equal(mock.stats.chunkRangeCalls, base + 3);
 
     // Block 1 should have been evicted and will be refetched.
     await disk.read(blockSize, 1);
-    assert.equal(mock.stats.chunkRangeCalls, 4);
+    assert.equal(mock.stats.chunkRangeCalls, base + 4);
 
     await disk.close();
     mock.restore();

@@ -6,6 +6,11 @@ const HEADER_TAIL_I32 = 1;
 const HEADER_CAPACITY_I32 = 2;
 const HEADER_STRIDE_I32 = 3;
 
+// When callers request an "infinite" blocking push/pop, do not use an unbounded Atomics.wait().
+// A finite slice prevents hangs if a notify is missed and makes shutdown/termination more reliable
+// across runtimes (Node/browsers) and versions.
+const DEFAULT_BLOCKING_WAIT_SLICE_MS = 1000;
+
 function canBlockAtomicsWait(): boolean {
   // Browser main thread disallows Atomics.wait; workers and Node allow it.
   // There's no perfect feature test; this is conservative and matches the
@@ -136,7 +141,7 @@ export class SharedRingBuffer {
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       if (deadline !== undefined && now >= deadline) return false;
 
-      const remaining = deadline === undefined ? undefined : Math.max(0, deadline - now);
+      const remaining = deadline === undefined ? DEFAULT_BLOCKING_WAIT_SLICE_MS : Math.max(0, deadline - now);
       Atomics.wait(this.header, HEADER_TAIL_I32, tail, remaining);
     }
   }
@@ -193,7 +198,7 @@ export class SharedRingBuffer {
 
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       if (deadline !== undefined && now >= deadline) return false;
-      const remaining = deadline === undefined ? undefined : Math.max(0, deadline - now);
+      const remaining = deadline === undefined ? DEFAULT_BLOCKING_WAIT_SLICE_MS : Math.max(0, deadline - now);
       Atomics.wait(this.header, HEADER_HEAD_I32, head, remaining);
     }
   }

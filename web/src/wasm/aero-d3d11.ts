@@ -26,6 +26,7 @@ function detectThreadSupport(): ThreadSupport {
 type RawAeroD3d11WasmModule = any;
 
 const wasmImporters = import.meta.glob("./pkg-*/aero_d3d11_wasm.js");
+const IS_DEV = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
 let loaded: RawAeroD3d11WasmModule | null = null;
 
@@ -42,7 +43,7 @@ async function loadVariant(variant: WasmVariant): Promise<RawAeroD3d11WasmModule
 
   const importer = wasmImporters[releasePath] ?? wasmImporters[devPath];
   if (!importer) {
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
       const tryDynamicImport = async (path: string): Promise<RawAeroD3d11WasmModule | null> => {
         try {
           return (await import(/* @vite-ignore */ path)) as RawAeroD3d11WasmModule;

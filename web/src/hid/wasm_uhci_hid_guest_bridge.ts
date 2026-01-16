@@ -186,7 +186,10 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const detail =
-        import.meta.env.DEV && err instanceof Error && typeof err.stack === "string" && err.stack.length
+        (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true &&
+        err instanceof Error &&
+        typeof err.stack === "string" &&
+        err.stack.length
           ? `${message}\n${err.stack}`
           : message;
       this.#host.error(`UHCI runtime hid.attach failed: ${detail}`, msg.deviceId);

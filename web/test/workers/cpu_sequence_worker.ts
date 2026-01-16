@@ -2,6 +2,14 @@ import { parentPort, workerData } from "node:worker_threads";
 import { IoClient } from "../../src/io/ipc/io_client.ts";
 import { SharedRingBuffer } from "../../src/io/ipc/ring_buffer.ts";
 
+// Allow tests to request a clean shutdown (defense-in-depth against hanging workers).
+parentPort?.on("message", (msg) => {
+  if (!msg || typeof msg !== "object") return;
+  if (!("type" in msg)) return;
+  if ((msg as { type?: unknown }).type !== "shutdown") return;
+  process.exit(0);
+});
+
 const req = SharedRingBuffer.from(workerData.requestRing as SharedArrayBuffer);
 const resp = SharedRingBuffer.from(workerData.responseRing as SharedArrayBuffer);
 
@@ -49,6 +57,8 @@ try {
       a20Events,
       resetRequests,
     });
+    parentPort!.close();
+    process.exit(0);
   } else if (workerData.scenario === "i8042_output_port") {
     // Write output port: enable A20 (bit1) while keeping reset deasserted (bit0=1).
     io.portWrite(0x64, 1, 0xd1);
@@ -75,6 +85,8 @@ try {
       resetRequests,
       irqEvents,
     });
+    parentPort!.close();
+    process.exit(0);
   } else if (workerData.scenario === "pci_test") {
     // Read vendor/device id dword.
     io.portWrite(0x0cf8, 4, 0x8000_0000);
@@ -139,6 +151,8 @@ try {
       mmioReadback,
       irqEvents,
     });
+    parentPort!.close();
+    process.exit(0);
   } else if (workerData.scenario === "uart16550") {
     const lsrBefore = io.portRead(0x3f8 + 5, 1);
     io.portWrite(0x3f8, 1, "H".charCodeAt(0));
@@ -152,9 +166,15 @@ try {
       serialBytes,
       irqEvents,
     });
+    parentPort!.close();
+    process.exit(0);
   } else {
     parentPort!.postMessage({ ok: false, error: `unknown scenario: ${workerData.scenario}` });
+    parentPort!.close();
+    process.exit(1);
   }
 } catch (err) {
   parentPort!.postMessage({ ok: false, error: String(err), irqEvents });
+  parentPort!.close();
+  process.exit(1);
 }

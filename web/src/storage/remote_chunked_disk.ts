@@ -19,6 +19,13 @@ import {
   fetchWithDiskAccessLeaseForUrl,
   type DiskAccessLease,
 } from "./disk_access_lease";
+import {
+  MAX_CACHE_CONTROL_HEADER_VALUE_LEN,
+  MAX_CONTENT_ENCODING_HEADER_VALUE_LEN,
+  commaSeparatedTokenListHasToken,
+  contentEncodingIsIdentity,
+  formatHeaderValueForError,
+} from "./http_headers";
 
 /**
  * Defensive bounds to avoid pathological allocations / fetch buffers when handling untrusted
@@ -264,7 +271,11 @@ function rangesEqual(a: ByteRange[], b: ByteRange[]): boolean {
 }
 
 class StoreFile implements RemoteCacheFile {
-  constructor(private readonly data: Uint8Array) {}
+  private readonly data: Uint8Array;
+
+  constructor(data: Uint8Array) {
+    this.data = data;
+  }
 
   get size(): number {
     return this.data.byteLength;
@@ -282,12 +293,16 @@ class StoreFile implements RemoteCacheFile {
 class StoreWritable implements RemoteCacheWritableFileStream {
   private readonly chunks: Uint8Array[] = [];
   private closed = false;
+  private readonly store: BinaryStore;
+  private readonly path: string;
 
   constructor(
-    private readonly store: BinaryStore,
-    private readonly path: string,
+    store: BinaryStore,
+    path: string,
     baseData?: Uint8Array,
   ) {
+    this.store = store;
+    this.path = path;
     if (baseData && baseData.byteLength > 0) {
       this.chunks.push(baseData);
     }
@@ -317,10 +332,13 @@ class StoreWritable implements RemoteCacheWritableFileStream {
 }
 
 class StoreFileHandle implements RemoteCacheFileHandle {
-  constructor(
-    private readonly store: BinaryStore,
-    private readonly path: string,
-  ) {}
+  private readonly store: BinaryStore;
+  private readonly path: string;
+
+  constructor(store: BinaryStore, path: string) {
+    this.store = store;
+    this.path = path;
+  }
 
   async getFile(): Promise<RemoteCacheFile> {
     const bytes = await this.store.read(this.path);
@@ -338,10 +356,13 @@ class StoreFileHandle implements RemoteCacheFileHandle {
 }
 
 class StoreDirHandle implements RemoteCacheDirectoryHandle {
-  constructor(
-    private readonly store: BinaryStore,
-    private readonly prefix: string,
-  ) {}
+  private readonly store: BinaryStore;
+  private readonly prefix: string;
+
+  constructor(store: BinaryStore, prefix: string) {
+    this.store = store;
+    this.prefix = prefix;
+  }
 
   async getDirectoryHandle(name: string, _options?: { create?: boolean }): Promise<RemoteCacheDirectoryHandle> {
     return new StoreDirHandle(this.store, joinOpfsPath(this.prefix, name));
@@ -409,12 +430,16 @@ class NoopChunkCache implements ChunkCache {
 class IdbChunkCache implements ChunkCache {
   private cachedBytes: number;
   private readonly cacheLimitBytes: number | null;
+  private readonly cache: IdbRemoteChunkCache;
+  private readonly manifest: ParsedChunkedDiskManifest;
 
   constructor(
-    private readonly cache: IdbRemoteChunkCache,
-    private readonly manifest: ParsedChunkedDiskManifest,
+    cache: IdbRemoteChunkCache,
+    manifest: ParsedChunkedDiskManifest,
     initialStatus: { bytesUsed: number; cacheLimitBytes: number | null },
   ) {
+    this.cache = cache;
+    this.manifest = manifest;
     this.cachedBytes = initialStatus.bytesUsed;
     this.cacheLimitBytes = initialStatus.cacheLimitBytes;
   }
@@ -513,11 +538,14 @@ class Semaphore {
 
 class ChunkFetchError extends Error {
   override name = "ChunkFetchError";
+  readonly status: number;
+
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
   ) {
     super(message);
+    this.status = status;
   }
 }
 
@@ -532,9 +560,11 @@ class ProtocolError extends Error {
 function assertIdentityContentEncoding(headers: Headers, label: string): void {
   const raw = headers.get("content-encoding");
   if (!raw) return;
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized || normalized === "identity") return;
-  throw new ProtocolError(`${label} unexpected Content-Encoding: ${raw}`);
+  if (raw.length > MAX_CONTENT_ENCODING_HEADER_VALUE_LEN) {
+    throw new ProtocolError(`${label} unexpected Content-Encoding (too long)`);
+  }
+  if (contentEncodingIsIdentity(raw, { maxLen: MAX_CONTENT_ENCODING_HEADER_VALUE_LEN })) return;
+  throw new ProtocolError(`${label} unexpected Content-Encoding: ${formatHeaderValueForError(raw)}`);
 }
 
 function assertNoTransformCacheControl(headers: Headers, label: string): void {
@@ -547,12 +577,11 @@ function assertNoTransformCacheControl(headers: Headers, label: string): void {
   if (!raw) {
     throw new ProtocolError(`${label} missing Cache-Control header (expected include 'no-transform')`);
   }
-  const tokens = raw
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-  if (!tokens.includes("no-transform")) {
-    throw new ProtocolError(`${label} Cache-Control missing no-transform: ${raw}`);
+  if (raw.length > MAX_CACHE_CONTROL_HEADER_VALUE_LEN) {
+    throw new ProtocolError(`${label} Cache-Control too long`);
+  }
+  if (!commaSeparatedTokenListHasToken(raw, "no-transform", { maxLen: MAX_CACHE_CONTROL_HEADER_VALUE_LEN })) {
+    throw new ProtocolError(`${label} Cache-Control missing no-transform: ${formatHeaderValueForError(raw)}`);
   }
 }
 
@@ -808,6 +837,13 @@ async function retryWithBackoff<T>(
 }
 
 class RemoteChunkCache implements ChunkCache {
+  private readonly store: BinaryStore;
+  private readonly manager: RemoteCacheManager;
+  private readonly cacheKey: string;
+  private readonly cacheKeyParts: RemoteCacheKeyParts;
+  private readonly validators: { sizeBytes: number; etag: string | null; lastModified: string | null };
+  private readonly manifest: ParsedChunkedDiskManifest;
+  private readonly cacheLimitBytes: number | null;
   private meta: RemoteChunkedDiskCacheMeta;
   private rangeSet = new RangeSet();
   private metaWriteChain: Promise<void> = Promise.resolve();
@@ -820,15 +856,22 @@ class RemoteChunkCache implements ChunkCache {
   private initOnce: Promise<void> | null = null;
 
   constructor(
-    private readonly store: BinaryStore,
-    private readonly manager: RemoteCacheManager,
-    private readonly cacheKey: string,
-    private readonly cacheKeyParts: RemoteCacheKeyParts,
-    private readonly validators: { sizeBytes: number; etag: string | null; lastModified: string | null },
-    private readonly manifest: ParsedChunkedDiskManifest,
-    private readonly cacheLimitBytes: number | null,
+    store: BinaryStore,
+    manager: RemoteCacheManager,
+    cacheKey: string,
+    cacheKeyParts: RemoteCacheKeyParts,
+    validators: { sizeBytes: number; etag: string | null; lastModified: string | null },
+    manifest: ParsedChunkedDiskManifest,
+    cacheLimitBytes: number | null,
     meta: RemoteChunkedDiskCacheMeta,
   ) {
+    this.store = store;
+    this.manager = manager;
+    this.cacheKey = cacheKey;
+    this.cacheKeyParts = cacheKeyParts;
+    this.validators = validators;
+    this.manifest = manifest;
+    this.cacheLimitBytes = cacheLimitBytes;
     this.meta = meta;
     this.meta.accessCounter ??= 0;
     this.meta.chunkLastAccess ??= emptyChunkLastAccessMap();

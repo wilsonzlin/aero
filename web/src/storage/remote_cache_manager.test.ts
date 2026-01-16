@@ -69,7 +69,11 @@ class MemWritable implements RemoteCacheWritableFileStream {
 }
 
 class MemFileHandle implements RemoteCacheFileHandle {
-  constructor(private readonly file: MemFile) {}
+  private readonly file: MemFile;
+
+  constructor(file: MemFile) {
+    this.file = file;
+  }
 
   async getFile(): Promise<RemoteCacheFile> {
     return this.file;

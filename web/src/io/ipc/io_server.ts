@@ -20,6 +20,8 @@ import {
 } from "../irq_refcount.ts";
 import type { IrqSink } from "../device_manager.ts";
 
+const IS_DEV = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
+
 export interface IoDispatchTarget {
   portRead(port: number, size: number): number;
   portWrite(port: number, size: number, value: number): void;
@@ -63,7 +65,7 @@ export class IoServer implements IrqSink {
     const idx = irq & 0xff;
     const flags = applyIrqRefCountChange(this.#irqRefCounts, idx, true);
     if (flags & IRQ_REFCOUNT_ASSERT) this.#sendIrq(IO_OP_IRQ_RAISE, idx);
-    if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && this.#irqWarnedSaturated[idx] === 0) {
+    if (IS_DEV && (flags & IRQ_REFCOUNT_SATURATED) && this.#irqWarnedSaturated[idx] === 0) {
       this.#irqWarnedSaturated[idx] = 1;
       console.warn(`[io_server] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
     }
@@ -73,7 +75,7 @@ export class IoServer implements IrqSink {
     const idx = irq & 0xff;
     const flags = applyIrqRefCountChange(this.#irqRefCounts, idx, false);
     if (flags & IRQ_REFCOUNT_DEASSERT) this.#sendIrq(IO_OP_IRQ_LOWER, idx);
-    if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && this.#irqWarnedUnderflow[idx] === 0) {
+    if (IS_DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && this.#irqWarnedUnderflow[idx] === 0) {
       this.#irqWarnedUnderflow[idx] = 1;
       console.warn(`[io_server] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
     }
@@ -97,10 +99,11 @@ export class IoServer implements IrqSink {
    * It uses Atomics.wait() for efficient blocking when idle, while still
    * calling `tick()` periodically for time-based device progress.
    */
-  run(): never {
+  run(stopSignal?: Int32Array): void {
     let nextTickAt = (typeof performance !== "undefined" ? performance.now() : Date.now()) + this.#tickIntervalMs;
 
     while (true) {
+      if (stopSignal && Atomics.load(stopSignal, 0) !== 0) return;
       // Fast path: drain requests without waiting.
       const got = this.#req.popInto(this.#rx);
       if (got) {

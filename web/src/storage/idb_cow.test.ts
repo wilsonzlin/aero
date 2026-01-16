@@ -11,7 +11,10 @@ class MemoryReadOnlyDisk implements AsyncSectorDisk {
   readonly capacityBytes: number;
   readCalls = 0;
 
-  constructor(private readonly bytes: Uint8Array) {
+  private readonly bytes: Uint8Array;
+
+  constructor(bytes: Uint8Array) {
+    this.bytes = bytes;
     this.capacityBytes = bytes.byteLength;
   }
 

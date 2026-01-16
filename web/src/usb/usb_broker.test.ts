@@ -24,8 +24,11 @@ function restoreNavigator(): void {
 }
 
 class FakeUsb extends EventTarget {
-  constructor(private readonly device: USBDevice) {
+  private readonly device: USBDevice;
+
+  constructor(device: USBDevice) {
     super();
+    this.device = device;
   }
 
   async requestDevice(): Promise<USBDevice> {
@@ -41,8 +44,11 @@ class FakeUsb extends EventTarget {
 
 class FakeUsbSequence extends EventTarget {
   private nextIndex = 0;
-  constructor(private readonly devices: USBDevice[]) {
+  private readonly devices: USBDevice[];
+
+  constructor(devices: USBDevice[]) {
     super();
+    this.devices = devices;
   }
 
   async requestDevice(): Promise<USBDevice> {

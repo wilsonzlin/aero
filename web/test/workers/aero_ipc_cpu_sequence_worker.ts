@@ -50,6 +50,8 @@ try {
       a20Events,
       resetRequests,
     });
+    parentPort!.close();
+    process.exit(0);
   } else if (scenario === "i8042_output_port") {
     io.portWrite(0x64, 1, 0xd1);
     io.portWrite(0x60, 1, 0x03);
@@ -72,6 +74,8 @@ try {
       resetRequests,
       irqEvents,
     });
+    parentPort!.close();
+    process.exit(0);
   } else if (scenario === "pci_test") {
     io.portWrite(0x0cf8, 4, 0x8000_0000);
     const idDword = io.portRead(0x0cfc, 4);
@@ -88,6 +92,8 @@ try {
     const mmioReadback = io.mmioRead(base + 0n, 4);
 
     parentPort!.postMessage({ ok: true, idDword, bar0, mmioReadback, irqEvents });
+    parentPort!.close();
+    process.exit(0);
   } else if (scenario === "uart16550") {
     const lsrBefore = io.portRead(0x3f8 + 5, 1);
     io.portWrite(0x3f8, 1, "H".charCodeAt(0));
@@ -101,9 +107,15 @@ try {
       serialBytes,
       irqEvents,
     });
+    parentPort!.close();
+    process.exit(0);
   } else {
     parentPort!.postMessage({ ok: false, error: `unknown scenario: ${scenario}`, irqEvents });
+    parentPort!.close();
+    process.exit(1);
   }
 } catch (err) {
   parentPort!.postMessage({ ok: false, error: String(err), irqEvents });
+  parentPort!.close();
+  process.exit(1);
 }

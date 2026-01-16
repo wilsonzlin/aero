@@ -178,7 +178,11 @@ export class MemoryDirectoryHandle {
   private readonly dirs = new Map<string, MemoryDirectoryHandle>();
   private readonly files = new Map<string, MemoryFileHandle>();
 
-  constructor(readonly name: string) {}
+  readonly name: string;
+
+  constructor(name: string) {
+    this.name = name;
+  }
 
   async getDirectoryHandle(name: string, options: { create?: boolean } = {}): Promise<MemoryDirectoryHandle> {
     const existing = this.dirs.get(name);

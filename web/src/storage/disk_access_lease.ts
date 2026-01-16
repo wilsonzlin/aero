@@ -302,7 +302,8 @@ async function fetchStreamLease(endpoint: string, fetchFn: typeof fetch): Promis
   if (parsedEndpoint && base) {
     const origin = new URL(base).origin;
     if (parsedEndpoint.origin !== origin) {
-      throw new Error(`leaseEndpoint must be same-origin (got ${parsedEndpoint.origin}, expected ${origin})`);
+      // Keep error messages stable; do not reflect attacker-controlled origins.
+      throw new Error("leaseEndpoint must be same-origin");
     }
   }
 

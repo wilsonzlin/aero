@@ -2,9 +2,15 @@ import http from "node:http";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatOneLineUtf8 } from "../../src/text.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
+const MAX_ERROR_BODY_BYTES = 512;
+
+function safeTextBody(message) {
+  return formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || "Error";
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +34,15 @@ function withSABHeaders(res) {
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
 }
 
+function safeResolve(rootDir, requestPath) {
+  const rootResolved = path.resolve(rootDir);
+  const resolved = path.resolve(rootResolved, `.${requestPath}`);
+  if (!resolved.startsWith(rootResolved + path.sep) && resolved !== rootResolved) {
+    return null;
+  }
+  return resolved;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     withSABHeaders(res);
@@ -35,19 +50,26 @@ const server = http.createServer(async (req, res) => {
     const rawUrl = req.url ?? "/";
     if (typeof rawUrl !== "string") {
       res.writeHead(400);
-      res.end("Bad Request");
+      res.end(safeTextBody("Bad Request"));
       return;
     }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       res.writeHead(414);
-      res.end("URI Too Long");
+      res.end(safeTextBody("URI Too Long"));
       return;
     }
 
-    const url = new URL(rawUrl, "http://localhost");
+    let url;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      res.writeHead(400);
+      res.end(safeTextBody("Bad Request"));
+      return;
+    }
     if (url.pathname.length > MAX_PATHNAME_LEN) {
       res.writeHead(414);
-      res.end("URI Too Long");
+      res.end(safeTextBody("URI Too Long"));
       return;
     }
 
@@ -56,15 +78,25 @@ const server = http.createServer(async (req, res) => {
       decodedPath = decodeURIComponent(url.pathname);
     } catch {
       res.writeHead(400);
-      res.end("Bad Request");
+      res.end(safeTextBody("Bad Request"));
+      return;
+    }
+    if (decodedPath.length > MAX_PATHNAME_LEN) {
+      res.writeHead(414);
+      res.end(safeTextBody("URI Too Long"));
+      return;
+    }
+    if (decodedPath.includes("\0")) {
+      res.writeHead(400);
+      res.end(safeTextBody("Bad Request"));
       return;
     }
 
     // Serve from repo root, but prevent directory traversal.
-    let filePath = path.normalize(path.join(repoRoot, decodedPath));
-    if (!filePath.startsWith(repoRoot)) {
+    let filePath = safeResolve(repoRoot, decodedPath);
+    if (!filePath) {
       res.writeHead(403);
-      res.end("Forbidden");
+      res.end(safeTextBody("Forbidden"));
       return;
     }
 
@@ -78,7 +110,7 @@ const server = http.createServer(async (req, res) => {
     res.end(data);
   } catch (err) {
     res.writeHead(404);
-    res.end("Not Found");
+    res.end(safeTextBody("Not Found"));
   }
 });
 

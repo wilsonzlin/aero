@@ -6,6 +6,48 @@ const path = require('path');
 // modules in the browser. Transpile `.ts`/`.tsx` on the fly using esbuild.
 const esbuild = require('esbuild');
 
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+const MAX_ERROR_BODY_BYTES = 512;
+
+function sanitizeOneLine(input) {
+  let out = '';
+  let pendingSpace = false;
+  for (const ch of String(input ?? '')) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) {
+      pendingSpace = out.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      out += ' ';
+      pendingSpace = false;
+    }
+    out += ch;
+  }
+  return out.trim();
+}
+
+function truncateUtf8(input, maxBytes) {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
+  const s = String(input ?? '');
+  const buf = Buffer.from(s, 'utf8');
+  if (buf.length <= maxBytes) return s;
+  let cut = maxBytes;
+  while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut -= 1;
+  if (cut <= 0) return '';
+  return buf.subarray(0, cut).toString('utf8');
+}
+
+function formatOneLineUtf8(input, maxBytes) {
+  return truncateUtf8(sanitizeOneLine(input), maxBytes);
+}
+
+function safeTextBody(message) {
+  return formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || 'Error';
+}
+
 function parseArgs(argv) {
   const out = { host: '127.0.0.1', port: 4173 };
   for (let i = 2; i < argv.length; i++) {
@@ -110,13 +152,58 @@ async function transpileTs(absPath) {
 
 const server = http.createServer((req, res) => {
   (async () => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? host}`);
-    const rawPath = url.pathname === '/' ? '/index.html' : url.pathname;
+    const rawUrl = req.url ?? '/';
+    if (typeof rawUrl !== 'string') {
+      res.writeHead(400);
+      res.end(safeTextBody('Bad Request'));
+      return;
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      res.writeHead(414);
+      res.end(safeTextBody('URI Too Long'));
+      return;
+    }
+
+    let url;
+    try {
+      // Base URL is only used to parse the request target; avoid tying it to the listen host.
+      url = new URL(rawUrl, 'http://localhost');
+    } catch {
+      res.writeHead(400);
+      res.end(safeTextBody('Bad Request'));
+      return;
+    }
+    if (url.pathname.length > MAX_PATHNAME_LEN) {
+      res.writeHead(414);
+      res.end(safeTextBody('URI Too Long'));
+      return;
+    }
+
+    let pathname;
+    try {
+      pathname = decodeURIComponent(url.pathname);
+    } catch {
+      res.writeHead(400);
+      res.end(safeTextBody('Bad Request'));
+      return;
+    }
+    if (pathname.length > MAX_PATHNAME_LEN) {
+      res.writeHead(414);
+      res.end(safeTextBody('URI Too Long'));
+      return;
+    }
+    if (pathname.includes('\0')) {
+      res.writeHead(400);
+      res.end(safeTextBody('Bad Request'));
+      return;
+    }
+
+    const rawPath = pathname === '/' ? '/index.html' : pathname;
 
     const absPath = resolveRequestPath(rawPath);
     if (!absPath) {
       res.writeHead(404);
-      res.end('Not found');
+      res.end(safeTextBody('Not found'));
       return;
     }
 
@@ -149,7 +236,10 @@ const server = http.createServer((req, res) => {
     res.end(data);
   })().catch((err) => {
     res.writeHead(500);
-    res.end(`Internal server error: ${err instanceof Error ? err.message : String(err)}`);
+    // Avoid echoing internal error details back to the client.
+    // eslint-disable-next-line no-console
+    console.error(err?.stack || err);
+    res.end(safeTextBody("Internal server error"));
   });
 });
 

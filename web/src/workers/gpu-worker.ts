@@ -48,6 +48,43 @@ import {
 } from "../ipc/gpu-protocol";
 
 import { linearizeSrgbRgba8InPlace } from "../utils/srgb";
+import { formatOneLineUtf8, truncateUtf8 } from "../text";
+
+const MAX_UI_ERROR_NAME_BYTES = 128;
+const MAX_UI_ERROR_MESSAGE_BYTES = 512;
+const MAX_UI_ERROR_STACK_BYTES = 8 * 1024;
+const MAX_GPU_ERROR_SCAN_BYTES = 2048;
+
+function formatUiErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return formatOneLineUtf8(raw, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+}
+
+function serializeUiErrorDetails(err: unknown): unknown {
+  if (err instanceof Error) {
+    const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || "Error";
+    const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined;
+    return { name, message, ...(stack ? { stack } : {}) };
+  }
+  return formatUiErrorMessage(err);
+}
+
+function serializeUiErrorCause(cause: unknown): unknown {
+  if (cause instanceof Error) return serializeUiErrorDetails(cause);
+  if (!cause || typeof cause !== "object") return undefined;
+  const rec = cause as Record<string, unknown>;
+  const messageRaw = rec["message"];
+  if (typeof messageRaw !== "string") return undefined;
+  const nameRaw = rec["name"];
+  const name = typeof nameRaw === "string" ? nameRaw : "Error";
+  const stackRaw = rec["stack"];
+  const stack = typeof stackRaw === "string" ? stackRaw : undefined;
+  const message = formatOneLineUtf8(messageRaw, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+  const safeName = formatOneLineUtf8(name, MAX_UI_ERROR_NAME_BYTES) || "Error";
+  const safeStack = stack ? truncateUtf8(stack, MAX_UI_ERROR_STACK_BYTES) : undefined;
+  return { name: safeName, message, ...(safeStack ? { stack: safeStack } : {}) };
+}
 
 import {
   dirtyTilesToRects,
@@ -1856,6 +1893,22 @@ function trySnapshotScanoutState(): ScanoutStateSnapshot | null {
   }
 }
 
+function serializeErrorForPostMessage(err: Error): { name: string; message: string; stack?: string; cause?: unknown } {
+  const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || "Error";
+  const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+  const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined;
+  const cause = (err as Error & { cause?: unknown }).cause;
+  return { name, message, ...(stack ? { stack } : {}), ...(cause === undefined ? {} : { cause: sanitizeForPostMessage(cause) }) };
+}
+
+function serializePresenterErrorForPostMessage(
+  err: PresenterError,
+): { name: string; code: string; message: string; stack?: string; cause?: unknown } {
+  const base = serializeErrorForPostMessage(err);
+  const code = formatOneLineUtf8(err.code, MAX_UI_ERROR_NAME_BYTES) || "unknown";
+  return { ...base, code };
+}
+
 function sanitizeForPostMessage(value: unknown): unknown {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -1866,25 +1919,10 @@ function sanitizeForPostMessage(value: unknown): unknown {
   // Errors are not consistently structured-cloneable across browsers. Convert them to plain objects so
   // telemetry/event reporting cannot crash the worker with a DataCloneError.
   if (value instanceof PresenterError) {
-    return {
-      name: value.name,
-      code: value.code,
-      message: value.message,
-      stack: value.stack,
-      // Preserve the underlying error cause when present. This is extremely useful for debugging
-      // (e.g. WebAssembly traps, WebGPU validation errors) and is safe because we sanitize it
-      // recursively into a structured-cloneable shape.
-      ...(value.cause === undefined ? {} : { cause: sanitizeForPostMessage(value.cause) }),
-    };
+    return serializePresenterErrorForPostMessage(value);
   }
   if (value instanceof Error) {
-    const cause = (value as unknown as { cause?: unknown }).cause;
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-      ...(cause === undefined ? {} : { cause: sanitizeForPostMessage(cause) }),
-    };
+    return serializeErrorForPostMessage(value);
   }
 
   // Try the platform structured-clone implementation first (handles ArrayBuffer, Map, Set, etc).
@@ -1902,10 +1940,10 @@ function sanitizeForPostMessage(value: unknown): unknown {
       JSON.stringify(value, (_key, v) => {
         if (typeof v === "bigint") return v.toString();
         if (v instanceof PresenterError) {
-          return { name: v.name, code: v.code, message: v.message, stack: v.stack };
+          return serializePresenterErrorForPostMessage(v);
         }
         if (v instanceof Error) {
-          return { name: v.name, message: v.message, stack: v.stack };
+          return serializeErrorForPostMessage(v);
         }
         return v as unknown;
       }),
@@ -2655,7 +2693,7 @@ async function attemptRecovery(reason: string): Promise<void> {
         severity: "fatal",
         category: "DeviceLost",
         message: "GPU recovery failed",
-        details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+        details: serializeUiErrorDetails(err),
       });
       postFatalError(err);
     })
@@ -2668,12 +2706,13 @@ async function attemptRecovery(reason: string): Promise<void> {
 
 function postFatalError(err: unknown): void {
   if (err instanceof PresenterError) {
-    postToMain({ type: "error", message: err.message, code: err.code, backend: presenter?.backend });
-    postRuntimeError(err.message);
+    const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+    postToMain({ type: "error", message, code: err.code, backend: presenter?.backend });
+    postRuntimeError(message);
     return;
   }
 
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatUiErrorMessage(err);
   postToMain({ type: "error", message, backend: presenter?.backend });
   postRuntimeError(message);
 }
@@ -2683,7 +2722,7 @@ const sendError = (err: unknown) => {
   if (deviceLostCode) {
     const startRecovery = deviceLostCode !== "webgl_context_lost";
     handleDeviceLost(
-      err instanceof Error ? err.message : String(err),
+      formatUiErrorMessage(err),
       { source: "exception", code: deviceLostCode, error: err },
       startRecovery,
     );
@@ -3376,8 +3415,8 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
           backend_kind: backendKindForEvent(),
           severity: "warn",
           category: "AerogpuInit",
-          message: err instanceof Error ? err.message : String(err),
-          details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+          message: formatUiErrorMessage(err),
+          details: serializeUiErrorDetails(err),
         });
         runCpu();
       }
@@ -3593,7 +3632,7 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
   if (deviceLostCode) {
     const startRecovery = deviceLostCode !== "webgl_context_lost";
     handleDeviceLost(
-      err instanceof Error ? err.message : String(err),
+      formatUiErrorMessage(err),
       { source: "presenter", backend, code: deviceLostCode, error: err },
       startRecovery,
     );
@@ -3615,7 +3654,10 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
     const cause = err.cause as unknown as { name?: unknown; message?: unknown } | null;
     const causeNameRaw = typeof cause?.name === "string" ? cause.name : "";
     const causeMessageRaw = typeof cause?.message === "string" ? cause.message : "";
-    const haystack = `${causeNameRaw} ${causeMessageRaw} ${err.message}`.toLowerCase();
+    const causeName = formatOneLineUtf8(causeNameRaw, MAX_UI_ERROR_NAME_BYTES) || "";
+    const causeMessage = formatOneLineUtf8(causeMessageRaw, MAX_UI_ERROR_MESSAGE_BYTES) || "";
+    const errMessageForScan = truncateUtf8(err.message, MAX_GPU_ERROR_SCAN_BYTES);
+    const haystack = `${causeName} ${causeMessage} ${errMessageForScan}`.toLowerCase();
 
     let category = "Unknown";
     if (haystack.includes("outofmemory") || haystack.includes("out of memory")) {
@@ -3634,40 +3676,54 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
 
     const severity = presenterErrorToSeverity(err.code, category, { isInitFailure });
     // Dedupe by the error message so distinct uncaptured errors are still surfaced.
-    const dedupeKey = `${backend_kind}:${err.code}:${causeNameRaw}:${err.message}`;
+    const safeMessage = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+    const dedupeKey = `${backend_kind}:${err.code}:${causeName}:${safeMessage}`;
     if (shouldEmitPresenterErrorEvent(dedupeKey)) {
       emitGpuEvent({
         time_ms: performance.now(),
         backend_kind,
         severity,
         category,
-        message: err.message,
-        details: { code: err.code, message: err.message, stack: err.stack, cause: err.cause },
+        message: safeMessage,
+        details: {
+          code: err.code,
+          message: safeMessage,
+          stack: typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined,
+          ...(err.cause !== undefined ? { cause: serializeUiErrorCause(err.cause) } : {}),
+        },
       });
     }
     return;
   }
 
-  let message = err instanceof Error ? err.message : String(err);
+  let message = formatUiErrorMessage(err);
   let code: string | null = null;
   let category = isInitFailure ? "Init" : "Unknown";
   let details: unknown | undefined = undefined;
 
   if (err instanceof PresenterError) {
-    message = err.message;
+    message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
     code = err.code;
     category = presenterErrorCodeToCategory(err.code);
-    details = { code: err.code, message: err.message, stack: err.stack, cause: err.cause };
+    details = {
+      code: err.code,
+      message,
+      stack: typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined,
+      ...(err.cause !== undefined ? { cause: serializeUiErrorCause(err.cause) } : {}),
+    };
   } else if (err instanceof Error) {
     const anyErr = err as Error & { cause?: unknown };
+    const name = formatOneLineUtf8(anyErr.name, MAX_UI_ERROR_NAME_BYTES) || "Error";
+    const msg = formatOneLineUtf8(anyErr.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+    const stack = typeof anyErr.stack === "string" ? truncateUtf8(anyErr.stack, MAX_UI_ERROR_STACK_BYTES) : undefined;
     details = {
-      name: anyErr.name,
-      message: anyErr.message,
-      stack: anyErr.stack,
-      ...(anyErr.cause !== undefined ? { cause: anyErr.cause } : {}),
+      name,
+      message: msg,
+      ...(stack ? { stack } : {}),
+      ...(anyErr.cause !== undefined ? { cause: serializeUiErrorCause(anyErr.cause) } : {}),
     };
   } else {
-    details = err;
+    details = serializeUiErrorDetails(err);
   }
 
   const severity = presenterErrorToSeverity(code, category, { isInitFailure });
@@ -3675,7 +3731,7 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
     err instanceof PresenterError
       ? `${backend_kind}:${err.code}`
       : err instanceof Error
-        ? `${backend_kind}:${err.name}:${err.message}`
+        ? `${backend_kind}:${formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || "Error"}:${formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error"}`
         : `${backend_kind}:${message}`;
 
   if (shouldEmitPresenterErrorEvent(dedupeKey)) {
@@ -3690,8 +3746,8 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
   }
 
   if (err instanceof PresenterError) {
-    postToMain({ type: "error", message: err.message, code: err.code, backend: backend ?? presenter?.backend });
-    postRuntimeError(err.message);
+    postToMain({ type: "error", message, code: err.code, backend: backend ?? presenter?.backend });
+    postRuntimeError(message);
     return;
   }
 
@@ -3860,8 +3916,8 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
               backend_kind: backendKindForEvent(),
               severity: "warn",
               category: "AerogpuInit",
-              message: err instanceof Error ? err.message : String(err),
-              details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+              message: formatUiErrorMessage(err),
+              details: serializeUiErrorDetails(err),
             });
           });
       }
@@ -4252,8 +4308,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 backend_kind: backendKindForEvent(),
                 severity: "warn",
                 category: "AerogpuInit",
-                message: err instanceof Error ? err.message : String(err),
-                details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+                message: formatUiErrorMessage(err),
+                details: serializeUiErrorDetails(err),
               });
             });
         }
@@ -4368,7 +4424,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           backend_kind: backendKindForEvent(),
           severity: "warn",
           category: "Debug",
-          message: `debug_context_loss failed: ${err instanceof Error ? err.message : String(err)}`,
+          message: `debug_context_loss failed: ${formatUiErrorMessage(err)}`,
         });
       }
       break;
@@ -5027,7 +5083,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               if (deviceLostCode) {
                 const startRecovery = deviceLostCode !== "webgl_context_lost";
                 handleDeviceLost(
-                  err instanceof Error ? err.message : String(err),
+                  formatUiErrorMessage(err),
                   { source: "screenshot", code: deviceLostCode, error: err },
                   startRecovery,
                 );
@@ -5037,8 +5093,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                   backend_kind: backendKindForEvent(),
                   severity: "error",
                   category: "Screenshot",
-                  message: err instanceof Error ? err.message : String(err),
-                  details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+                  message: formatUiErrorMessage(err),
+                  details: serializeUiErrorDetails(err),
                 });
               }
               return false;
@@ -5204,7 +5260,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             if (deviceLostCode) {
               const startRecovery = deviceLostCode !== "webgl_context_lost";
               handleDeviceLost(
-                err instanceof Error ? err.message : String(err),
+                formatUiErrorMessage(err),
                 { source: "screenshot", code: deviceLostCode, error: err },
                 startRecovery,
               );
@@ -5214,8 +5270,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 backend_kind: backendKindForEvent(),
                 severity: "error",
                 category: "Screenshot",
-                message: err instanceof Error ? err.message : String(err),
-                details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+                message: formatUiErrorMessage(err),
+                details: serializeUiErrorDetails(err),
               });
             }
             postStub(typeof seqNow === "number" ? seqNow : undefined);
@@ -5379,7 +5435,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             if (deviceLostCode) {
               const startRecovery = deviceLostCode !== "webgl_context_lost";
               handleDeviceLost(
-                err instanceof Error ? err.message : String(err),
+                formatUiErrorMessage(err),
                 { source: "screenshot_presented", code: deviceLostCode, error: err },
                 startRecovery,
               );
@@ -5389,8 +5445,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 backend_kind: backendKindForEvent(),
                 severity: "error",
                 category: "Screenshot",
-                message: err instanceof Error ? err.message : String(err),
-                details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+                message: formatUiErrorMessage(err),
+                details: serializeUiErrorDetails(err),
               });
             }
             postStub(typeof seqNow === "number" ? seqNow : undefined);

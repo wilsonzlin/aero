@@ -124,8 +124,11 @@ class CamelCaseDemo {
 }
 
 class ThrowingDemo extends FakeDemo {
-  constructor(private readonly mode: "drain" | "poll") {
+  private readonly mode: "drain" | "poll";
+
+  constructor(mode: "drain" | "poll") {
     super();
+    this.mode = mode;
   }
 
   override drain_actions(): unknown {

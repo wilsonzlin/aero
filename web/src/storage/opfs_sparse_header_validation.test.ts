@@ -32,7 +32,11 @@ class MemorySyncAccessHandle implements SyncAccessHandle {
   private closed = false;
   readCalls = 0;
 
-  constructor(private readonly file: MemoryFile) {}
+  private readonly file: MemoryFile;
+
+  constructor(file: MemoryFile) {
+    this.file = file;
+  }
 
   get isClosed(): boolean {
     return this.closed;

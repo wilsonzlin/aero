@@ -13,6 +13,14 @@ import {
 import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
 import { RemoteCacheManager, type RemoteCacheKeyParts, type RemoteCacheMetaV1 } from "./remote_cache_manager";
 import { readResponseBytesWithLimit, ResponseTooLargeError } from "./response_json";
+import {
+  MAX_CACHE_CONTROL_HEADER_VALUE_LEN,
+  MAX_CONTENT_ENCODING_HEADER_VALUE_LEN,
+  MAX_CONTENT_RANGE_HEADER_VALUE_LEN,
+  commaSeparatedTokenListHasToken,
+  contentEncodingIsIdentity,
+  formatHeaderValueForError,
+} from "./http_headers";
 
 // Keep in sync with the Rust snapshot bounds where sensible.
 const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -265,9 +273,12 @@ function requireRemoteCacheKeyParts(raw: unknown): RemoteCacheKeyParts {
  * underlying fetch failure without an unrelated "cache init" wrapper.
  */
 class RemoteRangeDiskCacheBackendInitError extends Error {
-  constructor(readonly cause: unknown) {
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
     super("RemoteRangeDisk cache backend init failed");
     this.name = "RemoteRangeDiskCacheBackendInitError";
+    this.cause = cause;
   }
 }
 
@@ -444,11 +455,11 @@ type RemoteProbe = {
 };
 
 class HttpStatusError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
   }
 }
 
@@ -465,8 +476,11 @@ function staticDiskLease(url: string, credentialsMode: RequestCredentials): Disk
 }
 
 class RemoteValidatorMismatchError extends Error {
-  constructor(readonly status: number) {
+  readonly status: number;
+
+  constructor(status: number) {
     super(`remote validator mismatch (status=${status})`);
+    this.status = status;
   }
 }
 
@@ -545,10 +559,13 @@ class Semaphore {
   private inUse = 0;
   private readonly waiters: Array<() => void> = [];
 
-  constructor(private readonly capacity: number) {
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
     if (!Number.isInteger(capacity) || capacity <= 0) {
       throw new Error(`invalid semaphore capacity=${capacity}`);
     }
+    this.capacity = capacity;
   }
 
   async acquire(): Promise<() => void> {
@@ -644,9 +661,11 @@ function assertIdentityContentEncoding(headers: Headers, label: string): void {
   // browser may transparently decode, breaking deterministic byte reads.
   const raw = headers.get("content-encoding");
   if (!raw) return;
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized || normalized === "identity") return;
-  throw new ProtocolError(`${label} unexpected Content-Encoding: ${raw}`);
+  if (raw.length > MAX_CONTENT_ENCODING_HEADER_VALUE_LEN) {
+    throw new ProtocolError(`${label} unexpected Content-Encoding (too long)`);
+  }
+  if (contentEncodingIsIdentity(raw, { maxLen: MAX_CONTENT_ENCODING_HEADER_VALUE_LEN })) return;
+  throw new ProtocolError(`${label} unexpected Content-Encoding: ${formatHeaderValueForError(raw)}`);
 }
 
 function assertNoTransformCacheControl(headers: Headers, label: string): void {
@@ -659,33 +678,35 @@ function assertNoTransformCacheControl(headers: Headers, label: string): void {
   if (!raw) {
     throw new ProtocolError(`${label} missing Cache-Control header (expected include 'no-transform')`);
   }
-  const tokens = raw
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-  if (!tokens.includes("no-transform")) {
-    throw new ProtocolError(`${label} Cache-Control missing no-transform: ${raw}`);
+  if (raw.length > MAX_CACHE_CONTROL_HEADER_VALUE_LEN) {
+    throw new ProtocolError(`${label} Cache-Control too long`);
+  }
+  if (!commaSeparatedTokenListHasToken(raw, "no-transform", { maxLen: MAX_CACHE_CONTROL_HEADER_VALUE_LEN })) {
+    throw new ProtocolError(`${label} Cache-Control missing no-transform: ${formatHeaderValueForError(raw)}`);
   }
 }
 
 function parseContentRangeHeader(header: string): { start: number; endInclusive: number; total: number } {
   // Example: "bytes 0-0/12345"
+  if (header.length > MAX_CONTENT_RANGE_HEADER_VALUE_LEN) {
+    throw new Error("invalid Content-Range (too long)");
+  }
   const m = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(header.trim());
   if (!m) {
-    throw new Error(`invalid Content-Range: ${header}`);
+    throw new Error(`invalid Content-Range: ${formatHeaderValueForError(header)}`);
   }
   const start = BigInt(m[1]);
   const endInclusive = BigInt(m[2]);
   if (endInclusive < start) {
-    throw new Error(`invalid Content-Range: ${header}`);
+    throw new Error(`invalid Content-Range: ${formatHeaderValueForError(header)}`);
   }
   const totalRaw = m[3];
   if (totalRaw === "*") {
-    throw new Error(`unsupported Content-Range total='*': ${header}`);
+    throw new Error("unsupported Content-Range total='*'");
   }
   const total = BigInt(totalRaw);
   if (total <= 0n) {
-    throw new Error(`invalid Content-Range total: ${header}`);
+    throw new Error(`invalid Content-Range total: ${formatHeaderValueForError(header)}`);
   }
   return {
     start: toSafeNumber(start, "content-range start"),
@@ -696,17 +717,20 @@ function parseContentRangeHeader(header: string): { start: number; endInclusive:
 
 function parseUnsatisfiedContentRangeHeader(header: string): { total: number } {
   // Example: "bytes */12345" (used with 416 Range Not Satisfiable)
+  if (header.length > MAX_CONTENT_RANGE_HEADER_VALUE_LEN) {
+    throw new Error("invalid Content-Range (too long)");
+  }
   const m = /^bytes\s+\*\/(\d+|\*)$/i.exec(header.trim());
   if (!m) {
-    throw new Error(`invalid Content-Range: ${header}`);
+    throw new Error(`invalid Content-Range: ${formatHeaderValueForError(header)}`);
   }
   const totalRaw = m[1];
   if (totalRaw === "*") {
-    throw new Error(`unsupported Content-Range total='*': ${header}`);
+    throw new Error("unsupported Content-Range total='*'");
   }
   const total = BigInt(totalRaw);
   if (total <= 0n) {
-    throw new Error(`invalid Content-Range total: ${header}`);
+    throw new Error(`invalid Content-Range total: ${formatHeaderValueForError(header)}`);
   }
   return { total: toSafeNumber(total, "content-range total") };
 }
@@ -919,6 +943,14 @@ class OpfsRemoteRangeDiskSparseCacheFactory implements RemoteRangeDiskSparseCach
 export class RemoteRangeDisk implements AsyncSectorDisk {
   readonly sectorSize = SECTOR_SIZE;
 
+  private readonly sourceId: string;
+  private readonly lease: DiskAccessLease;
+  private readonly opts: ResolvedRemoteRangeDiskOptions;
+  private readonly leaseRefreshMarginMs: number;
+  private readonly sha256Manifest: string[] | undefined;
+  private readonly metadataStore: RemoteRangeDiskMetadataStore;
+  private readonly sparseCacheFactory: RemoteRangeDiskSparseCacheFactory;
+
   private capacityBytesValue = 0;
 
   private remoteEtag: string | undefined;
@@ -991,16 +1023,23 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   private constructor(
-    private readonly sourceId: string,
-    private readonly lease: DiskAccessLease,
-    private readonly opts: ResolvedRemoteRangeDiskOptions,
-    private readonly leaseRefreshMarginMs: number,
-    private readonly sha256Manifest: string[] | undefined,
-    private readonly metadataStore: RemoteRangeDiskMetadataStore,
-    private readonly sparseCacheFactory: RemoteRangeDiskSparseCacheFactory,
+    sourceId: string,
+    lease: DiskAccessLease,
+    opts: ResolvedRemoteRangeDiskOptions,
+    leaseRefreshMarginMs: number,
+    sha256Manifest: string[] | undefined,
+    metadataStore: RemoteRangeDiskMetadataStore,
+    sparseCacheFactory: RemoteRangeDiskSparseCacheFactory,
     fetchSemaphore: Semaphore,
     cacheKeyParts: RemoteCacheKeyParts,
   ) {
+    this.sourceId = sourceId;
+    this.lease = lease;
+    this.opts = opts;
+    this.leaseRefreshMarginMs = leaseRefreshMarginMs;
+    this.sha256Manifest = sha256Manifest;
+    this.metadataStore = metadataStore;
+    this.sparseCacheFactory = sparseCacheFactory;
     this.fetchSemaphore = fetchSemaphore;
     this.cacheKeyParts = cacheKeyParts;
     this.leaseRefresher = new DiskAccessLeaseRefresher(this.lease, { refreshMarginMs: this.leaseRefreshMarginMs });

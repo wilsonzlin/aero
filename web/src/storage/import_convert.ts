@@ -1,6 +1,13 @@
 import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32.ts";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { readResponseBytesWithLimit } from "./response_json.ts";
+import {
+  MAX_CACHE_CONTROL_HEADER_VALUE_LEN,
+  MAX_CONTENT_ENCODING_HEADER_VALUE_LEN,
+  commaSeparatedTokenListHasToken,
+  contentEncodingIsIdentity,
+  formatHeaderValueForError,
+} from "./http_headers.ts";
 
 export type ImageFormat = "raw" | "qcow2" | "vhd" | "iso";
 export type ConvertedFormat = "aerospar" | "iso";
@@ -56,9 +63,11 @@ interface RandomAccessSource {
 function assertIdentityContentEncoding(headers: Headers, label: string): void {
   const raw = headers.get("content-encoding");
   if (!raw) return;
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized || normalized === "identity") return;
-  throw new Error(`${label} unexpected Content-Encoding: ${raw}`);
+  if (raw.length > MAX_CONTENT_ENCODING_HEADER_VALUE_LEN) {
+    throw new Error(`${label} unexpected Content-Encoding (too long)`);
+  }
+  if (contentEncodingIsIdentity(raw, { maxLen: MAX_CONTENT_ENCODING_HEADER_VALUE_LEN })) return;
+  throw new Error(`${label} unexpected Content-Encoding: ${formatHeaderValueForError(raw)}`);
 }
 
 function assertNoTransformCacheControl(headers: Headers, label: string): void {
@@ -71,12 +80,11 @@ function assertNoTransformCacheControl(headers: Headers, label: string): void {
   if (!raw) {
     throw new Error(`${label} missing Cache-Control header (expected include 'no-transform')`);
   }
-  const tokens = raw
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-  if (!tokens.includes("no-transform")) {
-    throw new Error(`${label} Cache-Control missing no-transform: ${raw}`);
+  if (raw.length > MAX_CACHE_CONTROL_HEADER_VALUE_LEN) {
+    throw new Error(`${label} Cache-Control too long`);
+  }
+  if (!commaSeparatedTokenListHasToken(raw, "no-transform", { maxLen: MAX_CACHE_CONTROL_HEADER_VALUE_LEN })) {
+    throw new Error(`${label} Cache-Control missing no-transform: ${formatHeaderValueForError(raw)}`);
   }
 }
 

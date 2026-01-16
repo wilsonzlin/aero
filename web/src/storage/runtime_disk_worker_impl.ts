@@ -49,6 +49,9 @@ import {
 } from "./runtime_disk_snapshot";
 import { createDiskAccessLeaseFromLeaseEndpoint } from "./disk_access_lease";
 import { RUNTIME_DISK_MAX_IO_BYTES } from "./runtime_disk_limits";
+import { MAX_REMOTE_URL_LEN } from "./url_limits";
+import { assertNonSecretUrl, assertValidLeaseEndpoint } from "./url_safety";
+import { formatOneLineUtf8, truncateUtf8 } from "../text";
 
 export type DiskEntry = {
   disk: AsyncSectorDisk;
@@ -83,9 +86,19 @@ type DiskIoTelemetry = {
 
 type TrackedDiskEntry = DiskEntry & { io: DiskIoTelemetry };
 
+const MAX_ERROR_NAME_BYTES = 128;
+const MAX_ERROR_MESSAGE_BYTES = 512;
+const MAX_ERROR_STACK_BYTES = 8 * 1024;
+
 function serializeError(err: unknown): { message: string; name?: string; stack?: string } {
-  if (err instanceof Error) return { message: err.message, name: err.name, stack: err.stack };
-  return { message: String(err) };
+  if (err instanceof Error) {
+    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || "Error";
+    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
+    return { message, name, stack };
+  }
+  const message = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || "Error";
+  return { message };
 }
 
 function emptyIoTelemetry(): DiskIoTelemetry {
@@ -758,6 +771,8 @@ async function openDiskFromMetadata(
     const leaseEndpointRaw = hasOwn(urlsRec, "leaseEndpoint") ? urlsRec.leaseEndpoint : undefined;
     const stableUrl = typeof stableUrlRaw === "string" ? stableUrlRaw.trim() : "";
     const leaseEndpoint = typeof leaseEndpointRaw === "string" ? leaseEndpointRaw.trim() : "";
+    assertNonSecretUrl(stableUrl || undefined);
+    assertValidLeaseEndpoint(leaseEndpoint || undefined);
 
     const deliveryType =
       delivery === "range" ? remoteRangeDeliveryType(chunkSizeBytes) : remoteChunkedDeliveryType(chunkSizeBytes);
@@ -1610,6 +1625,9 @@ async function openRemoteBackedDisk(
     if (typeof urlRaw !== "string" || !urlRaw.trim()) {
       throw new Error("invalid remote url");
     }
+    if (urlRaw.length > MAX_REMOTE_URL_LEN) {
+      throw new Error(`remote url too long (max ${MAX_REMOTE_URL_LEN})`);
+    }
     const url = urlRaw;
 
     const chunkSizeRaw = hasOwn(remote, "chunkSizeBytes") ? remote.chunkSizeBytes : undefined;
@@ -1653,6 +1671,9 @@ async function openRemoteBackedDisk(
     const manifestUrlRaw = hasOwn(remote, "manifestUrl") ? remote.manifestUrl : undefined;
     if (typeof manifestUrlRaw !== "string" || !manifestUrlRaw.trim()) {
       throw new Error("invalid remote manifestUrl");
+    }
+    if (manifestUrlRaw.length > MAX_REMOTE_URL_LEN) {
+      throw new Error(`remote manifestUrl too long (max ${MAX_REMOTE_URL_LEN})`);
     }
     const opts = Object.create(null) as RemoteChunkedDiskOpenOptions;
     opts.credentials = credentials;
@@ -1802,6 +1823,9 @@ export class RuntimeDiskWorker {
         if (typeof urlRaw !== "string" || !urlRaw.trim()) {
           throw new Error("invalid openRemote url");
         }
+        if (urlRaw.length > MAX_REMOTE_URL_LEN) {
+          throw new Error(`openRemote url too long (max ${MAX_REMOTE_URL_LEN})`);
+        }
         const optionsRaw = hasOwn(payload, "options") ? payload.options : undefined;
         const options = optionsRaw === undefined ? undefined : (optionsRaw as RemoteDiskOptions);
         const entry: DiskEntry = { disk: await openRemoteDisk(urlRaw, options), readOnly: true, backendSnapshot: null };
@@ -1824,6 +1848,9 @@ export class RuntimeDiskWorker {
         const manifestUrlRaw = hasOwn(payload, "manifestUrl") ? payload.manifestUrl : undefined;
         if (typeof manifestUrlRaw !== "string" || !manifestUrlRaw.trim()) {
           throw new Error("invalid openChunked manifestUrl");
+        }
+        if (manifestUrlRaw.length > MAX_REMOTE_URL_LEN) {
+          throw new Error(`openChunked manifestUrl too long (max ${MAX_REMOTE_URL_LEN})`);
         }
         const optionsRaw = hasOwn(payload, "options") ? payload.options : undefined;
         const options = optionsRaw === undefined ? undefined : (optionsRaw as RemoteChunkedDiskOpenOptions);

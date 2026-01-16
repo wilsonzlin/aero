@@ -46,14 +46,30 @@ import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.
 import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType, type RemoteCacheStatus } from "./remote_cache_manager";
 import { assertNonSecretUrl, assertValidLeaseEndpoint } from "./url_safety";
 import { readResponseBytesWithLimit } from "./response_json.ts";
+import {
+  MAX_CACHE_CONTROL_HEADER_VALUE_LEN,
+  MAX_CONTENT_ENCODING_HEADER_VALUE_LEN,
+  commaSeparatedTokenListHasToken,
+  contentEncodingIsIdentity,
+  formatHeaderValueForError,
+} from "./http_headers.ts";
+import { formatOneLineUtf8, truncateUtf8 } from "../text";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
+const MAX_ERROR_NAME_BYTES = 128;
+const MAX_ERROR_MESSAGE_BYTES = 512;
+const MAX_ERROR_STACK_BYTES = 8 * 1024;
+
 function serializeError(err: unknown): DiskWorkerError {
   if (err instanceof Error) {
-    return { message: err.message, name: err.name, stack: err.stack };
+    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || "Error";
+    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
+    return { message, name, stack };
   }
-  return { message: String(err) };
+  const message = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || "Error";
+  return { message };
 }
 
 function isPowerOfTwo(n: number): boolean {
@@ -100,9 +116,11 @@ function bytesEqualPrefix(bytes: Uint8Array, expected: readonly number[]): boole
 function assertIdentityContentEncoding(headers: Headers, label: string): void {
   const raw = headers.get("content-encoding");
   if (!raw) return;
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized || normalized === "identity") return;
-  throw new Error(`${label} unexpected Content-Encoding: ${raw}`);
+  if (raw.length > MAX_CONTENT_ENCODING_HEADER_VALUE_LEN) {
+    throw new Error(`${label} unexpected Content-Encoding (too long)`);
+  }
+  if (contentEncodingIsIdentity(raw, { maxLen: MAX_CONTENT_ENCODING_HEADER_VALUE_LEN })) return;
+  throw new Error(`${label} unexpected Content-Encoding: ${formatHeaderValueForError(raw)}`);
 }
 
 function assertNoTransformCacheControl(headers: Headers, label: string): void {
@@ -115,12 +133,11 @@ function assertNoTransformCacheControl(headers: Headers, label: string): void {
   if (!raw) {
     throw new Error(`${label} missing Cache-Control header (expected include 'no-transform')`);
   }
-  const tokens = raw
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-  if (!tokens.includes("no-transform")) {
-    throw new Error(`${label} Cache-Control missing no-transform: ${raw}`);
+  if (raw.length > MAX_CACHE_CONTROL_HEADER_VALUE_LEN) {
+    throw new Error(`${label} Cache-Control too long`);
+  }
+  if (!commaSeparatedTokenListHasToken(raw, "no-transform", { maxLen: MAX_CACHE_CONTROL_HEADER_VALUE_LEN })) {
+    throw new Error(`${label} Cache-Control missing no-transform: ${formatHeaderValueForError(raw)}`);
   }
 }
 

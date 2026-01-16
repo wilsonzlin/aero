@@ -1,7 +1,16 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatOneLineUtf8 } from "../src/text.js";
+
+const MAX_REQUEST_URL_LEN = 8 * 1024;
+const MAX_PATHNAME_LEN = 4 * 1024;
+const MAX_ERROR_BODY_BYTES = 512;
+
+function safeTextBody(message) {
+  return formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || "Error";
+}
 
 const webRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
 
@@ -13,15 +22,64 @@ const mimeTypes = {
   ".json": "application/json; charset=utf-8",
 };
 
+function safeResolve(rootDir, requestPath) {
+  const rootResolved = resolve(rootDir);
+  const resolved = resolve(rootResolved, `.${requestPath}`);
+  if (!resolved.startsWith(rootResolved + sep) && resolved !== rootResolved) return null;
+  return resolved;
+}
+
 const server = createServer(async (req, res) => {
   try {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    let path = url.pathname === "/" ? "/virtio-snd-smoke-test.html" : url.pathname;
-    path = normalize(path).replace(/^(\.\.(\/|\\|$))+/, "");
-    const abs = resolve(join(webRoot, path));
-    if (!abs.startsWith(webRoot)) {
+    const rawUrl = req.url ?? "/";
+    if (typeof rawUrl !== "string") {
+      res.writeHead(400);
+      res.end(safeTextBody("Bad Request"));
+      return;
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+      res.writeHead(414);
+      res.end(safeTextBody("URI Too Long"));
+      return;
+    }
+
+    let url;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      res.writeHead(400);
+      res.end(safeTextBody("Bad Request"));
+      return;
+    }
+    if (url.pathname.length > MAX_PATHNAME_LEN) {
+      res.writeHead(414);
+      res.end(safeTextBody("URI Too Long"));
+      return;
+    }
+    let pathname;
+    try {
+      pathname = decodeURIComponent(url.pathname);
+    } catch {
+      res.writeHead(400);
+      res.end(safeTextBody("Bad Request"));
+      return;
+    }
+    if (pathname.length > MAX_PATHNAME_LEN) {
+      res.writeHead(414);
+      res.end(safeTextBody("URI Too Long"));
+      return;
+    }
+    if (pathname.includes("\0")) {
+      res.writeHead(400);
+      res.end(safeTextBody("Bad Request"));
+      return;
+    }
+
+    if (pathname === "/") pathname = "/virtio-snd-smoke-test.html";
+    const abs = safeResolve(webRoot, pathname);
+    if (!abs) {
       res.writeHead(404);
-      res.end("Not found");
+      res.end(safeTextBody("Not found"));
       return;
     }
 
@@ -36,7 +94,7 @@ const server = createServer(async (req, res) => {
     res.end(data);
   } catch {
     res.writeHead(404);
-    res.end("Not found");
+    res.end(safeTextBody("Not found"));
   }
 });
 

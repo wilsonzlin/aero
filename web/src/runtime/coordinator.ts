@@ -85,8 +85,11 @@ import {
   CursorStateIndex,
   wrapCursorState,
 } from "../ipc/cursor_state";
+import { formatOneLineUtf8, truncateUtf8 } from "../text";
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 const MAX_PENDING_AEROGPU_SUBMISSIONS = 256;
+const MAX_COORDINATOR_ERROR_MESSAGE_BYTES = 512;
+const MAX_COORDINATOR_ERROR_STACK_BYTES = 8 * 1024;
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
@@ -275,9 +278,11 @@ function formatWorkerError(ev: ErrorEvent): { message: string; stack?: string } 
       : ev.filename
         ? ev.filename
         : "";
-  const message = location ? `${base} @ ${location}` : base;
+  const rawMessage = location ? `${base} @ ${location}` : base;
+  const message = formatOneLineUtf8(rawMessage, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Worker error";
   const stack = (ev.error as { stack?: unknown } | null | undefined)?.stack;
-  return { message, stack: typeof stack === "string" ? stack : undefined };
+  const stackText = typeof stack === "string" ? truncateUtf8(stack, MAX_COORDINATOR_ERROR_STACK_BYTES) : undefined;
+  return { message, ...(stackText ? { stack: stackText } : {}) };
 }
 
 function isGpuWorkerGpuErrorMessage(data: unknown): data is GpuWorkerGpuErrorMessage {
@@ -2072,14 +2077,20 @@ export class WorkerCoordinator {
   }
 
   private recordFatal(detail: WorkerCoordinatorFatalDetail): void {
-    this.lastFatal = detail;
-    this.emitEvent("fatal", detail);
-    if (perf.traceEnabled) perf.instant("vm:fatal", "p", { kind: detail.kind, role: detail.role ?? "unknown" });
+    const message = formatOneLineUtf8(detail.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Error";
+    const stack = detail.stack ? truncateUtf8(detail.stack, MAX_COORDINATOR_ERROR_STACK_BYTES) : undefined;
+    const sanitized = { ...detail, message, ...(stack ? { stack } : {}) };
+    this.lastFatal = sanitized;
+    this.emitEvent("fatal", sanitized);
+    if (perf.traceEnabled) perf.instant("vm:fatal", "p", { kind: sanitized.kind, role: sanitized.role ?? "unknown" });
   }
 
   private recordNonFatal(detail: WorkerCoordinatorNonFatalDetail): void {
-    this.lastNonFatal = detail;
-    this.emitEvent("nonfatal", detail);
+    const message = formatOneLineUtf8(detail.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Error";
+    const stack = detail.stack ? truncateUtf8(detail.stack, MAX_COORDINATOR_ERROR_STACK_BYTES) : undefined;
+    const sanitized = { ...detail, message, ...(stack ? { stack } : {}) };
+    this.lastNonFatal = sanitized;
+    this.emitEvent("nonfatal", sanitized);
   }
 
   private cancelPendingWorkerRestart(role: WorkerRole): void {
@@ -2927,25 +2938,26 @@ export class WorkerCoordinator {
       }
       case "log": {
         const prefix = `[${info.role}]`;
+        const msgText = formatOneLineUtf8(evt.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Worker log";
         switch (evt.level) {
           case "trace":
-            console.debug(prefix, evt.message);
+            console.debug(prefix, msgText);
             break;
           case "debug":
-            console.debug(prefix, evt.message);
+            console.debug(prefix, msgText);
             break;
           case "info":
-            console.info(prefix, evt.message);
+            console.info(prefix, msgText);
             break;
           case "warn":
-            console.warn(prefix, evt.message);
+            console.warn(prefix, msgText);
             break;
           case "error":
-            console.error(prefix, evt.message);
+            console.error(prefix, msgText);
             break;
         }
         if (evt.level === "warn" || evt.level === "error") {
-          this.recordNonFatal({ kind: "ipc_log", role: info.role, message: `${evt.level}: ${evt.message}`, atMs: nowMs() });
+          this.recordNonFatal({ kind: "ipc_log", role: info.role, message: `${evt.level}: ${msgText}`, atMs: nowMs() });
         }
         return;
       }
@@ -2982,7 +2994,7 @@ export class WorkerCoordinator {
         this.reset("tripleFault");
         return;
       case "panic":
-        info.status = { state: "failed", error: evt.message };
+        info.status = { state: "failed", error: formatOneLineUtf8(evt.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Panic" };
         setReadyFlag(shared.status, info.role, false);
         this.recordFatal({ kind: "ipc_panic", role: info.role, message: evt.message, atMs: nowMs() });
         this.scheduleFullRestart("ipc_panic");

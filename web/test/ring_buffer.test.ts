@@ -37,14 +37,18 @@ test("SharedRingBuffer: Atomics.wait/notify popBlockingInto()", async () => {
     execArgv: ["--experimental-strip-types"],
   });
 
-  // Let the worker block on Atomics.wait() first.
-  await new Promise((r) => setTimeout(r, 25));
-  assert.equal(ring.push([0xdead_beef]), true);
+  try {
+    // Let the worker block on Atomics.wait() first.
+    await new Promise((r) => setTimeout(r, 25));
+    assert.equal(ring.push([0xdead_beef]), true);
 
-  const [msg] = (await once(worker, "message")) as [{ ok: boolean; value: number }];
-  assert.equal(msg.ok, true);
-  assert.equal(msg.value >>> 0, 0xdead_beef);
-
-  await worker.terminate();
+    const [msg] = (await once(worker, "message")) as [{ ok: boolean; value: number }];
+    assert.equal(msg.ok, true);
+    assert.equal(msg.value >>> 0, 0xdead_beef);
+  } finally {
+    worker.unref();
+    const done = worker.terminate();
+    await Promise.race([done, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
+  }
 });
 

@@ -24,7 +24,7 @@ function makeRingBuffer(capacityFrames: number, channelCount: number): {
   };
 }
 
-test("AudioWorklet processor underrun counter increments by missing frames", () => {
+test("AudioWorklet processor underrun counter increments by missing frames", async () => {
   const capacityFrames = 4;
   const channelCount = 2;
   const { sab, header, samples } = makeRingBuffer(capacityFrames, channelCount);
@@ -38,7 +38,13 @@ test("AudioWorklet processor underrun counter increments by missing frames", () 
   samples.set([0.1, 0.2, 1.1, 1.2]);
 
   const proc = new AeroAudioProcessor({
-    processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
+    processorOptions: {
+      ringBuffer: sab,
+      channelCount,
+      capacityFrames,
+      sendUnderrunMessages: true,
+      underrunMessageIntervalMs: 1,
+    },
   });
 
   let lastMessage: unknown = null;
@@ -64,6 +70,8 @@ test("AudioWorklet processor underrun counter increments by missing frames", () 
 
   // Next quantum: buffer empty, so we should add 4 more missing frames.
   lastMessage = null;
+  // Underrun messages are rate-limited; ensure wall time advances beyond the interval.
+  await new Promise((r) => setTimeout(r, 2));
   const outputs2: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
   proc.process([], outputs2);
 

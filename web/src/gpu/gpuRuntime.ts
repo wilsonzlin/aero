@@ -148,12 +148,14 @@ class MainThreadGpuRuntimeImpl implements GpuRuntimeImpl {
   readonly mode: GpuRuntimeMode = 'main';
   readonly backendKind = "webgl2";
 
+  private readonly canvas: HTMLCanvasElement;
   private presenter: RawWebGL2Presenter;
   private pixelWidth = 1;
   private pixelHeight = 1;
   private pattern: Uint8Array = new Uint8Array(4);
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
     this.presenter = new RawWebGL2Presenter(canvas, {
       framebufferColorSpace: 'linear',
       outputColorSpace: 'srgb',
@@ -187,11 +189,13 @@ class MainThreadGpuRuntimeImpl implements GpuRuntimeImpl {
 class WorkerGpuRuntimeImpl implements GpuRuntimeImpl {
   readonly mode: GpuRuntimeMode = 'worker';
   readonly backendKind: string;
+  private readonly handle: GpuWorkerHandle;
 
   constructor(
-    private readonly handle: GpuWorkerHandle,
+    handle: GpuWorkerHandle,
     ready: GpuRuntimeReadyMessage,
   ) {
+    this.handle = handle;
     this.backendKind = ready.backendKind;
   }
 

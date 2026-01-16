@@ -17,14 +17,19 @@ import { IRQ_REFCOUNT_ASSERT, IRQ_REFCOUNT_DEASSERT, IRQ_REFCOUNT_SATURATED, IRQ
 import type { IrqSink } from "../io/device_manager.ts";
 import type { SerialOutputSink } from "../io/devices/uart16550.ts";
 
+const IS_DEV = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
+
 export interface IoWorkerInitOptions {
   requestRing: SharedArrayBuffer;
   responseRing: SharedArrayBuffer;
   tickIntervalMs?: number;
   devices?: string[];
+  // Optional worker-local stop flag (Int32Array length >= 1). Primarily used by Node tests to
+  // request a graceful shutdown without relying on `Worker.terminate()` semantics.
+  stopSignal?: SharedArrayBuffer;
 }
 
-export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
+export function runIoWorkerServer(opts: IoWorkerInitOptions): void {
   const reqRing = SharedRingBuffer.from(opts.requestRing);
   const respRing = SharedRingBuffer.from(opts.responseRing);
   if (reqRing.stride !== IO_MESSAGE_STRIDE_U32 || respRing.stride !== IO_MESSAGE_STRIDE_U32) {
@@ -46,7 +51,7 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
         writeIoMessage(irqTx, { type: IO_OP_IRQ_RAISE, id: 0, addrLo: idx, addrHi: 0, size: 0, value: 0 });
         respRing.pushBlocking(irqTx);
       }
-      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+      if (IS_DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
         irqWarnedSaturated[idx] = 1;
         console.warn(`[io_worker_runtime] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
       }
@@ -58,7 +63,7 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
         writeIoMessage(irqTx, { type: IO_OP_IRQ_LOWER, id: 0, addrLo: idx, addrHi: 0, size: 0, value: 0 });
         respRing.pushBlocking(irqTx);
       }
-      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+      if (IS_DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
         irqWarnedUnderflow[idx] = 1;
         console.warn(`[io_worker_runtime] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
       }
@@ -119,5 +124,6 @@ export function runIoWorkerServer(opts: IoWorkerInitOptions): never {
   }
 
   const server = new IoServer(reqRing, respRing, mgr, { tickIntervalMs: opts.tickIntervalMs });
-  return server.run();
+  const stopSignal = opts.stopSignal ? new Int32Array(opts.stopSignal) : undefined;
+  server.run(stopSignal);
 }

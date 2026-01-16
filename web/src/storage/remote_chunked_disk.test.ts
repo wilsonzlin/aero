@@ -70,7 +70,11 @@ class QuotaChunkWriteStore implements BinaryStore {
   chunkWrites = 0;
   lastChunkWritePath: string | null = null;
 
-  constructor(private readonly quotaErrorName: string = "QuotaExceededError") {}
+  private readonly quotaErrorName: string;
+
+  constructor(quotaErrorName: string = "QuotaExceededError") {
+    this.quotaErrorName = quotaErrorName;
+  }
 
   async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
     const data = this.files.get(path);
@@ -105,7 +109,11 @@ class QuotaChunkReadStore implements BinaryStore {
   chunkReads = 0;
   throwOnChunkReads = false;
 
-  constructor(private readonly quotaErrorName: string = "QuotaExceededError") {}
+  private readonly quotaErrorName: string;
+
+  constructor(quotaErrorName: string = "QuotaExceededError") {
+    this.quotaErrorName = quotaErrorName;
+  }
 
   async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
     if (this.throwOnChunkReads && path.includes("/chunks/") && path.endsWith(".bin")) {
@@ -137,7 +145,11 @@ class QuotaMetaWriteStore implements BinaryStore {
   metaWrites = 0;
   throwOnMetaWrites = false;
 
-  constructor(private readonly quotaErrorName: string = "QuotaExceededError") {}
+  private readonly quotaErrorName: string;
+
+  constructor(quotaErrorName: string = "QuotaExceededError") {
+    this.quotaErrorName = quotaErrorName;
+  }
 
   async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
     const data = this.files.get(path);

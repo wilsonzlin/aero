@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 /**
  * Vitest does not currently support a Mocha-style `--grep` flag, but a large part of the repo's
@@ -56,10 +59,28 @@ if (patterns.length) {
   args.push("--testNamePattern", patterns.length === 1 ? patterns[0] : patterns.map((p) => `(?:${p})`).join("|"));
 }
 
-const child = spawn("vitest", ["run", ...args], {
+function resolveVitestCli() {
+  // Avoid `shell: true` on Windows by invoking Vitest through Node directly.
+  // This prevents cmd.exe metacharacter injection when patterns contain `&`, `|`, etc.
+  const candidates = [
+    "vitest/vitest.mjs",
+    "vitest/node.mjs",
+    "vitest/dist/cli.js",
+  ];
+  for (const id of candidates) {
+    try {
+      return require.resolve(id);
+    } catch {
+      // try next candidate
+    }
+  }
+  throw new Error("Failed to resolve Vitest CLI entrypoint");
+}
+
+const vitestCli = resolveVitestCli();
+
+const child = spawn(process.execPath, [vitestCli, "run", ...args], {
   stdio: "inherit",
-  // `shell: true` is required for Windows because `vitest` is a `.cmd` shim.
-  shell: process.platform === "win32",
 });
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);

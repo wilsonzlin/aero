@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,7 +57,7 @@ function resolveGitSha(): string {
   if (fromEnv && fromEnv.trim().length > 0) return fromEnv.trim();
 
   try {
-    return execSync("git rev-parse HEAD", { cwd: rootDir, encoding: "utf8" }).trim();
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: rootDir, encoding: "utf8" }).trim();
   } catch {
     return "dev";
   }

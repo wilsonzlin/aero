@@ -13,6 +13,8 @@ import { IRQ_REFCOUNT_ASSERT, IRQ_REFCOUNT_DEASSERT, IRQ_REFCOUNT_SATURATED, IRQ
 import type { IrqSink } from "../io/device_manager.ts";
 import type { SerialOutputSink } from "../io/devices/uart16550.ts";
 
+const IS_DEV = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
+
 export type IoAipcWorkerInitMessage = {
   type: "init";
   ipcBuffer: SharedArrayBuffer;
@@ -53,7 +55,7 @@ ctx.onmessage = (ev: MessageEvent<IoAipcWorkerInitMessage>) => {
       if (flags & IRQ_REFCOUNT_ASSERT) {
         evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: idx }));
       }
-      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+      if (IS_DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
         irqWarnedSaturated[idx] = 1;
         console.warn(`[io_aipc.worker] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
       }
@@ -64,7 +66,7 @@ ctx.onmessage = (ev: MessageEvent<IoAipcWorkerInitMessage>) => {
       if (flags & IRQ_REFCOUNT_DEASSERT) {
         evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: idx }));
       }
-      if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+      if (IS_DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
         irqWarnedUnderflow[idx] = 1;
         console.warn(`[io_aipc.worker] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
       }

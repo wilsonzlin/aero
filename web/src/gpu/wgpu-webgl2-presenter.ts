@@ -17,6 +17,7 @@ import initAeroGpuWasm, {
 } from '../wasm/aero-gpu';
 
 import type { DirtyRect } from '../ipc/shared-layout';
+import { formatOneLineUtf8, truncateUtf8 } from '../text';
 
 function hardenWebGl2PresentState(gl: WebGL2RenderingContext): void {
   // Best-effort deterministic state hardening: wgpu uses WebGL2 state under the hood, and
@@ -412,7 +413,10 @@ export class WgpuWebGl2Presenter implements Presenter {
 
 function sanitizePresenterErrorCause(err: unknown): unknown {
   if (err instanceof Error) {
-    return { name: err.name, message: err.message, stack: err.stack };
+    const name = formatOneLineUtf8(err.name, 128) || 'Error';
+    const message = formatOneLineUtf8(err.message, 512) || 'Error';
+    const stack = typeof err.stack === 'string' ? truncateUtf8(err.stack, 8 * 1024) : undefined;
+    return { name, message, stack };
   }
 
   if (err && typeof err === 'object') {
@@ -428,8 +432,10 @@ function sanitizePresenterErrorCause(err: unknown): unknown {
         }
       }
       const stackRaw = rec['stack'];
-      const stack = typeof stackRaw === 'string' ? stackRaw : undefined;
-      return { name, message, stack };
+      const safeName = formatOneLineUtf8(name, 128) || 'Error';
+      const safeMessage = formatOneLineUtf8(message, 512) || 'Error';
+      const stack = typeof stackRaw === 'string' ? truncateUtf8(stackRaw, 8 * 1024) : undefined;
+      return { name: safeName, message: safeMessage, stack };
     }
   }
 

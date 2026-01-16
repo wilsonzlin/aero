@@ -53,6 +53,7 @@ type RawAeroGpuWasmModule = any;
 //  - Vite builds don't fail when the generated output is missing.
 //  - When the output *is* present, it is bundled as usual.
 const wasmImporters = import.meta.glob("./pkg-*/aero_gpu_wasm.js");
+const IS_DEV = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
 let loaded: RawAeroGpuWasmModule | null = null;
 
@@ -70,7 +71,7 @@ async function loadVariant(variant: WasmVariant): Promise<RawAeroGpuWasmModule> 
 
   const importer = wasmImporters[releasePath] ?? wasmImporters[devPath];
   if (!importer) {
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
       // When running the Vite dev server *before* `web/src/wasm/pkg-*/` exists (e.g. in local E2E
       // workflows using `AERO_PLAYWRIGHT_REUSE_SERVER=1`), `import.meta.glob()` can miss newly
       // generated wasm-pack output until the server is restarted.

@@ -1,5 +1,26 @@
+import { MAX_REMOTE_LEASE_ENDPOINT_LEN, MAX_REMOTE_URL_LEN } from "./url_limits";
+
+const BANNED_SIGNED_URL_PARAM_KEYS_LOWER = new Set([
+  // AWS S3 presigned query params.
+  "x-amz-algorithm",
+  "x-amz-credential",
+  "x-amz-date",
+  "x-amz-expires",
+  "x-amz-security-token",
+  "x-amz-signature",
+  "x-amz-signedheaders",
+  // CloudFront signed URL params (and other common CDNs).
+  "expires",
+  "key-pair-id",
+  "policy",
+  "signature",
+]);
+
 export function assertNonSecretUrl(url: string | undefined): void {
   if (!url) return;
+  if (url.length > MAX_REMOTE_URL_LEN) {
+    throw new Error("Refusing to persist a URL that is too long; store a stable shorter URL or use a leaseEndpoint.");
+  }
   let parsed: URL;
   try {
     parsed = new URL(url, "https://example.invalid");
@@ -16,24 +37,8 @@ export function assertNonSecretUrl(url: string | undefined): void {
     throw new Error("Refusing to persist a URL with embedded credentials; store a stable URL or a leaseEndpoint instead.");
   }
 
-  const banned = new Set([
-    // AWS S3 presigned query params.
-    "x-amz-algorithm",
-    "x-amz-credential",
-    "x-amz-date",
-    "x-amz-expires",
-    "x-amz-security-token",
-    "x-amz-signature",
-    "x-amz-signedheaders",
-    // CloudFront signed URL params (and other common CDNs).
-    "expires",
-    "key-pair-id",
-    "policy",
-    "signature",
-  ]);
-
   for (const [key] of parsed.searchParams) {
-    if (banned.has(key.toLowerCase())) {
+    if (BANNED_SIGNED_URL_PARAM_KEYS_LOWER.has(key.toLowerCase())) {
       throw new Error("Refusing to persist what looks like a signed URL; store a stable URL or a leaseEndpoint instead.");
     }
   }
@@ -41,6 +46,9 @@ export function assertNonSecretUrl(url: string | undefined): void {
 
 export function assertValidLeaseEndpoint(endpoint: string | undefined): void {
   if (!endpoint) return;
+  if (endpoint.length > MAX_REMOTE_LEASE_ENDPOINT_LEN) {
+    throw new Error(`leaseEndpoint is too long (max ${MAX_REMOTE_LEASE_ENDPOINT_LEN})`);
+  }
   if (!endpoint.startsWith("/")) {
     throw new Error("leaseEndpoint must be a same-origin path starting with '/'");
   }
@@ -48,6 +56,9 @@ export function assertValidLeaseEndpoint(endpoint: string | undefined): void {
   // with `/`.
   if (endpoint.startsWith("//")) {
     throw new Error("leaseEndpoint must not start with '//'");
+  }
+  if (endpoint.includes("\u0000")) {
+    throw new Error("leaseEndpoint must not contain NUL bytes");
   }
   // Defensive: disallow embedded absolute URLs in query params (e.g. `/lease?url=https://...`).
   // This value is persisted and must remain stable + non-secret.

@@ -32,6 +32,8 @@ const UHCI_IRQ_LINE = 0x0b;
 const UHCI_FRAME_MS = 1;
 const UHCI_MAX_FRAMES_PER_TICK = 32;
 
+const IS_DEV = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
+
 function maskToSize(value: number, size: number): number {
   if (size === 1) return value & 0xff;
   if (size === 2) return value & 0xffff;
@@ -127,7 +129,7 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
       const value = this.#ioReadFn.call(this.#bridge, offset >>> 0, size >>> 0) >>> 0;
       return maskToSize(value, size);
     } catch (err) {
-      if (import.meta.env.DEV) {
+      if (IS_DEV) {
         try {
           const message = err instanceof Error ? err.message : String(err);
           const post = (globalThis as unknown as { postMessage?: unknown }).postMessage;
@@ -156,7 +158,7 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
     try {
       this.#ioWriteFn.call(this.#bridge, offset >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch (err) {
-      if (import.meta.env.DEV) {
+      if (IS_DEV) {
         try {
           const message = err instanceof Error ? err.message : String(err);
           const post = (globalThis as unknown as { postMessage?: unknown }).postMessage;

@@ -18,7 +18,13 @@ describe("main/createGpuWorker", () => {
 
     private pendingSubmit: { requestId: number; fence: bigint } | null = null;
 
-    constructor(public readonly specifier: unknown, public readonly opts: unknown) {}
+    readonly specifier: unknown;
+    readonly opts: unknown;
+
+    constructor(specifier: unknown, opts: unknown) {
+      this.specifier = specifier;
+      this.opts = opts;
+    }
 
     postMessage(message: unknown, transfer?: unknown[]): void {
       posted.push({ message, transfer });

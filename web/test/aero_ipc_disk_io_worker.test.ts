@@ -62,8 +62,10 @@ test("AIPC I/O server: diskRead/diskWrite copy between shared guest memory + dis
     assert.equal(result.writeResp.bytes, 4);
     assert.deepEqual(result.diskBytesAfterWrite, [0xde, 0xad, 0xbe, 0xef]);
   } finally {
-    await cpuWorker.terminate();
-    await ioWorker.terminate();
+    cpuWorker.unref();
+    ioWorker.unref();
+    const done = Promise.allSettled([cpuWorker.terminate(), ioWorker.terminate()]);
+    await Promise.race([done, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
   }
 });
 

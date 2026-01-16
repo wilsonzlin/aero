@@ -18,6 +18,12 @@ function createCmdEvtSharedBuffer(cmdCapBytes: number, evtCapBytes: number): { s
   return { sab, cmdOffset, evtOffset };
 }
 
+async function terminateWorkers(workers: Worker[]): Promise<void> {
+  for (const w of workers) w.unref();
+  const done = Promise.allSettled(workers.map((w) => w.terminate()));
+  await Promise.race([done, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
+}
+
 test("AIPC I/O worker: i8042 port I/O + IRQ signalling", async () => {
   const { sab, cmdOffset, evtOffset } = createCmdEvtSharedBuffer(1 << 16, 1 << 16);
 
@@ -33,29 +39,34 @@ test("AIPC I/O worker: i8042 port I/O + IRQ signalling", async () => {
     execArgv: ["--experimental-strip-types"],
   });
 
-  const [result] = (await once(cpuWorker, "message")) as [
-    {
-      ok: boolean;
-      statusBefore: number;
-      statusMid: number;
-      statusAfter: number;
-      bytes: number[];
-      irqEvents: Array<{ irq: number; level: boolean }>;
-    },
-  ];
+  try {
+    const [result] = (await once(cpuWorker, "message")) as [
+      {
+        ok: boolean;
+        statusBefore: number;
+        statusMid: number;
+        statusAfter: number;
+        bytes: number[];
+        irqEvents: Array<{ irq: number; level: boolean }>;
+      },
+    ];
 
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.bytes, [0xfa, 0xaa]);
-  assert.equal(result.statusBefore & 0x01, 0x01);
-  assert.equal(result.statusMid & 0x01, 0x01);
-  assert.equal(result.statusAfter & 0x01, 0x00);
-  assert.deepEqual(result.irqEvents, [
-    { irq: 1, level: true },
-    { irq: 1, level: false },
-  ]);
-
-  await cpuWorker.terminate();
-  await ioWorker.terminate();
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.bytes, [0xfa, 0xaa]);
+    assert.equal(result.statusBefore & 0x01, 0x01);
+    assert.equal(result.statusMid & 0x01, 0x01);
+    assert.equal(result.statusAfter & 0x01, 0x00);
+    // i8042 IRQs are modeled as edge-triggered pulses for the legacy PIC: one pulse per byte
+    // loaded into the output buffer.
+    assert.deepEqual(result.irqEvents, [
+      { irq: 1, level: true },
+      { irq: 1, level: false },
+      { irq: 1, level: true },
+      { irq: 1, level: false },
+    ]);
+  } finally {
+    await terminateWorkers([cpuWorker, ioWorker]);
+  }
 });
 
 test("AIPC I/O worker: i8042 output port toggles A20 + requests reset", async () => {
@@ -73,24 +84,25 @@ test("AIPC I/O worker: i8042 output port toggles A20 + requests reset", async ()
     execArgv: ["--experimental-strip-types"],
   });
 
-  const [result] = (await once(cpuWorker, "message")) as [
-    {
-      ok: boolean;
-      outPort: number;
-      a20Events: boolean[];
-      resetRequests: number;
-      irqEvents: Array<{ irq: number; level: boolean }>;
-    },
-  ];
+  try {
+    const [result] = (await once(cpuWorker, "message")) as [
+      {
+        ok: boolean;
+        outPort: number;
+        a20Events: boolean[];
+        resetRequests: number;
+        irqEvents: Array<{ irq: number; level: boolean }>;
+      },
+    ];
 
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.a20Events, [true, false]);
-  assert.equal(result.resetRequests, 1);
-  assert.equal(result.outPort, 0xa9);
-  assert.deepEqual(result.irqEvents, []);
-
-  await cpuWorker.terminate();
-  await ioWorker.terminate();
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.a20Events, [true, false]);
+    assert.equal(result.resetRequests, 1);
+    assert.equal(result.outPort, 0xa9);
+    assert.deepEqual(result.irqEvents, []);
+  } finally {
+    await terminateWorkers([cpuWorker, ioWorker]);
+  }
 });
 
 test("AIPC I/O worker: PCI config + BAR-backed MMIO dispatch", async () => {
@@ -108,17 +120,18 @@ test("AIPC I/O worker: PCI config + BAR-backed MMIO dispatch", async () => {
     execArgv: ["--experimental-strip-types"],
   });
 
-  const [result] = (await once(cpuWorker, "message")) as [
-    { ok: boolean; idDword: number; bar0: number; mmioReadback: number },
-  ];
+  try {
+    const [result] = (await once(cpuWorker, "message")) as [
+      { ok: boolean; idDword: number; bar0: number; mmioReadback: number },
+    ];
 
-  assert.equal(result.ok, true);
-  assert.equal(result.idDword >>> 0, 0x5678_1234);
-  assert.equal(result.bar0 >>> 0, PCI_MMIO_BASE);
-  assert.equal(result.mmioReadback >>> 0, 0x1234_5678);
-
-  await cpuWorker.terminate();
-  await ioWorker.terminate();
+    assert.equal(result.ok, true);
+    assert.equal(result.idDword >>> 0, 0x5678_1234);
+    assert.equal(result.bar0 >>> 0, PCI_MMIO_BASE);
+    assert.equal(result.mmioReadback >>> 0, 0x1234_5678);
+  } finally {
+    await terminateWorkers([cpuWorker, ioWorker]);
+  }
 });
 
 test("AIPC I/O worker: 16550 UART emits serial output bytes", async () => {
@@ -136,15 +149,16 @@ test("AIPC I/O worker: 16550 UART emits serial output bytes", async () => {
     execArgv: ["--experimental-strip-types"],
   });
 
-  const [result] = (await once(cpuWorker, "message")) as [
-    { ok: boolean; lsrBefore: number; lsrAfter: number; serialBytes: number[] },
-  ];
+  try {
+    const [result] = (await once(cpuWorker, "message")) as [
+      { ok: boolean; lsrBefore: number; lsrAfter: number; serialBytes: number[] },
+    ];
 
-  assert.equal(result.ok, true);
-  assert.equal(result.lsrBefore & 0x60, 0x60);
-  assert.equal(result.lsrAfter & 0x60, 0x60);
-  assert.deepEqual(result.serialBytes, [0x48, 0x69]);
-
-  await cpuWorker.terminate();
-  await ioWorker.terminate();
+    assert.equal(result.ok, true);
+    assert.equal(result.lsrBefore & 0x60, 0x60);
+    assert.equal(result.lsrAfter & 0x60, 0x60);
+    assert.deepEqual(result.serialBytes, [0x48, 0x69]);
+  } finally {
+    await terminateWorkers([cpuWorker, ioWorker]);
+  }
 });

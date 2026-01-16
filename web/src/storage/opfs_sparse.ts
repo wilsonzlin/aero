@@ -201,16 +201,20 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
   readonly capacityBytes: number;
   readonly blockSizeBytes: number;
 
+  private readonly sync: SyncAccessHandle;
   private readonly table: Float64Array;
   private header: SparseHeader;
   private readonly cache = new Map<number, CacheEntry>();
+  private readonly maxCachedBlocks: number;
 
   private constructor(
-    private readonly sync: SyncAccessHandle,
+    sync: SyncAccessHandle,
     header: SparseHeader,
     table: Float64Array,
-    private readonly maxCachedBlocks: number,
+    maxCachedBlocks: number,
   ) {
+    this.sync = sync;
+    this.maxCachedBlocks = maxCachedBlocks;
     this.header = header;
     this.table = table;
     this.capacityBytes = header.diskSizeBytes;

@@ -10,6 +10,14 @@ import {
   fetchWithDiskAccessLease,
   type DiskAccessLease,
 } from "../storage/disk_access_lease.ts";
+import {
+  MAX_CACHE_CONTROL_HEADER_VALUE_LEN,
+  MAX_CONTENT_ENCODING_HEADER_VALUE_LEN,
+  MAX_CONTENT_RANGE_HEADER_VALUE_LEN,
+  commaSeparatedTokenListHasToken,
+  contentEncodingIsIdentity,
+  formatHeaderValueForError,
+} from "../storage/http_headers.ts";
 import { readResponseBytesWithLimit } from "../storage/response_json.ts";
 
 export type ByteRange = { start: number; end: number };
@@ -363,9 +371,11 @@ function assertIdentityContentEncoding(headers: Headers, label: string): void {
   // Disk streaming uses byte offsets; intermediaries must not apply compression transforms.
   const raw = headers.get("content-encoding");
   if (!raw) return;
-  const normalized = raw.trim().toLowerCase();
-  if (!normalized || normalized === "identity") return;
-  throw new Error(`${label} unexpected Content-Encoding: ${raw}`);
+  if (raw.length > MAX_CONTENT_ENCODING_HEADER_VALUE_LEN) {
+    throw new Error(`${label} unexpected Content-Encoding (too long)`);
+  }
+  if (contentEncodingIsIdentity(raw, { maxLen: MAX_CONTENT_ENCODING_HEADER_VALUE_LEN })) return;
+  throw new Error(`${label} unexpected Content-Encoding: ${formatHeaderValueForError(raw)}`);
 }
 
 function assertNoTransformCacheControl(headers: Headers, label: string): void {
@@ -376,12 +386,11 @@ function assertNoTransformCacheControl(headers: Headers, label: string): void {
   if (!raw) {
     throw new Error(`${label} missing Cache-Control header (expected include 'no-transform')`);
   }
-  const tokens = raw
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-  if (!tokens.includes("no-transform")) {
-    throw new Error(`${label} Cache-Control missing no-transform: ${raw}`);
+  if (raw.length > MAX_CACHE_CONTROL_HEADER_VALUE_LEN) {
+    throw new Error(`${label} Cache-Control too long`);
+  }
+  if (!commaSeparatedTokenListHasToken(raw, "no-transform", { maxLen: MAX_CACHE_CONTROL_HEADER_VALUE_LEN })) {
+    throw new Error(`${label} Cache-Control missing no-transform: ${formatHeaderValueForError(raw)}`);
   }
 }
 
@@ -506,29 +515,32 @@ export async function probeRemoteDisk(
 
 function parseContentRangeHeader(header: string): { start: number; endExclusive: number; total: number } {
   // Example: "bytes 0-0/12345"
+  if (header.length > MAX_CONTENT_RANGE_HEADER_VALUE_LEN) {
+    throw new Error("invalid Content-Range (too long)");
+  }
   const trimmed = header.trim();
   if (!trimmed.startsWith("bytes ")) {
-    throw new Error(`invalid Content-Range (expected 'bytes ...'): ${header}`);
+    throw new Error(`invalid Content-Range (expected 'bytes ...'): ${formatHeaderValueForError(header)}`);
   }
   const rest = trimmed.slice("bytes ".length);
   const parts = rest.split("/");
   if (parts.length !== 2) {
-    throw new Error(`invalid Content-Range: ${header}`);
+    throw new Error(`invalid Content-Range: ${formatHeaderValueForError(header)}`);
   }
   const [rangePart, totalPart] = parts;
   const rangeParts = rangePart.split("-");
   if (rangeParts.length !== 2) {
-    throw new Error(`invalid Content-Range: ${header}`);
+    throw new Error(`invalid Content-Range: ${formatHeaderValueForError(header)}`);
   }
   const start = Number(rangeParts[0]);
   const endInclusive = Number(rangeParts[1]);
   const total = Number(totalPart);
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(endInclusive) || !Number.isSafeInteger(total) || total <= 0) {
-    throw new Error(`invalid Content-Range numbers: ${header}`);
+    throw new Error(`invalid Content-Range numbers: ${formatHeaderValueForError(header)}`);
   }
   const endExclusive = endInclusive + 1;
   if (!Number.isSafeInteger(endExclusive) || endExclusive <= start) {
-    throw new Error(`invalid Content-Range: ${header}`);
+    throw new Error(`invalid Content-Range: ${formatHeaderValueForError(header)}`);
   }
   return { start, endExclusive, total };
 }
