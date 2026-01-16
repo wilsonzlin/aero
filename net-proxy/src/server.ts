@@ -114,10 +114,16 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
       res.end(JSON.stringify({ error: "not found" }));
     })().catch((err) => {
       log("error", "connect_error", { proto: "http", err: formatError(err) });
-      if (!res.headersSent) {
-        res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+      if (res.headersSent) {
+        res.destroy();
+        return;
       }
-      res.end(JSON.stringify({ error: "internal server error" }));
+      const body = JSON.stringify({ error: "internal server error" });
+      res.writeHead(500, {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": Buffer.byteLength(body)
+      });
+      res.end(body);
     });
   });
 

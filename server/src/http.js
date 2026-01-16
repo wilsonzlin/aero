@@ -101,7 +101,7 @@ async function handleDnsLookup(req, res, url, { config, logger, metrics }) {
   res.end(JSON.stringify({ name, addresses: filtered }));
 }
 
-async function handleStatic(req, res, url, { config }) {
+async function handleStatic(req, res, url, { config, logger }) {
   let pathname = url.pathname;
   if (pathname === "/") pathname = "/index.html";
 
@@ -128,10 +128,31 @@ async function handleStatic(req, res, url, { config }) {
     return;
   }
 
-  res.statusCode = 200;
-  res.setHeader("Content-Type", guessContentType(targetPath));
-  res.setHeader("Content-Length", st.size);
-  fs.createReadStream(targetPath).pipe(res);
+  const stream = fs.createReadStream(targetPath);
+  let opened = false;
+  stream.once("open", () => {
+    opened = true;
+    if (res.destroyed) {
+      stream.destroy();
+      return;
+    }
+    res.statusCode = 200;
+    res.setHeader("Content-Type", guessContentType(targetPath));
+    res.setHeader("Content-Length", st.size);
+    stream.pipe(res);
+  });
+  stream.once("error", (err) => {
+    // Avoid leaking error details to clients; keep bounded one-line logs for debugging.
+    logger.error("static_stream_error", { err: formatOneLineError(err, 512) });
+    if (res.writableEnded) return;
+    if (opened || res.headersSent) {
+      res.destroy();
+      return;
+    }
+    res.statusCode = 500;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end("Internal Server Error");
+  });
 }
 
 export function createHttpHandler({ config, logger, metrics }) {
@@ -190,10 +211,15 @@ export function createHttpHandler({ config, logger, metrics }) {
         return;
       }
 
-      await handleStatic(req, res, url, { config });
+      await handleStatic(req, res, url, { config, logger });
     })().catch((err) => {
       logger.error("http_error", { err: formatOneLineError(err, 512) });
-      if (!res.headersSent) res.statusCode = 500;
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
       res.end("Internal Server Error");
     });
   };
