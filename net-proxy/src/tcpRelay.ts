@@ -103,6 +103,24 @@ export async function handleTcpRelay(
   const fromWs = new PassThrough();
   const fromTcp = new PassThrough();
 
+  wsStream.once("error", (err) => {
+    closeBoth("ws_stream_error", 1011, "WebSocket stream error");
+    metrics.incConnectionError("error");
+    log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+  });
+
+  fromWs.once("error", (err) => {
+    closeBoth("ws_to_tcp_stream_error", 1011, "Stream error");
+    metrics.incConnectionError("error");
+    log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+  });
+
+  fromTcp.once("error", (err) => {
+    closeBoth("tcp_to_ws_stream_error", 1011, "Stream error");
+    metrics.incConnectionError("error");
+    log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+  });
+
   fromWs.on("data", (chunk) => {
     bytesIn += chunk.length;
     metrics.addBytesIn("tcp", chunk.length);
