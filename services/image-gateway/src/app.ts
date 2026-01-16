@@ -492,6 +492,16 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     return formatted || "Request failed";
   }
 
+  function safeErrorMessageString(err: unknown): string {
+    if (!err || typeof err !== "object") return "";
+    try {
+      const msg = (err as { message?: unknown }).message;
+      return typeof msg === "string" ? msg : "";
+    } catch {
+      return "";
+    }
+  }
+
   app.addHook("onRequest", async (req, reply) => {
     applyCorsHeaders(reply, deps.config);
 
@@ -523,7 +533,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       statusCode >= 500
         ? "Internal Server Error"
         : err instanceof ApiError
-          ? formatClientErrorMessage(err.message)
+          ? formatClientErrorMessage(safeErrorMessageString(err))
           : "Request failed";
 
     if (statusCode >= 500) {
