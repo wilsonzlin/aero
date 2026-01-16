@@ -269,6 +269,18 @@ Approach:
 Outcomes:
 - Contract suite blocks these additional DOM HTML injection sinks in production sources.
 
+### Phase 24: JS source-scan correctness hardening (done)
+Goal: make the JS/TS source masking helper more faithful to real JS syntax so security guardrails don’t miss code due to lexer edge cases.
+
+Approach:
+- Harden `stripStringsAndComments` to correctly handle:
+  - Regex literals (so `/\//` doesn’t get misread as a `//` comment)
+  - Nested strings/comments/regex inside template expressions (`\`${ ... }\``) without losing template-expression context
+- Add focused contract coverage for these edge cases.
+
+Outcomes:
+- `tests/js_source_scan_helpers_contract.test.js` locks in masking behavior for regex + template-expression cases.
+
 Some coding guidelines:
 
 ## General Principles
