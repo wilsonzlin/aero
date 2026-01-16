@@ -11,6 +11,7 @@ import {
 import { normalizeCollections, type HidCollectionInfo } from "../hid/webhid_normalize";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
+import { formatOneLineError } from "../text";
 import { fnv1a32Hex } from "../utils/fnv1a";
 import {
   isHidGetFeatureReportMessage,
@@ -639,7 +640,7 @@ export class WebHidPassthroughManager {
           };
           reply(res, [data.buffer]);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           reply({
             type: "hid:featureReportResult",
             deviceId,
@@ -1219,14 +1220,14 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
       try {
         await manager.detachDevice(device);
       } catch (err) {
-        errors.push(`Detach failed: ${err instanceof Error ? err.message : String(err)}`);
+        errors.push(`Detach failed: ${formatOneLineError(err, 512)}`);
       }
     }
 
     try {
       await (device as ForgettableHidDevice).forget();
     } catch (err) {
-      errors.push(`Forget failed: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`Forget failed: ${formatOneLineError(err, 512)}`);
     }
 
     await manager.refreshKnownDevices();
@@ -1243,7 +1244,7 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
       try {
         await manager.requestAndAttachDevice([]);
       } catch (err) {
-        error.textContent = err instanceof Error ? err.message : String(err);
+        error.textContent = formatOneLineError(err, 512);
       }
     },
   }) as HTMLButtonElement;
@@ -1292,7 +1293,7 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
                   try {
                     await manager.attachKnownDevice(device);
                   } catch (err) {
-                    error.textContent = err instanceof Error ? err.message : String(err);
+                    error.textContent = formatOneLineError(err, 512);
                   }
                 },
               }),
@@ -1325,7 +1326,7 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
                   try {
                     await manager.detachDevice(device);
                   } catch (err) {
-                    error.textContent = err instanceof Error ? err.message : String(err);
+                    error.textContent = formatOneLineError(err, 512);
                   }
                 },
               }),

@@ -1,5 +1,6 @@
 import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
+import { formatOneLineError } from "../text";
 import type { WasmInitResult } from "../runtime/wasm_loader";
 import { WebUsbBackend, type SetupPacket, type UsbHostAction, type UsbHostCompletion } from "./webusb_backend";
 import { formatHexBytes, hex16 } from "./usb_hex";
@@ -235,7 +236,7 @@ function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     return `[unserializable: ${message}]`;
   }
 }
@@ -306,7 +307,7 @@ function readHarnessState(harness: unknown): string {
         if (typeof out === "string") return out;
         return safeJson(out);
       } catch (err) {
-        return `error reading ${key}(): ${err instanceof Error ? err.message : String(err)}`;
+        return `error reading ${key}(): ${formatOneLineError(err, 512)}`;
       }
     }
     if (typeof v === "string") return v;
@@ -468,7 +469,7 @@ export function renderWebUsbUhciHarnessPanel(
     const env = [
       `webusb=${report.webusb}`,
       `wasmHarnessExport=${hasHarnessExport === null ? "loading" : hasHarnessExport}`,
-      wasmInitErr ? `wasmInitError=${wasmInitErr instanceof Error ? wasmInitErr.message : String(wasmInitErr)}` : null,
+      wasmInitErr ? `wasmInitError=${formatOneLineError(wasmInitErr, 512, "unknown")}` : null,
     ]
       .filter((line): line is string => typeof line === "string" && line.length > 0)
       .join("\n");

@@ -1,8 +1,8 @@
 import { WebUsbBackend, type UsbHostAction, type UsbHostCompletion, type WebUsbBackendOptions } from "./webusb_backend";
+import { formatOneLineError } from "../text";
 
 function formatThrownError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return formatOneLineError(err, 512);
 }
 
 function errorCompletion(action: UsbHostAction, message: string): UsbHostCompletion {

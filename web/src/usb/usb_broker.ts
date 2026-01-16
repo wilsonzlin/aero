@@ -24,6 +24,7 @@ import {
 import { WebUsbBackend, type WebUsbBackendOptions } from "./webusb_backend";
 import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
+import { formatOneLineError } from "../text";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
 
@@ -967,7 +968,7 @@ export class UsbBroker {
     // Avoid spamming `usb.ringDetach` if multiple callbacks notice the failure.
     if (!this.actionRings.has(port) && !this.completionRings.has(port)) return;
 
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     this.detachRingsForPort(port);
     this.postToPort(
       port,

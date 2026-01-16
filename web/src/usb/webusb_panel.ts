@@ -1,5 +1,6 @@
 import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
+import { formatOneLineError } from "../text";
 import { WebUsbBackend, type SetupPacket } from "./webusb_backend";
 import { formatHexBytes, hex16, hex8 } from "./usb_hex";
 
@@ -133,7 +134,8 @@ async function runWebUsbProbeWorker(msg: unknown, timeoutMs = 10_000): Promise<u
     });
     worker.addEventListener("error", (ev) => {
       cleanup();
-      reject(new Error(ev instanceof ErrorEvent ? ev.message : String(ev)));
+      const message = formatOneLineError(ev instanceof ErrorEvent ? ev.message : ev, 512, "WebUSB probe worker error");
+      reject(new Error(message));
     });
 
     try {

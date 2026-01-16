@@ -1,6 +1,7 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PciBar, PciDevice } from "../bus/pci.ts";
 import type { IrqSink, TickableDevice } from "../device_manager.ts";
+import { formatOneLineError } from "../../text.ts";
 
 export type UhciControllerBridgeLike = {
   io_read(offset: number, size: number): number;
@@ -131,7 +132,7 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
     } catch (err) {
       if (IS_DEV) {
         try {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           const post = (globalThis as unknown as { postMessage?: unknown }).postMessage;
           if (typeof post === "function") {
             post.call(globalThis, {
@@ -160,7 +161,7 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
     } catch (err) {
       if (IS_DEV) {
         try {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           const post = (globalThis as unknown as { postMessage?: unknown }).postMessage;
           if (typeof post === "function") {
             post.call(globalThis, {

@@ -20,6 +20,7 @@ import {
 } from "./usb_proxy_protocol";
 import { UsbProxyRing } from "./usb_proxy_ring";
 import { subscribeUsbProxyCompletionRing } from "./usb_proxy_ring_dispatcher";
+import { formatOneLineError } from "../text";
 
 export type UsbUhciHarnessStartMessage = { type: "usb.harness.start" };
 export type UsbUhciHarnessStopMessage = { type: "usb.harness.stop" };
@@ -342,8 +343,7 @@ function maybeCaptureDescriptors(
 }
 
 function formatError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return formatOneLineError(err, 512);
 }
 
 function normalizeWebUsbUhciPassthroughHarnessLike(harness: WebUsbUhciPassthroughHarnessLike): WebUsbUhciPassthroughHarnessLike {

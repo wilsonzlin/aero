@@ -7,6 +7,7 @@ import {
 
 import type { HidAttachMessage, HidDetachMessage, HidFeatureReportResultMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
+import { formatOneLineError } from "../text";
 
 const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
 const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
@@ -184,7 +185,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
       }
       this.#attached.add(msg.deviceId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       const detail =
         (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true &&
         err instanceof Error &&
@@ -217,7 +218,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
       })();
       this.#webhidPushInputReport.call(this.#uhci, msg.deviceId >>> 0, msg.reportId >>> 0, data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#host.error(`UHCI runtime hid.inputReport failed: ${message}`, msg.deviceId);
     }
   }
@@ -325,7 +326,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
       }
       return false;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#host.error(`UHCI runtime completeFeatureReportRequest failed: ${message}`, msg.deviceId);
       return false;
     }
@@ -359,7 +360,7 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
       }
       return false;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#host.error(`UHCI runtime failFeatureReportRequest failed: ${message}`, msg.deviceId);
       return false;
     }

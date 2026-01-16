@@ -21,6 +21,7 @@ import {
 } from "./usb_proxy_protocol";
 import { UsbProxyRing } from "./usb_proxy_ring";
 import { subscribeUsbProxyCompletionRing } from "./usb_proxy_ring_dispatcher";
+import { formatOneLineError } from "../text";
 
 // -------------------------------------------------------------------------------------------------
 // Worker ↔ main-thread message types
@@ -152,8 +153,7 @@ type PendingItem = { action: UsbHostAction };
 const EHCI_HARNESS_USB_PROXY_ACTION_OPTIONS: UsbProxyActionOptions = { translateOtherSpeedConfigurationDescriptor: false };
 
 function formatError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return formatOneLineError(err, 512);
 }
 
 function normalizeActionId(value: unknown): number {

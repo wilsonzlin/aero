@@ -1,3 +1,5 @@
+import { formatOneLineError, formatOneLineUtf8 } from "../text";
+
 export type WebUsbErrorExplanation = {
   title: string;
   details?: string;
@@ -12,12 +14,10 @@ type ErrorLike = {
 
 type HostOs = "windows" | "linux" | "mac" | "android" | "unknown";
 
+const MAX_WEBUSB_ERROR_BYTES = 512;
+
 function safeToString(value: unknown): string {
-  try {
-    return String(value);
-  } catch {
-    return "[unprintable]";
-  }
+  return formatOneLineError(value, MAX_WEBUSB_ERROR_BYTES);
 }
 
 function normalizeError(err: unknown): { name?: string; message?: string } {
@@ -26,7 +26,18 @@ function normalizeError(err: unknown): { name?: string; message?: string } {
   }
 
   if (typeof err === "object" && err !== null) {
-    const { name, message } = err as ErrorLike;
+    let name: unknown;
+    let message: unknown;
+    try {
+      name = (err as ErrorLike).name;
+    } catch {
+      name = undefined;
+    }
+    try {
+      message = (err as ErrorLike).message;
+    } catch {
+      message = undefined;
+    }
     return {
       name: typeof name === "string" ? name : undefined,
       message: typeof message === "string" ? message : undefined,
@@ -78,7 +89,25 @@ function normalizeErrorChain(err: unknown, maxDepth = 5): Array<{ name?: string;
       if (seen.has(cur)) break;
       seen.add(cur);
 
-      const { name, message, cause } = cur as ErrorLike;
+      let name: unknown;
+      let message: unknown;
+      let cause: unknown;
+      try {
+        name = (cur as ErrorLike).name;
+      } catch {
+        name = undefined;
+      }
+      try {
+        message = (cur as ErrorLike).message;
+      } catch {
+        message = undefined;
+      }
+      try {
+        cause = (cur as ErrorLike).cause;
+      } catch {
+        cause = undefined;
+      }
+
       const parsedName = typeof name === "string" ? name : undefined;
       const parsedMessage = typeof message === "string" ? message : undefined;
 
@@ -433,5 +462,5 @@ export function formatWebUsbError(err: unknown): string {
     })
     .filter((part): part is string => !!part);
   if (formatted.length === 0) return safeToString(err);
-  return formatted.join(" <- ");
+  return formatOneLineUtf8(formatted.join(" <- "), MAX_WEBUSB_ERROR_BYTES) || "Error";
 }

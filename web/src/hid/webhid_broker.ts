@@ -2,6 +2,7 @@ import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
 import { alignUp, RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
+import { formatOneLineError } from "../text";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
 import {
   computeFeatureReportPayloadByteLengths,
@@ -719,7 +720,7 @@ export class WebHidBroker {
           await task();
         } catch (err) {
           // Individual tasks should already handle/report errors, but ensure we never stop draining.
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           console.warn(`[webhid] Unhandled HID send task error deviceId=${deviceId}: ${message}`);
         }
       }
@@ -840,7 +841,7 @@ export class WebHidBroker {
                   await device.sendFeatureReport(reportId, data);
                 }
               } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
+                const message = formatOneLineError(err, 512);
                 console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
               }
             };
@@ -856,7 +857,7 @@ export class WebHidBroker {
         remainingBytes -= payloadLen;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#handleRingFailure(`HID proxy rings disabled: ${message}`);
     }
   }
@@ -1030,7 +1031,7 @@ export class WebHidBroker {
               if (copyLen < destLen) payload.fill(0, copyLen);
             });
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             this.#handleRingFailure(`HID proxy rings disabled: ${message}`);
           }
           if (ok && this.#inputReportRing === ring) {
@@ -1385,7 +1386,7 @@ export class WebHidBroker {
             await device.sendFeatureReport(reportId, data);
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           console.warn(`[webhid] Failed to send ${reportType} reportId=${reportId} deviceId=${deviceId}: ${message}`);
         }
       };
@@ -1438,7 +1439,7 @@ export class WebHidBroker {
         try {
           await attachPromise;
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           const res: HidFeatureReportResultMessage = { ...base, ok: false, error: message };
           this.#postToWorker(worker, res);
           return;
@@ -1509,7 +1510,7 @@ export class WebHidBroker {
         const res: HidFeatureReportResultMessage = { ...base, ok: true, data };
         this.#postToWorker(worker, res, [data.buffer]);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         const res: HidFeatureReportResultMessage = { ...base, ok: false, error: message };
         this.#postToWorker(worker, res);
       }

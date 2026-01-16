@@ -3,6 +3,7 @@ import { GamepadCapture } from "./gamepad";
 import { PointerLock } from "./pointer_lock";
 import { keyboardCodeToConsumerUsage, keyboardCodeToHidUsage } from "./hid_usage";
 import { I32_MAX, I32_MIN, negateI32Saturating } from "./int32";
+import { formatOneLineError } from "../text";
 import {
   ps2Set2ScancodeForCode,
   shouldPreventDefaultForKeyboardEvent,
@@ -1595,7 +1596,7 @@ function safeUnlockNavigatorKeyboard(keyboard: NavigatorKeyboardLockApi): void {
 }
 
 function formatError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return formatOneLineError(err, 256);
 }
 
 function chordMatches(event: KeyboardEvent, chord: PointerLockReleaseChord): boolean {

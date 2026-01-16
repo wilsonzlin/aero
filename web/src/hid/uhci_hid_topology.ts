@@ -6,6 +6,7 @@ import {
   WEBUSB_GUEST_ROOT_PORT,
   remapLegacyRootPortToExternalHubPort,
 } from "../usb/uhci_external_hub";
+import { formatOneLineError } from "../text";
 
 export type UhciHidPassthroughDeviceKind = "webhid" | "usb-hid-passthrough";
 
@@ -184,7 +185,7 @@ export class UhciHidTopologyManager {
       this.#hubAttachedPortCountByRoot.set(rootPort, portCount);
     } catch (err) {
       if (options.throwOnFailure) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         throw new Error(`UHCI attach_hub failed (rootPort=${rootPort} ports=${portCount}): ${message}`);
       }
       // Best-effort: hub attachment failures should not crash the worker.
@@ -239,7 +240,7 @@ export class UhciHidTopologyManager {
       }
     } catch (err) {
       if (options.throwOnFailure) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         throw new Error(`UHCI attach device failed (path=${rec.path.join(".")} kind=${rec.kind}): ${message}`);
       }
       // ignore

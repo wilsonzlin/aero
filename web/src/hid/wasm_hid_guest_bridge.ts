@@ -1,5 +1,6 @@
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import type { WasmApi } from "../runtime/wasm_context";
+import { formatOneLineError } from "../text";
 
 import type { HidAttachMessage, HidDetachMessage, HidFeatureReportResultMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 
@@ -186,7 +187,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
         this.#topology.attachDevice(msg.deviceId, guestPath, kind, compat.bridge);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#host.error(`hid.attach failed: ${message}`, msg.deviceId);
       return;
     }
@@ -220,7 +221,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       })();
       entry.pushInputReport.call(entry.bridge, msg.reportId, data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#host.error(`WebHID push_input_report failed: ${message}`, msg.deviceId);
     }
   }
@@ -243,7 +244,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
           try {
             report = entry.drainNextOutputReport.call(entry.bridge);
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             this.#host.error(`drain_next_output_report failed: ${message}`, deviceId);
             break;
           }
@@ -271,7 +272,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
             if (!isFeatureReportRequest(next)) break;
             req = next;
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             this.#host.error(`drain_next_feature_report_request failed: ${message}`, deviceId);
             break;
           }
@@ -291,7 +292,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
     try {
       return fn.call(entry.bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#host.error(`complete_feature_report_request failed: ${message}`, msg.deviceId);
       return false;
     }
@@ -305,7 +306,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       try {
         return fn.call(entry.bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.error);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         this.#host.error(`fail_feature_report_request failed: ${message}`, msg.deviceId);
         return false;
       }
@@ -317,7 +318,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
     try {
       return complete.call(entry.bridge, msg.requestId >>> 0, msg.reportId >>> 0, new Uint8Array());
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       this.#host.error(`complete_feature_report_request (fail fallback) failed: ${message}`, msg.deviceId);
       return false;
     }
