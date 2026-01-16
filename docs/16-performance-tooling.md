@@ -288,13 +288,13 @@ One-time setup:
 
 ```bash
 npm ci
-npx playwright install chromium
+node scripts/playwright_install.mjs chromium
 ```
 
 On minimal Linux environments, you may need system dependencies:
 
 ```bash
-npx playwright install --with-deps chromium
+node scripts/playwright_install.mjs chromium --with-deps
 ```
 
 CI-parity run (build + `vite preview` + perf harness, matching `.github/workflows/perf*.yml`):
@@ -558,7 +558,7 @@ Capture a perf export:
 
 Run the microbench benchmark locally:
 
-1. `npm ci && npx playwright install chromium` (one-time; use `--with-deps` on minimal Linux hosts)
+1. `npm ci && node scripts/playwright_install.mjs chromium` (one-time; use `--with-deps` on minimal Linux hosts)
 2. `npm run bench:run -- --scenario microbench --iterations 7`
 
 Alternative (run the underlying runner directly, without the wrapper):

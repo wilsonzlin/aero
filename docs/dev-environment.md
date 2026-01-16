@@ -65,7 +65,7 @@ The container includes the native libraries Playwright needs, but it does **not*
 If you used the dev container defaults, `npm ci` has already been run (via `just setup`). Install the browsers once:
 
 ```bash
-npx playwright install chromium
+node scripts/playwright_install.mjs chromium
 ```
 
 Then run e2e:

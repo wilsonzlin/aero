@@ -522,7 +522,9 @@ Example developer workflow:
 
 ```bash
 npm ci
-npx playwright install --with-deps chromium firefox webkit
+node scripts/playwright_install.mjs chromium --with-deps
+node scripts/playwright_install.mjs firefox --with-deps
+node scripts/playwright_install.mjs webkit --with-deps
 npx playwright test
 ```
 
