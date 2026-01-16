@@ -38,12 +38,12 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
   const forbidden = [
     {
       id: "net-proxy-src",
-      needle: ["..", "/net-proxy/src/"].join(""),
+      needle: ["/net-proxy", "/src/"].join(""),
       reason: "net-proxy is a CommonJS workspace; validate its TS sources via its own package tests (dist output).",
     },
     {
       id: "image-gateway-src",
-      needle: ["..", "/services/image-gateway/src/"].join(""),
+      needle: ["/services", "/image-gateway/src/"].join(""),
       reason:
         "image-gateway is not ESM-typed for repo-root imports; validate TS sources via its workspace tests (vitest).",
     },
