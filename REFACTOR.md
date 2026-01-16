@@ -213,6 +213,16 @@ Approach:
 Outcomes:
 - Action scripts share one implementation for “run Node CLI, capture UTF-8 output” and “run Node CLI with inherited stdio”.
 
+### Phase 19: JS eval sink guardrails (done)
+Goal: prevent accidental introduction of JavaScript eval sinks (`eval`, `new Function`) in production code paths.
+
+Approach:
+- Add a contract test that scans the repo’s JS/TS sources (excluding tests) for eval sinks.
+- Keep the patterns conservative and focused on real sinks (direct `eval(` / `globalThis.eval(` / `new Function(`).
+
+Outcomes:
+- Contract suite fails if eval sinks appear in production code.
+
 Some coding guidelines:
 
 ## General Principles
