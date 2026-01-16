@@ -257,6 +257,18 @@ Approach:
 Outcomes:
 - Contract suite fails if Prisma unsafe raw query APIs appear in production sources.
 
+### Phase 23: Expand DOM XSS sink guardrails (done)
+Goal: broaden DOM sink guardrails to cover additional classic HTML injection APIs.
+
+Approach:
+- Extend the DOM XSS contract to forbid:
+  - `document.write` / `document.writeln`
+  - `Range.createContextualFragment`
+- Keep masking of strings/comments to avoid false positives.
+
+Outcomes:
+- Contract suite blocks these additional DOM HTML injection sinks in production sources.
+
 Some coding guidelines:
 
 ## General Principles
