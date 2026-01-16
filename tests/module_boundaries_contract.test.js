@@ -6,6 +6,7 @@ import { readdir, readFile } from "node:fs/promises";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, "..");
 
 function basename(p) {
   return p.split("/").pop() ?? p;
@@ -28,10 +29,29 @@ async function collectTestFiles(dir) {
 }
 
 test("module boundaries: repo-root tests must not import TS sources from CJS workspaces", async () => {
-  const testsDir = __dirname;
-  const files = (await collectTestFiles(testsDir))
+  const roots = [
+    "tests",
+    "backend/aero-gateway/test",
+    "bench",
+    "tools/perf/tests",
+    "tools/range-harness/test",
+    "packages/aero-stats/test",
+    "web/test",
+    "emulator/protocol/tests",
+  ].map((p) => path.join(repoRoot, p));
+
+  const all = [];
+  for (const dir of roots) {
+    try {
+      all.push(...(await collectTestFiles(dir)));
+    } catch {
+      // Ignore missing directories (workspaces may be pruned in some environments).
+    }
+  }
+
+  const files = all
     .filter((p) => basename(p) !== basename(__filename))
-    .map((p) => path.relative(testsDir, p))
+    .map((p) => path.relative(repoRoot, p))
     .sort();
 
   // Keep these as concatenated strings so this test doesn't trip itself.
@@ -51,7 +71,7 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
 
   const violations = [];
   for (const name of files) {
-    const fullPath = path.join(testsDir, name);
+    const fullPath = path.join(repoRoot, name);
     const content = await readFile(fullPath, "utf8");
     for (const rule of forbidden) {
       if (content.includes(rule.needle)) {
