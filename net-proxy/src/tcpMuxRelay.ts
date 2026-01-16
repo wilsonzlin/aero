@@ -22,6 +22,21 @@ import {
   type TcpMuxFrame
 } from "./tcpMuxProtocol";
 
+function formatDialErrorForClient(err: unknown): string {
+  const code = typeof (err as { code?: unknown } | null)?.code === "string" ? (err as { code: string }).code : "";
+  switch (code) {
+    case "ECONNREFUSED":
+      return "connection refused";
+    case "ETIMEDOUT":
+      return "connection timed out";
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+      return "host unreachable";
+    default:
+      return "dial failed";
+  }
+}
+
 type TcpMuxStreamState = {
   id: number;
   host: string;
@@ -182,7 +197,8 @@ export function handleTcpMuxRelay(
     try {
       target = decodeTcpMuxOpenPayload(frame.payload);
     } catch (err) {
-      sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, (err as Error).message);
+      // Keep client-visible error strings stable; do not reflect parser exception messages.
+      sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "Invalid OPEN payload");
       return;
     }
 
@@ -232,7 +248,7 @@ export function handleTcpMuxRelay(
         });
       } catch (err) {
         metrics.incConnectionError("error");
-        sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, (err as Error).message);
+        sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
         destroyStream(stream.id);
         log("error", "connect_error", {
           connId,
@@ -324,7 +340,7 @@ export function handleTcpMuxRelay(
 
       tcpSocket.on("error", (err) => {
         metrics.incConnectionError("error");
-        sendStreamError(current.id, TcpMuxErrorCode.DIAL_FAILED, (err as Error).message);
+        sendStreamError(current.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
         destroyStream(current.id);
         log("error", "connect_error", {
           connId,
@@ -381,7 +397,8 @@ export function handleTcpMuxRelay(
     try {
       flags = decodeTcpMuxClosePayload(frame.payload).flags;
     } catch (err) {
-      sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, (err as Error).message);
+      // Keep client-visible error strings stable; do not reflect parser exception messages.
+      sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "Invalid CLOSE payload");
       return;
     }
 

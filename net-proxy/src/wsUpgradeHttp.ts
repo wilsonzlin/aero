@@ -1,5 +1,9 @@
 import type { Duplex } from "node:stream";
 
+import { formatOneLineUtf8 } from "./text";
+
+const MAX_UPGRADE_ERROR_MESSAGE_BYTES = 512;
+
 function httpStatusText(status: number): string {
   switch (status) {
     case 400:
@@ -14,7 +18,8 @@ function httpStatusText(status: number): string {
 }
 
 export function rejectWsUpgrade(socket: Duplex, status: number, message: string): void {
-  const body = `${message}\n`;
+  const safeMessage = formatOneLineUtf8(message, MAX_UPGRADE_ERROR_MESSAGE_BYTES) || httpStatusText(status);
+  const body = `${safeMessage}\n`;
   socket.end(
     [
       `HTTP/1.1 ${status} ${httpStatusText(status)}`,
@@ -22,8 +27,8 @@ export function rejectWsUpgrade(socket: Duplex, status: number, message: string)
       `Content-Length: ${Buffer.byteLength(body)}`,
       "Connection: close",
       "",
-      body
-    ].join("\r\n")
+      body,
+    ].join("\r\n"),
   );
 }
 

@@ -26,12 +26,35 @@ export interface ProxyConfig {
   udpRelayInboundFilterMode: "any" | "address_and_port";
 }
 
-function readEnvInt(name: string, fallback: number): number {
+const MAX_ENV_INT_LEN = 64;
+
+function formatForError(value: string, maxLen = 128): string {
+  if (maxLen <= 0) return `(${value.length} chars)`;
+  if (value.length <= maxLen) return value;
+  return `${value.slice(0, maxLen)}…(${value.length} chars)`;
+}
+
+function readEnvInt(name: string, fallback: number, opts?: { min?: number; max?: number }): number {
   const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(`Invalid ${name}=${raw}`);
+  if (raw === undefined) return fallback;
+  const trimmed = raw.trim();
+  if (trimmed === "") return fallback;
+  if (trimmed.length > MAX_ENV_INT_LEN) {
+    throw new Error(`Invalid ${name} (value too long)`);
+  }
+  if (!/^[+-]?\d+$/.test(trimmed)) {
+    throw new Error(`Invalid ${name}`);
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`Invalid ${name}`);
+  }
+
+  const min = opts?.min ?? 0;
+  const max = opts?.max ?? Number.MAX_SAFE_INTEGER;
+  if (parsed < min || parsed > max) {
+    throw new Error(`Invalid ${name}`);
   }
   return parsed;
 }
@@ -39,10 +62,13 @@ function readEnvInt(name: string, fallback: number): number {
 function readEnvBool(name: string, fallback: boolean): boolean {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
+  if (raw.length > MAX_ENV_INT_LEN) {
+    throw new Error(`Invalid ${name} (value too long)`);
+  }
   const normalized = raw.trim().toLowerCase();
   if (normalized === "1" || normalized === "true") return true;
   if (normalized === "0" || normalized === "false") return false;
-  throw new Error(`Invalid ${name}=${raw} (expected 0/1/true/false)`);
+  throw new Error(`Invalid ${name} (expected 0/1/true/false)`);
 }
 
 function readEnvOriginAllowlist(name: string): string[] {
@@ -73,7 +99,7 @@ function readEnvOriginAllowlist(name: string): string[] {
       const url = new URL(part);
       out.push(url.origin);
     } catch {
-      throw new Error(`Invalid ${name} origin: ${part}`);
+      throw new Error(`Invalid ${name} origin: ${formatForError(part)}`);
     }
   }
 
@@ -129,7 +155,7 @@ export function loadConfigFromEnv(): ProxyConfig {
 
   return {
     listenHost: process.env.AERO_PROXY_LISTEN_HOST ?? "127.0.0.1",
-    listenPort: readEnvInt("AERO_PROXY_PORT", 8081),
+    listenPort: readEnvInt("AERO_PROXY_PORT", 8081, { min: 0, max: 65535 }),
     open: process.env.AERO_PROXY_OPEN === "1",
     allow: process.env.AERO_PROXY_ALLOW ?? "",
     connectTimeoutMs: readEnvInt("AERO_PROXY_CONNECT_TIMEOUT_MS", 10_000),

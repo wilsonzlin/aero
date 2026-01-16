@@ -3,6 +3,7 @@ import type { LookupAddress } from "node:dns";
 import net from "node:net";
 import ipaddr from "ipaddr.js";
 import { splitCommaSeparatedList } from "./csv";
+import { formatOneLineUtf8 } from "./text";
 
 export interface ResolvedTarget {
   requestedHost: string;
@@ -31,6 +32,12 @@ type AllowRule =
   | { kind: "cidr"; cidr: [ipaddr.IPv4 | ipaddr.IPv6, number]; ports: PortMatcher; raw: string }
   | { kind: "ip"; addr: ipaddr.IPv4 | ipaddr.IPv6; ports: PortMatcher; raw: string };
 
+function formatForError(value: string, maxLen = 256): string {
+  const out = formatOneLineUtf8(value, maxLen);
+  if (out.length === value.length) return out;
+  return `${out}…(${value.length} chars)`;
+}
+
 function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase().replace(/\.+$/, "");
 }
@@ -43,11 +50,13 @@ function splitHostAndPortSpec(raw: string): { host: string; portSpec: string } {
   // Also accepted for consistency in other cases.
   if (trimmed.startsWith("[")) {
     const closeIdx = trimmed.indexOf("]");
-    if (closeIdx === -1) throw new Error(`Invalid allowlist entry (missing ]): ${raw}`);
+    if (closeIdx === -1) throw new Error(`Invalid allowlist entry (missing ]): ${formatForError(raw)}`);
     const host = trimmed.slice(1, closeIdx);
     const rest = trimmed.slice(closeIdx + 1);
     if (rest === "") return { host, portSpec: "*" };
-    if (!rest.startsWith(":")) throw new Error(`Invalid allowlist entry (expected :port after ]): ${raw}`);
+    if (!rest.startsWith(":")) {
+      throw new Error(`Invalid allowlist entry (expected :port after ]): ${formatForError(raw)}`);
+    }
     return { host, portSpec: rest.slice(1) || "*" };
   }
 
@@ -65,7 +74,7 @@ function splitHostAndPortSpec(raw: string): { host: string; portSpec: string } {
   const hostPart = trimmed.slice(0, colonIdx);
   const maybePort = trimmed.slice(colonIdx + 1);
   if (maybePort === "") {
-    throw new Error(`Invalid allowlist entry (empty port): ${raw}`);
+    throw new Error(`Invalid allowlist entry (empty port): ${formatForError(raw)}`);
   }
 
   // For IPv6 CIDRs like `2001:db8::/32`, `maybePort` will be `/32` which is not a port matcher.
@@ -86,13 +95,13 @@ function parsePortMatcher(raw: string): PortMatcher {
     const from = Number(fromRaw);
     const to = Number(toRaw);
     if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > 65535 || from > to) {
-      throw new Error(`Invalid port range: ${raw}`);
+      throw new Error(`Invalid port range: ${formatForError(raw)}`);
     }
     return (port) => port >= from && port <= to;
   }
   const port = Number(trimmed);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`Invalid port: ${raw}`);
+    throw new Error(`Invalid port: ${formatForError(raw)}`);
   }
   return (p) => p === port;
 }
@@ -155,7 +164,7 @@ function parseAllowlist(rawAllowlist: string): AllowRule[] {
     entries = splitCommaSeparatedList(trimmed, { maxLen: 64 * 1024, maxItems: 4096 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Invalid allowlist: ${msg}`);
+    throw new Error(`Invalid allowlist: ${formatForError(msg, 128)}`);
   }
 
   const parsed = entries.map((entry) => parseAllowRule(entry));
@@ -284,13 +293,13 @@ export async function resolveAndAuthorizeTarget(
     if (domainRuleMatchedHostAndPort && resolvedAddrs.every((addr) => !isPublicUnicast(addr.parsed))) {
       return {
         allowed: false,
-        reason: "Target resolves to non-public IPs; domain allowlist rules only allow public targets (use IP/CIDR allowlist or AERO_PROXY_OPEN=1)"
+        reason: "Target resolves to non-public IPs; domain allowlist rules only allow public targets (use IP/CIDR allowlist)"
       };
     }
 
     return {
       allowed: false,
-      reason: `Target not in allowlist (AERO_PROXY_ALLOW=${opts.allowlist})`
+      reason: "Target not in allowlist"
     };
   }
 

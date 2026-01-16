@@ -71,7 +71,7 @@ test("websocket upgrade rejects missing Sec-WebSocket-Key (400)", async () => {
       ].join("\r\n")
     );
     assert.equal(res.status, 400);
-    assert.match(res.body, /Invalid WebSocket upgrade/);
+    assert.match(res.body, /Missing required header: Sec-WebSocket-Key/);
   } finally {
     await proxy.close();
   }
@@ -151,6 +151,32 @@ test("websocket upgrade rejects repeated handshake headers (400)", async () => {
     );
     assert.equal(res.status, 400);
     assert.match(res.body, /Invalid WebSocket upgrade/);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("tcp-mux upgrade rejects missing Sec-WebSocket-Protocol (400)", async () => {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const addr = proxy.server.address();
+  assert.ok(addr && typeof addr !== "string");
+
+  try {
+    const res = await sendRawUpgradeRequest(
+      "127.0.0.1",
+      addr.port,
+      [
+        "GET /tcp-mux HTTP/1.1",
+        `Host: 127.0.0.1:${addr.port}`,
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        "Sec-WebSocket-Version: 13",
+        `Sec-WebSocket-Key: ${makeKey()}`,
+        "\r\n",
+      ].join("\r\n"),
+    );
+    assert.equal(res.status, 400);
+    assert.match(res.body, /Missing required subprotocol:/);
   } finally {
     await proxy.close();
   }

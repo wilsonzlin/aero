@@ -32,10 +32,20 @@ const MAX_REQUEST_URL_LEN = 8 * 1024;
 export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Promise<RunningProxyServer> {
   const config: ProxyConfig = { ...loadConfigFromEnv(), ...overrides };
   const metrics = createProxyServerMetrics();
+  const parsedUrlKey: unique symbol = Symbol("aero.parsedUrl");
 
   const server = http.createServer((req, res) => {
     void (async () => {
-      const rawUrl = req.url ?? "/";
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string") {
+        const body = JSON.stringify({ error: "invalid url" });
+        res.writeHead(400, {
+          "content-type": "application/json; charset=utf-8",
+          "content-length": Buffer.byteLength(body)
+        });
+        res.end(body);
+        return;
+      }
       if (rawUrl.length > MAX_REQUEST_URL_LEN) {
         const body = JSON.stringify({ error: "url too long" });
         res.writeHead(414, {
@@ -120,7 +130,11 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   let nextConnId = 1;
 
   server.on("upgrade", (req, socket, head) => {
-    const rawUrl = req.url ?? "/";
+    const rawUrl = req.url;
+    if (typeof rawUrl !== "string") {
+      rejectWsUpgrade(socket, 400, "Invalid URL");
+      return;
+    }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       rejectWsUpgrade(socket, 414, "URL too long");
       return;
@@ -149,7 +163,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
         TCP_MUX_SUBPROTOCOL
       );
       if (!decision.ok) {
-        rejectWsUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol");
+        rejectWsUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol header");
         return;
       }
       if (!decision.has) {
@@ -168,6 +182,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
       return;
     }
 
+    (req as unknown as Record<symbol, unknown>)[parsedUrlKey] = url;
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);
     });
@@ -175,36 +190,56 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
 
   wss.on("connection", (ws, req) => {
     const connId = nextConnId++;
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const proto = url.pathname === "/udp" ? "udp" : "tcp";
+    const storedUrl = (req as unknown as Record<symbol, unknown>)[parsedUrlKey];
+    let parsedUrl: URL;
+    if (storedUrl instanceof URL) {
+      parsedUrl = storedUrl;
+    } else {
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string") {
+        wsCloseSafe(ws, 1002, "Invalid URL");
+        return;
+      }
+      if (rawUrl.length > MAX_REQUEST_URL_LEN) {
+        wsCloseSafe(ws, 1009, "URL too long");
+        return;
+      }
+      try {
+        parsedUrl = new URL(rawUrl, "http://localhost");
+      } catch {
+        wsCloseSafe(ws, 1002, "Invalid URL");
+        return;
+      }
+    }
+    const proto = parsedUrl.pathname === "/udp" ? "udp" : "tcp";
 
     const clientAddress = req.socket.remoteAddress ?? null;
 
     // `/udp` can operate in one of two modes:
-      // 1) Per-target (legacy): `/udp?host=...&port=...` (or `target=...`) where WS messages are raw datagrams.
-      // 2) Multiplexed (new): `/udp` with no target params, using v1/v2 framing (see proxy/webrtc-udp-relay/PROTOCOL.md).
-      const hasHost = url.searchParams.has("host");
-      const hasPort = url.searchParams.has("port");
-      const hasTarget = url.searchParams.has("target");
-      if (proto === "udp" && !hasHost && !hasPort && !hasTarget) {
-        log("info", "connect_requested", { connId, proto, mode: "multiplexed", clientAddress });
-        log("info", "connect_accepted", { connId, proto, mode: "multiplexed", clientAddress });
-        void handleUdpRelayMultiplexed(ws, connId, config, metrics);
-        return;
-      }
+    // 1) Per-target (legacy): `/udp?host=...&port=...` (or `target=...`) where WS messages are raw datagrams.
+    // 2) Multiplexed (new): `/udp` with no target params, using v1/v2 framing (see proxy/webrtc-udp-relay/PROTOCOL.md).
+    const hasHost = parsedUrl.searchParams.has("host");
+    const hasPort = parsedUrl.searchParams.has("port");
+    const hasTarget = parsedUrl.searchParams.has("target");
+    if (proto === "udp" && !hasHost && !hasPort && !hasTarget) {
+      log("info", "connect_requested", { connId, proto, mode: "multiplexed", clientAddress });
+      log("info", "connect_accepted", { connId, proto, mode: "multiplexed", clientAddress });
+      void handleUdpRelayMultiplexed(ws, connId, config, metrics);
+      return;
+    }
 
-      const parsedTarget = parseTargetQuery(url);
-      if ("error" in parsedTarget) {
-        log("warn", "connect_denied", {
-          connId,
-          proto,
-          clientAddress,
-          reason: parsedTarget.error
-        });
-        metrics.incConnectionError("denied");
-        wsCloseSafe(ws, 1008, parsedTarget.error);
-        return;
-      }
+    const parsedTarget = parseTargetQuery(parsedUrl);
+    if ("error" in parsedTarget) {
+      log("warn", "connect_denied", {
+        connId,
+        proto,
+        clientAddress,
+        reason: parsedTarget.error
+      });
+      metrics.incConnectionError("denied");
+      wsCloseSafe(ws, 1008, parsedTarget.error);
+      return;
+    }
 
     const { host, port, portRaw } = parsedTarget;
 
@@ -264,7 +299,9 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   const listenAddress =
     typeof addr === "string" ? addr : `http://${addr?.address ?? config.listenHost}:${addr?.port ?? config.listenPort}`;
 
-  log("info", "proxy_start", { listenAddress, open: config.open, allow: config.allow });
+  const allowConfigured = config.allow.trim().length > 0;
+  const policyMode = config.open ? "open" : allowConfigured ? "allowlist" : "public_only";
+  log("info", "proxy_start", { listenAddress, policyMode });
 
   return {
     server,

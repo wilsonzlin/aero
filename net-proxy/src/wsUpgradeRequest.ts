@@ -17,7 +17,7 @@ function headerSingle(headers: http.IncomingHttpHeaders, name: string): string |
   // Be strict: repeated handshake headers are ambiguous across stacks.
   if (Array.isArray(v)) {
     if (v.length === 0) return undefined;
-    if (v.length === 1) return String(v[0]);
+    if (v.length === 1) return typeof v[0] === "string" ? v[0] : undefined;
     return undefined;
   }
   return undefined;
@@ -102,7 +102,7 @@ export function validateWebSocketHandshakeRequest(req: http.IncomingMessage): We
     return { ok: false, status: 400, message: "Invalid WebSocket upgrade" };
   }
   if (!key || key.trim().length === 0) {
-    return { ok: false, status: 400, message: "Invalid WebSocket upgrade" };
+    return { ok: false, status: 400, message: "Missing required header: Sec-WebSocket-Key" };
   }
 
   return { ok: true };

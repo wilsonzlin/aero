@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { ProxyConfig } from "./config";
 import { asciiLowerEqualsSpan } from "./ascii";
+import { isTchar } from "./httpTokens";
 
 const MAX_CORS_REQUEST_HEADERS_LEN = 4096;
 
@@ -10,36 +11,10 @@ function isAsciiWhitespace(code: number): boolean {
   return code <= 0x20;
 }
 
-function isHttpTokenChar(code: number): boolean {
-  // RFC7230 token = 1*tchar, where:
-  // tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
-  //         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
-  if (code >= 0x30 /* '0' */ && code <= 0x39 /* '9' */) return true;
-  if (code >= 0x41 /* 'A' */ && code <= 0x5a /* 'Z' */) return true;
-  if (code >= 0x61 /* 'a' */ && code <= 0x7a /* 'z' */) return true;
-  return (
-    code === 0x21 /* '!' */ ||
-    code === 0x23 /* '#' */ ||
-    code === 0x24 /* '$' */ ||
-    code === 0x25 /* '%' */ ||
-    code === 0x26 /* '&' */ ||
-    code === 0x27 /* ''' */ ||
-    code === 0x2a /* '*' */ ||
-    code === 0x2b /* '+' */ ||
-    code === 0x2d /* '-' */ ||
-    code === 0x2e /* '.' */ ||
-    code === 0x5e /* '^' */ ||
-    code === 0x5f /* '_' */ ||
-    code === 0x60 /* '`' */ ||
-    code === 0x7c /* '|' */ ||
-    code === 0x7e /* '~' */
-  );
-}
-
 function isValidCorsHeaderNameList(s: string): boolean {
   for (let i = 0; i < s.length; i += 1) {
     const c = s.charCodeAt(i);
-    if (c === 0x2c /* ',' */ || isAsciiWhitespace(c) || isHttpTokenChar(c)) continue;
+    if (c === 0x2c /* ',' */ || isAsciiWhitespace(c) || isTchar(c)) continue;
     return false;
   }
   return true;
@@ -51,7 +26,7 @@ function corsHeaderListHasToken(s: string, lowerToken: string): boolean {
     while (i < s.length && (isAsciiWhitespace(s.charCodeAt(i)) || s.charCodeAt(i) === 0x2c /* ',' */)) i += 1;
     if (i >= s.length) break;
     const start = i;
-    while (i < s.length && isHttpTokenChar(s.charCodeAt(i))) i += 1;
+    while (i < s.length && isTchar(s.charCodeAt(i))) i += 1;
     const end = i;
     if (asciiLowerEqualsSpan(s, start, end, lowerToken)) return true;
     while (i < s.length && s.charCodeAt(i) !== 0x2c /* ',' */) i += 1;

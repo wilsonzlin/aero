@@ -6,6 +6,9 @@ import path from "node:path";
 import {
   TcpMuxMsgType,
   TcpMuxFrameParser,
+  MAX_TCP_MUX_OPEN_HOST_BYTES,
+  MAX_TCP_MUX_OPEN_METADATA_BYTES,
+  MAX_TCP_MUX_ERROR_MESSAGE_BYTES,
   decodeTcpMuxClosePayload,
   decodeTcpMuxErrorPayload,
   decodeTcpMuxOpenPayload,
@@ -146,3 +149,55 @@ for (const v of vectors.parserStreams) {
     });
   }
 }
+
+test("tcp-mux OPEN payload limits: rejects oversized host", () => {
+  const hostBytes = Buffer.alloc(MAX_TCP_MUX_OPEN_HOST_BYTES + 1, 0x61);
+  const payload = Buffer.allocUnsafe(2 + hostBytes.length + 2 + 2);
+  let off = 0;
+  payload.writeUInt16BE(hostBytes.length, off);
+  off += 2;
+  hostBytes.copy(payload, off);
+  off += hostBytes.length;
+  payload.writeUInt16BE(80, off);
+  off += 2;
+  payload.writeUInt16BE(0, off); // metadata_len
+
+  assert.throws(
+    () => decodeTcpMuxOpenPayload(payload),
+    (err) => err instanceof Error && err.message.includes("host too long"),
+  );
+});
+
+test("tcp-mux OPEN payload limits: rejects oversized metadata", () => {
+  const hostBytes = Buffer.from("a", "utf8");
+  const metadataBytes = Buffer.alloc(MAX_TCP_MUX_OPEN_METADATA_BYTES + 1, 0x62);
+  const payload = Buffer.allocUnsafe(2 + hostBytes.length + 2 + 2 + metadataBytes.length);
+  let off = 0;
+  payload.writeUInt16BE(hostBytes.length, off);
+  off += 2;
+  hostBytes.copy(payload, off);
+  off += hostBytes.length;
+  payload.writeUInt16BE(80, off);
+  off += 2;
+  payload.writeUInt16BE(metadataBytes.length, off);
+  off += 2;
+  metadataBytes.copy(payload, off);
+
+  assert.throws(
+    () => decodeTcpMuxOpenPayload(payload),
+    (err) => err instanceof Error && err.message.includes("metadata too long"),
+  );
+});
+
+test("tcp-mux ERROR payload limits: rejects oversized message", () => {
+  const messageBytes = Buffer.alloc(MAX_TCP_MUX_ERROR_MESSAGE_BYTES + 1, 0x61);
+  const payload = Buffer.allocUnsafe(2 + 2 + messageBytes.length);
+  payload.writeUInt16BE(1, 0); // code
+  payload.writeUInt16BE(messageBytes.length, 2);
+  messageBytes.copy(payload, 4);
+
+  assert.throws(
+    () => decodeTcpMuxErrorPayload(payload),
+    (err) => err instanceof Error && err.message.includes("error message too long"),
+  );
+});
