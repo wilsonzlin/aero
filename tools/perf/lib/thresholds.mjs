@@ -190,8 +190,12 @@ function assertObject(value, label) {
 export function validateThresholdPolicy(policy) {
   assertObject(policy, "threshold policy");
   if (policy.schemaVersion !== PERF_THRESHOLDS_SCHEMA_VERSION) {
+    const got =
+      typeof policy.schemaVersion === "number" || typeof policy.schemaVersion === "string"
+        ? policy.schemaVersion
+        : "unknown";
     throw new Error(
-      `Unsupported threshold policy schemaVersion ${String(policy.schemaVersion)} (expected ${PERF_THRESHOLDS_SCHEMA_VERSION})`,
+      `Unsupported threshold policy schemaVersion ${got} (expected ${PERF_THRESHOLDS_SCHEMA_VERSION})`,
     );
   }
   assertObject(policy.profiles, "threshold policy profiles");

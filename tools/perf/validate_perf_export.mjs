@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { formatOneLineUtf8 } from "../../src/text.js";
+import { formatOneLineError, formatOneLineUtf8 } from "../../src/text.js";
 
 const MAX_ERROR_MESSAGE_BYTES = 512;
 const MAX_ERROR_POINTER_BYTES = 256;
@@ -267,14 +267,14 @@ async function readJsonFile(file, label) {
   try {
     raw = await fs.readFile(file, "utf8");
   } catch (err) {
-    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    const msg = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     throw new Error(`${label}: failed to read ${file}: ${msg}`);
   }
 
   try {
     return JSON.parse(raw);
   } catch (err) {
-    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    const msg = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     throw new Error(`${label}: failed to parse JSON from ${file}: ${msg}`);
   }
 }
@@ -291,7 +291,12 @@ function formatAjvError(err) {
 
   const ptr = instancePath === "" ? "/" : instancePath;
   const safePtr = formatOneLineUtf8(ptr, MAX_ERROR_POINTER_BYTES) || "/";
-  const rawMsg = typeof err.message === "string" ? err.message : "schema validation failed";
+  let rawMsg = "schema validation failed";
+  try {
+    rawMsg = typeof err.message === "string" ? err.message : rawMsg;
+  } catch {
+    // ignore getters throwing
+  }
   const safeMsg = formatOneLineUtf8(rawMsg, MAX_ERROR_MESSAGE_BYTES) || "schema validation failed";
   return `${safePtr}: ${safeMsg}`;
 }
@@ -341,7 +346,6 @@ async function main() {
 try {
   await main();
 } catch (err) {
-  const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
-  console.error(msg);
+  console.error(formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES));
   process.exit(1);
 }

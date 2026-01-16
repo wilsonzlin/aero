@@ -8,7 +8,7 @@ import { performance } from "node:perf_hooks";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 import { summarize } from "./lib/stats.mjs";
-import { formatOneLineUtf8 } from "../../src/text.js";
+import { formatOneLineError, formatOneLineUtf8 } from "../../src/text.js";
 
 const execFile = promisify(execFileCb);
 const require = createRequire(import.meta.url);
@@ -117,7 +117,7 @@ async function withRetries(label, attempts, fn) {
       return await fn();
     } catch (err) {
       lastErr = err;
-      const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+      const msg = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
       console.warn(`[perf] ${label} failed (attempt ${attempt}/${attempts}): ${msg}`);
       if (attempt < attempts) {
         await sleep(250 * attempt);
@@ -222,7 +222,7 @@ async function tryCaptureAeroPerfExport(page) {
       json: typeof res?.json === "string" ? res.json : null,
     };
   } catch (err) {
-    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    const msg = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     return {
       available: false,
       apiTimedOut,
@@ -308,7 +308,7 @@ async function tryCaptureAeroTrace(page, opts) {
       res.captured = true;
     }
   } catch (err) {
-    const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+    const msg = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     res.error = msg;
     if (msg.includes("timed out")) res.timedOut = true;
   } finally {
@@ -413,7 +413,7 @@ async function runMicrobenchSamples(url, iterations, opts) {
           await page.evaluate(runAeroMicrobenchSuiteOnce);
         } catch (err) {
           aeroMicrobenchSuite.status = "skipped";
-          const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+          const msg = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
           aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite warmup failed: ${msg}`;
         }
 
@@ -430,7 +430,7 @@ async function runMicrobenchSamples(url, iterations, opts) {
               aeroMicrobenchSuite.samples.push(ms);
             } catch (err) {
               aeroMicrobenchSuite.status = "skipped";
-              const msg = formatOneLineUtf8(err?.message ?? err, MAX_ERROR_MESSAGE_BYTES) || "Error";
+              const msg = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
               aeroMicrobenchSuite.reason = `window.aero.bench.runMicrobenchSuite failed: ${msg}`;
               aeroMicrobenchSuite.samples = [];
               break;

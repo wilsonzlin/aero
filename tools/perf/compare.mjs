@@ -85,7 +85,25 @@ function parseArgs(argv) {
 }
 
 function mdEscape(s) {
-  return String(s).replaceAll("|", "\\|");
+  return coerceScalarString(s).replaceAll("|", "\\|");
+}
+
+function coerceScalarString(value) {
+  if (value == null) return "";
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    case "symbol":
+    case "undefined":
+    case "object":
+    case "function":
+    default:
+      return "";
+  }
 }
 
 function fmtCount(n) {
@@ -174,7 +192,8 @@ async function main() {
 
     const b = baselineMap.get(metricName);
     const c = candidateMap.get(metricName);
-    const unit = (b?.unit ?? c?.unit ?? "").toString();
+    const unitRaw = b?.unit ?? c?.unit ?? "";
+    const unit = coerceScalarString(unitRaw).slice(0, 64);
 
     const baselineStats = b?.stats
       ? {

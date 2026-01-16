@@ -283,8 +283,26 @@ function formatSignedPct(pct, { decimals = 2 } = {}) {
   return `${sign}${Number((pct * 100).toFixed(decimals))}%`;
 }
 
+function coerceScalarString(value) {
+  if (value == null) return "";
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    case "symbol":
+    case "undefined":
+    case "object":
+    case "function":
+    default:
+      return "";
+  }
+}
+
 function mdEscape(text) {
-  return String(text).replaceAll("|", "\\|");
+  return coerceScalarString(text).replaceAll("|", "\\|");
 }
 
 function renderThresholdSummary(threshold, unit) {
@@ -319,7 +337,7 @@ function statusLabel(status, unstable) {
       case "missing_candidate":
         return "MISSING_CANDIDATE";
       default:
-        return String(status);
+        return coerceScalarString(status) || "UNKNOWN";
     }
   })();
   return unstable ? `${base} (UNSTABLE)` : base;
