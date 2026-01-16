@@ -82,7 +82,22 @@ function toBuffer(data) {
   if (typeof data === "string") return Buffer.from(data, "utf8");
   if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data));
   if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  return Buffer.from(String(data), "utf8");
+  if (data === null) return Buffer.from("null", "utf8");
+  switch (typeof data) {
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+    case "undefined":
+      {
+        const text = String(data);
+        return Buffer.from(text, "utf8");
+      }
+    case "object":
+    case "function":
+    default:
+      throw new TypeError("Unsupported WebSocket data type");
+  }
 }
 
 function commaSeparatedTokens(value, { maxTokens }) {
@@ -335,7 +350,15 @@ class BaseWebSocket extends EventEmitter {
 
     const isText = typeof data === "string";
     const opcode = isText ? 0x1 : 0x2;
-    const payload = toBuffer(data);
+    let payload;
+    try {
+      payload = toBuffer(data);
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error("Failed to encode WebSocket payload");
+      cb?.(e);
+      this.emit("error", e);
+      return;
+    }
     const mask = !this.#expectMasked; // client masks, server doesn't.
     const frame = encodeFrame(opcode, payload, { mask });
     try {

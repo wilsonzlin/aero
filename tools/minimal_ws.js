@@ -444,7 +444,22 @@ function normalizeSendData(data) {
   if (Buffer.isBuffer(data)) return data;
   if (data instanceof ArrayBuffer) return Buffer.from(data);
   if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  return Buffer.from(String(data));
+
+  // Match WebSocket's "send any scalar" ergonomics while avoiding `toString()` on
+  // arbitrary objects/functions (can throw, be expensive, or be attacker-controlled).
+  if (data === null) return "null";
+  switch (typeof data) {
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+    case "undefined":
+      return String(data);
+    case "object":
+    case "function":
+    default:
+      throw new TypeError("Unsupported WebSocket send() payload type");
+  }
 }
 
 function encodeClosePayload(code, reason) {
