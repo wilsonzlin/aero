@@ -73,3 +73,30 @@ export function formatOneLineUtf8(input: unknown, maxBytes: number): string {
   }
   return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
 }
+
+function safeErrorMessageInput(err: unknown): string {
+  if (err === null) return "null";
+
+  const t = typeof err;
+  if (t === "string") return err;
+  if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
+
+  if (t === "object") {
+    try {
+      const msg = err && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : null;
+      if (msg !== null) return msg;
+    } catch {
+      // ignore getters throwing
+    }
+  }
+
+  // Avoid calling toString() on arbitrary objects/functions (can throw / be expensive).
+  return "Error";
+}
+
+export function formatOneLineError(err: unknown, maxBytes: number, fallback = "Error"): string {
+  const raw = safeErrorMessageInput(err);
+  const safe = formatOneLineUtf8(raw, maxBytes);
+  const fb = typeof fallback === "string" && fallback ? fallback : "Error";
+  return safe || fb;
+}

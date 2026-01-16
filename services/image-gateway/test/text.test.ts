@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatOneLineUtf8, sanitizeOneLine, truncateUtf8 } from "../src/text";
+import { formatOneLineError, formatOneLineUtf8, sanitizeOneLine, truncateUtf8 } from "../src/text";
 
 describe("text", () => {
   it("sanitizeOneLine collapses whitespace and removes control chars", () => {
@@ -35,6 +35,30 @@ describe("text", () => {
     expect(formatOneLineUtf8("a\tb\nc", 512)).toBe("a b c");
     expect(formatOneLineUtf8("a\u00a0b", 512)).toBe("a b");
     expect(formatOneLineUtf8("🙂", 3)).toBe("");
+  });
+
+  it("formatOneLineError is safe and byte-bounded", () => {
+    const throwingMessage = Object.create(null, {
+      message: {
+        enumerable: true,
+        get() {
+          throw new Error("boom");
+        },
+      },
+    });
+
+    expect(formatOneLineError(new Error("a\tb\nc"), 512)).toBe("a b c");
+    expect(formatOneLineError({ message: "x\ny" }, 512)).toBe("x y");
+    expect(formatOneLineError(throwingMessage, 512)).toBe("Error");
+    expect(formatOneLineError({}, 512)).toBe("Error");
+    expect(formatOneLineError(() => {}, 512)).toBe("Error");
+    expect(formatOneLineError(123, 512)).toBe("123");
+    expect(formatOneLineError(null, 512)).toBe("null");
+    expect(formatOneLineError("🙂", 3)).toBe("Error");
+
+    const long = formatOneLineError("x".repeat(600), 512);
+    expect(long.includes("\n")).toBe(false);
+    expect(Buffer.byteLength(long, "utf8")).toBeLessThanOrEqual(512);
   });
 });
 
