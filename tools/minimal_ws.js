@@ -22,6 +22,31 @@ function computeAccept(key) {
     .digest("base64");
 }
 
+function trySocketWrite(socket, data, cb) {
+  try {
+    return cb ? socket.write(data, cb) : socket.write(data);
+  } catch (err) {
+    if (typeof cb === "function") queueMicrotask(() => cb(err));
+    return false;
+  }
+}
+
+function trySocketEnd(socket, data) {
+  try {
+    socket.end(data);
+  } catch {
+    // ignore
+  }
+}
+
+function trySocketDestroy(socket) {
+  try {
+    socket.destroy();
+  } catch {
+    // ignore
+  }
+}
+
 function commaSeparatedTokens(raw, { maxLen, maxTokens }) {
   if (typeof raw !== "string") return null;
   if (raw.length > maxLen) return null;
@@ -159,10 +184,10 @@ class WebSocket extends EventEmitter {
       mask: this._isClient,
     });
     const cb = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
-    if (cb) {
-      this._socket.write(frame, cb);
-    } else {
-      this._socket.write(frame);
+    const ok = trySocketWrite(this._socket, frame, cb ?? undefined);
+    if (!ok && !cb) {
+      queueMicrotask(() => this.emit("error", new Error("WebSocket send failed")));
+      trySocketDestroy(this._socket);
     }
   }
 
@@ -171,13 +196,13 @@ class WebSocket extends EventEmitter {
     this._sentClose = true;
     const payload = encodeClosePayload(code, reason);
     if (this._socket) {
-      this._socket.write(encodeFrame(0x8, payload, { mask: this._isClient }));
-      this._socket.end();
+      trySocketWrite(this._socket, encodeFrame(0x8, payload, { mask: this._isClient }));
+      trySocketEnd(this._socket);
     }
   }
 
   terminate() {
-    if (this._socket) this._socket.destroy();
+    if (this._socket) trySocketDestroy(this._socket);
   }
 
   _connect(url, protocols, options) {
@@ -264,7 +289,7 @@ class WebSocket extends EventEmitter {
 
       const accept = res.headers["sec-websocket-accept"];
       if (typeof accept !== "string" || accept !== expectedAccept) {
-        socket.destroy();
+        trySocketDestroy(socket);
         this.emit("error", new Error("Invalid Sec-WebSocket-Accept in handshake response"));
         return;
       }
@@ -410,7 +435,8 @@ class WebSocket extends EventEmitter {
       if (opcode === 0x9) {
         // Ping → Pong.
         if (this._socket) {
-          this._socket.write(encodeFrame(0x0a, payload, { mask: this._isClient }));
+          const ok = trySocketWrite(this._socket, encodeFrame(0x0a, payload, { mask: this._isClient }));
+          if (!ok) trySocketDestroy(this._socket);
         }
         continue;
       }
@@ -426,10 +452,10 @@ class WebSocket extends EventEmitter {
         if (!this._sentClose) {
           this._sentClose = true;
           if (this._socket) {
-            this._socket.write(encodeFrame(0x8, encodeClosePayload(code, reason), { mask: this._isClient }));
+            trySocketWrite(this._socket, encodeFrame(0x8, encodeClosePayload(code, reason), { mask: this._isClient }));
           }
         }
-        if (this._socket) this._socket.end();
+        if (this._socket) trySocketEnd(this._socket);
         continue;
       }
 
@@ -530,13 +556,13 @@ class WebSocketServer extends EventEmitter {
     try {
       const key = req.headers["sec-websocket-key"];
       if (typeof key !== "string" || key.length === 0 || key.length > MAX_WS_KEY_LEN) {
-        socket.destroy();
+        trySocketDestroy(socket);
         return;
       }
 
       const offered = parseProtocolsHeader(req.headers["sec-websocket-protocol"]);
       if (offered === null) {
-        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        trySocketEnd(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         return;
       }
       const offeredSet = new Set(offered);
@@ -544,12 +570,12 @@ class WebSocketServer extends EventEmitter {
       if (this._handleProtocols) {
         const res = this._handleProtocols(offeredSet, req);
         if (res === false || typeof res !== "string") {
-          socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          trySocketEnd(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
           return;
         }
         const trimmed = res.trim();
         if (trimmed === "" || !offeredSet.has(trimmed)) {
-          socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          trySocketEnd(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
           return;
         }
         selected = trimmed;
@@ -565,7 +591,11 @@ class WebSocketServer extends EventEmitter {
         "",
         "",
       ];
-      socket.write(lines.join("\r\n"));
+      const ok = trySocketWrite(socket, lines.join("\r\n"));
+      if (!ok) {
+        trySocketDestroy(socket);
+        return;
+      }
 
       const ws = new WebSocket(socket, {
         head,
@@ -580,7 +610,7 @@ class WebSocketServer extends EventEmitter {
 
       cb(ws);
     } catch {
-      socket.destroy();
+      trySocketDestroy(socket);
     }
   }
 }
