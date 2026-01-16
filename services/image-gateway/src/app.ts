@@ -28,7 +28,7 @@ import { ApiError } from "./errors";
 import { DISK_BYTES_CONTENT_TYPE, buildRangeProxyHeaders, buildRangeProxyResponse } from "./rangeProxy";
 import type { ImageRecord, ImageStore } from "./store";
 import { buildImageObjectKey } from "./s3";
-import { formatOneLineUtf8 } from "./text";
+import { formatOneLineError } from "./text";
 
 export interface BuildAppDeps {
   config: Config;
@@ -487,21 +487,6 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
 
   const MAX_CLIENT_ERROR_MESSAGE_BYTES = 512;
 
-  function formatClientErrorMessage(message: unknown): string {
-    const formatted = formatOneLineUtf8(message, MAX_CLIENT_ERROR_MESSAGE_BYTES);
-    return formatted || "Request failed";
-  }
-
-  function safeErrorMessageString(err: unknown): string {
-    if (!err || typeof err !== "object") return "";
-    try {
-      const msg = (err as { message?: unknown }).message;
-      return typeof msg === "string" ? msg : "";
-    } catch {
-      return "";
-    }
-  }
-
   app.addHook("onRequest", async (req, reply) => {
     applyCorsHeaders(reply, deps.config);
 
@@ -533,7 +518,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       statusCode >= 500
         ? "Internal Server Error"
         : err instanceof ApiError
-          ? formatClientErrorMessage(safeErrorMessageString(err))
+          ? formatOneLineError(err, MAX_CLIENT_ERROR_MESSAGE_BYTES, "Request failed")
           : "Request failed";
 
     if (statusCode >= 500) {
