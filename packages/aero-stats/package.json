@@ -5,5 +5,10 @@
   "engines": {
     "node": ">=22.11.0 <23"
   },
-  "exports": "./src/index.js"
+  "exports": "./src/index.js",
+  "scripts": {
+    "check:node": "node ../../scripts/check-node-version.mjs",
+    "pretest": "npm run check:node",
+    "test": "node --test test/*.test.js"
+  }
 }
