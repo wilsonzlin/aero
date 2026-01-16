@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   TCP_MUX_HEADER_BYTES,
+  MAX_TCP_MUX_OPEN_HOST_BYTES,
+  MAX_TCP_MUX_OPEN_METADATA_BYTES,
   TcpMuxCloseFlags,
   TcpMuxErrorCode,
   TcpMuxFrameParser,
@@ -72,4 +74,37 @@ test("tcp-mux: frame parser rejects payload length larger than max", () => {
 
   const parser = new TcpMuxFrameParser(16);
   assert.throws(() => parser.push(header), /exceeds max/i);
+});
+
+test("tcp-mux: OPEN payload rejects oversized host", () => {
+  const hostBytes = Buffer.alloc(MAX_TCP_MUX_OPEN_HOST_BYTES + 1, 0x61);
+  const payload = Buffer.allocUnsafe(2 + hostBytes.length + 2 + 2);
+  let off = 0;
+  payload.writeUInt16BE(hostBytes.length, off);
+  off += 2;
+  hostBytes.copy(payload, off);
+  off += hostBytes.length;
+  payload.writeUInt16BE(80, off);
+  off += 2;
+  payload.writeUInt16BE(0, off); // metadata_len
+
+  assert.throws(() => decodeTcpMuxOpenPayload(payload), /host too long/i);
+});
+
+test("tcp-mux: OPEN payload rejects oversized metadata", () => {
+  const hostBytes = Buffer.from("a", "utf8");
+  const metadataBytes = Buffer.alloc(MAX_TCP_MUX_OPEN_METADATA_BYTES + 1, 0x62);
+  const payload = Buffer.allocUnsafe(2 + hostBytes.length + 2 + 2 + metadataBytes.length);
+  let off = 0;
+  payload.writeUInt16BE(hostBytes.length, off);
+  off += 2;
+  hostBytes.copy(payload, off);
+  off += hostBytes.length;
+  payload.writeUInt16BE(80, off);
+  off += 2;
+  payload.writeUInt16BE(metadataBytes.length, off);
+  off += 2;
+  metadataBytes.copy(payload, off);
+
+  assert.throws(() => decodeTcpMuxOpenPayload(payload), /metadata too long/i);
 });

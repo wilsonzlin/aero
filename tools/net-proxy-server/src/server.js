@@ -2,6 +2,8 @@ import http from "node:http";
 import { lookup } from "node:dns/promises";
 import net from "node:net";
 import WebSocket, { WebSocketServer } from "ws";
+import { formatOneLineUtf8 } from "./text.js";
+import { hasWebSocketSubprotocol } from "./wsSubprotocol.js";
 import {
   TCP_MUX_HEADER_BYTES,
   TCP_MUX_SUBPROTOCOL,
@@ -17,10 +19,29 @@ import {
 } from "./protocol.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
-const MAX_SUBPROTOCOL_HEADER_LEN = 4 * 1024;
 const MAX_AUTH_HEADER_LEN = 4 * 1024;
 const MAX_TOKEN_LEN = 4 * 1024;
-const MAX_SUBPROTOCOL_TOKENS = 32;
+
+// RFC6455 close reason is limited to 123 bytes. Sanitize to avoid log/client injection.
+const MAX_WS_CLOSE_REASON_BYTES = 123;
+// tcp-mux error payload strings can be attacker-influenced; keep messages small and single-line.
+// Match the protocol cap (`encodeTcpMuxErrorPayload`).
+const MAX_TCP_MUX_ERROR_MESSAGE_BYTES = 1024;
+// HTTP status line text should never be attacker-controlled; keep it tiny and single-line.
+const MAX_UPGRADE_STATUS_MESSAGE_BYTES = 64;
+
+function wsCloseSafe(ws, code, reason) {
+  try {
+    ws.close(code, formatOneLineUtf8(reason, MAX_WS_CLOSE_REASON_BYTES));
+  } catch {
+    // ignore best-effort close failures
+  }
+}
+
+function formatTcpMuxErrorMessage(err) {
+  const raw = err && typeof err === "object" && "message" in err ? err.message : err;
+  return formatOneLineUtf8(raw, MAX_TCP_MUX_ERROR_MESSAGE_BYTES) || "Error";
+}
 
 function normalizeRemoteAddress(remoteAddress) {
   if (!remoteAddress) return "unknown";
@@ -36,34 +57,6 @@ function singleHeaderValue(value) {
     return value[0];
   }
   return undefined;
-}
-
-function headerHasSubprotocol(headerValue, required) {
-  // Avoid `.split(",")` on attacker-controlled inputs.
-  if (!headerValue) return false;
-  if (headerValue.length > MAX_SUBPROTOCOL_HEADER_LEN) return false;
-
-  let tokens = 0;
-  let start = 0;
-  for (let i = 0; i <= headerValue.length; i++) {
-    const ch = i === headerValue.length ? "," : headerValue[i];
-    if (ch !== ",") continue;
-
-    let a = start;
-    let b = i;
-    while (a < b && headerValue.charCodeAt(a) <= 0x20) a++;
-    while (b > a && headerValue.charCodeAt(b - 1) <= 0x20) b--;
-
-    if (b > a) {
-      tokens += 1;
-      if (tokens > MAX_SUBPROTOCOL_TOKENS) return false;
-      if (headerValue.slice(a, b) === required) return true;
-    }
-
-    start = i + 1;
-  }
-
-  return false;
 }
 
 function u32FromIpv4Bytes(ip) {
@@ -367,7 +360,8 @@ export async function createProxyServer(userConfig) {
   });
 
   function rejectUpgrade(socket, statusCode, message) {
-    socket.write(`HTTP/1.1 ${statusCode} ${message}\r\n\r\n`);
+    const safeMessage = formatOneLineUtf8(message, MAX_UPGRADE_STATUS_MESSAGE_BYTES) || "Error";
+    socket.write(`HTTP/1.1 ${statusCode} ${safeMessage}\r\n\r\n`);
     socket.destroy();
   }
 
@@ -383,18 +377,27 @@ export async function createProxyServer(userConfig) {
         return;
       }
 
-      const url = new URL(rawUrl, "http://localhost");
+      let url;
+      try {
+        url = new URL(rawUrl, "http://localhost");
+      } catch {
+        rejectUpgrade(socket, 400, "Bad Request");
+        return;
+      }
       if (url.pathname !== config.path) {
         rejectUpgrade(socket, 404, "Not Found");
         return;
       }
 
-      const protocolHeader = singleHeaderValue(req.headers["sec-websocket-protocol"]);
-      if (protocolHeader === null) {
-        rejectUpgrade(socket, 400, "Invalid WebSocket upgrade");
+      const protocolHeaderRaw = req.headers["sec-websocket-protocol"];
+      const protocolHeader =
+        typeof protocolHeaderRaw === "string" || Array.isArray(protocolHeaderRaw) ? protocolHeaderRaw : undefined;
+      const subprotocol = hasWebSocketSubprotocol(protocolHeader, TCP_MUX_SUBPROTOCOL);
+      if (!subprotocol.ok) {
+        rejectUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol header");
         return;
       }
-      if (!headerHasSubprotocol(protocolHeader ?? "", TCP_MUX_SUBPROTOCOL)) {
+      if (!subprotocol.has) {
         rejectUpgrade(socket, 400, `Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`);
         return;
       }
@@ -572,7 +575,11 @@ export async function createProxyServer(userConfig) {
     }
 
     function sendStreamError(streamId, code, message) {
-      sendMuxFrame(TcpMuxMsgType.ERROR, streamId, encodeTcpMuxErrorPayload(code, message));
+      sendMuxFrame(
+        TcpMuxMsgType.ERROR,
+        streamId,
+        encodeTcpMuxErrorPayload(code, formatTcpMuxErrorMessage(message)),
+      );
     }
 
     function removeStream(streamId) {
@@ -655,7 +662,8 @@ export async function createProxyServer(userConfig) {
       try {
         open = decodeTcpMuxOpenPayload(frame.payload);
       } catch (err) {
-        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, String(err?.message ?? err));
+        // Keep client-visible error strings stable; do not reflect parser exception messages.
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "Invalid OPEN payload");
         return;
       }
 
@@ -704,7 +712,7 @@ export async function createProxyServer(userConfig) {
               }
             }
 
-            cb(new TcpMuxIpPolicyDeniedError("All resolved IPs are blocked by IP egress policy"), "", 4);
+            cb(new TcpMuxIpPolicyDeniedError("Target IP is blocked by IP egress policy"), "", 4);
           })();
         };
       }
@@ -765,14 +773,15 @@ export async function createProxyServer(userConfig) {
           streamId: frame.streamId,
           host,
           port,
-          message: String(err?.message ?? err),
+          message: formatTcpMuxErrorMessage(err),
         });
 
         if (err instanceof TcpMuxIpPolicyDeniedError) {
           stats.deniedDestinations += 1;
-          sendStreamError(frame.streamId, TcpMuxErrorCode.POLICY_DENIED, err.message);
+          // Keep client-visible error strings stable; do not reflect the exception message.
+          sendStreamError(frame.streamId, TcpMuxErrorCode.POLICY_DENIED, "Target IP is blocked by IP egress policy");
         } else {
-          sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, String(err?.message ?? err));
+          sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
         }
         destroyStream(frame.streamId);
       });
@@ -821,7 +830,8 @@ export async function createProxyServer(userConfig) {
       try {
         flags = decodeTcpMuxClosePayload(frame.payload).flags;
       } catch (err) {
-        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, String(err?.message ?? err));
+        // Keep client-visible error strings stable; do not reflect parser exception messages.
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "Invalid CLOSE payload");
         return;
       }
 
@@ -838,7 +848,7 @@ export async function createProxyServer(userConfig) {
 
     function handleMuxFrame(frame) {
       if (frame.payload.length > config.maxFramePayloadBytes) {
-        ws.close(1002, "Frame payload too large");
+        wsCloseSafe(ws, 1002, "Frame payload too large");
         return;
       }
 
@@ -868,7 +878,7 @@ export async function createProxyServer(userConfig) {
     ws.on("message", (data, isBinary) => {
       if (!isBinary) {
         // /tcp-mux is a binary protocol; close with "unsupported data".
-        ws.close(1003, "Binary messages only");
+        wsCloseSafe(ws, 1003, "Binary messages only");
         return;
       }
 
@@ -876,7 +886,7 @@ export async function createProxyServer(userConfig) {
       try {
         chunk = asBuffer(data);
       } catch (err) {
-        ws.close(1002, String(err?.message ?? err));
+        wsCloseSafe(ws, 1002, "Protocol error");
         return;
       }
 
@@ -886,7 +896,7 @@ export async function createProxyServer(userConfig) {
       try {
         frames = muxParser.push(chunk);
       } catch (err) {
-        ws.close(1002, "Protocol error");
+        wsCloseSafe(ws, 1002, "Protocol error");
         return;
       }
       stats.framesFromClient += frames.length;
@@ -895,7 +905,7 @@ export async function createProxyServer(userConfig) {
       }
 
       if (muxParser.pendingBytes() > TCP_MUX_HEADER_BYTES + config.maxFramePayloadBytes) {
-        ws.close(1002, "Framing buffer overflow");
+        wsCloseSafe(ws, 1002, "Framing buffer overflow");
       }
     });
 
@@ -910,7 +920,7 @@ export async function createProxyServer(userConfig) {
     });
 
     ws.on("error", (err) => {
-      log({ level: "warn", event: "ws_error", sessionId, message: String(err?.message ?? err) });
+      log({ level: "warn", event: "ws_error", sessionId, message: formatTcpMuxErrorMessage(err) });
     });
   });
 
