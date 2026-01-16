@@ -37,7 +37,6 @@ runs:
   steps:
     - name: Resolve Playwright inputs
       id: vars
-      shell: bash
       env:
         INPUT_BROWSERS: ${{ inputs.browsers }}
         INPUT_PROJECT: ${{ inputs.project }}
@@ -45,230 +44,21 @@ runs:
         INPUT_CACHE_PATH: ${{ inputs.cache-path }}
         INPUT_LOCKFILE: ${{ inputs.lockfile }}
         INPUT_WITH_DEPS: ${{ inputs.with-deps }}
-      run: |
-        set -euo pipefail
-        node <<'NODE'
-        const fs = require('fs');
-        const path = require('path');
-        const os = require('os');
-        
-        function append(file, text) {
-          fs.appendFileSync(file, text);
-        }
-        
-        function setOutput(key, value) {
-          append(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
-        }
-        
-        function setEnv(key, value) {
-          append(process.env.GITHUB_ENV, `${key}=${value}\n`);
-        }
-        
-        const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
-        
-        const browsersRaw = (process.env.INPUT_BROWSERS || '').trim()
-          || (process.env.INPUT_PROJECT || '').trim()
-          || 'chromium';
-         const browsers = browsersRaw.split(/\s+/).filter(Boolean);
-         const browsersKey = [...new Set(browsers)].sort().join('-');
-         
-        let workingDirectory = (process.env.INPUT_WORKING_DIRECTORY || '').trim();
-        let resolvedLockfile = '';
-        if (!workingDirectory) {
-          // Prefer using the repo's shared resolver when available so workflows
-          // (and local tooling) agree on the Node workspace directory.
-          const detectScript = path.resolve(workspace, 'scripts/ci/detect-node-dir.mjs');
-          if (fs.existsSync(detectScript)) {
-            const { spawnSync } = require('child_process');
-            const result = spawnSync('node', [detectScript], {
-              cwd: workspace,
-              stdio: ['ignore', 'pipe', 'pipe'],
-              encoding: 'utf8',
-            });
-            if ((result.status ?? 1) !== 0) {
-              const details = (result.stderr || result.stdout || '').trim();
-              throw new Error(`setup-playwright: detect-node-dir failed.\n\n${details}`);
-            }
-            for (const line of String(result.stdout || '').split(/\r?\n/u)) {
-              const idx = line.indexOf('=');
-              if (idx === -1) continue;
-              const key = line.slice(0, idx).trim();
-              const value = line.slice(idx + 1).trim();
-              if (key === 'dir') workingDirectory = value;
-              if (key === 'lockfile') resolvedLockfile = value;
-            }
-          } else {
-            const aeroNodeDir = (process.env.AERO_NODE_DIR || '').trim();
-            const candidates = [aeroNodeDir || null, '.', 'frontend', 'web'].filter(Boolean);
-          
-            for (const dir of candidates) {
-              const pkg = path.resolve(workspace, dir, 'package.json');
-              if (fs.existsSync(pkg)) {
-                workingDirectory = dir;
-                break;
-              }
-            }
-          }
-        }
-         
-         if (!workingDirectory) {
-           throw new Error(
-             'setup-playwright: could not resolve a Node workspace. ' +
-              'Set the `working-directory` input (or AERO_NODE_DIR) to the directory containing package.json.'
-          );
-        }
-         
-         const workingDirAbs = path.resolve(workspace, workingDirectory);
-         
-         let lockfile = (process.env.INPUT_LOCKFILE || '').trim();
-         if (lockfile) {
-           if (path.isAbsolute(lockfile)) lockfile = path.relative(workspace, lockfile);
-           lockfile = lockfile.replace(/\\/g, '/');
-         } else if (resolvedLockfile) {
-           lockfile = resolvedLockfile;
-           if (path.isAbsolute(lockfile)) lockfile = path.relative(workspace, lockfile);
-           lockfile = lockfile.replace(/\\/g, '/');
-          } else {
-            // Walk up from the working directory to find the nearest npm lockfile.
-            // This allows monorepo/workspace layouts where only the repo root has
-            // package-lock.json (and multi-checkout workflows where checkouts live
-            // under `head/` + `base/`).
-            const workspaceAbs = path.resolve(workspace);
-            const candidates = ['package-lock.json', 'npm-shrinkwrap.json'];
-            let cursor = workingDirAbs;
-            while (true) {
-              for (const name of candidates) {
-                const candidate = path.join(cursor, name);
-                if (fs.existsSync(candidate)) {
-                  lockfile = path.relative(workspaceAbs, candidate).replace(/\\/g, '/');
-                  break;
-                }
-              }
-              if (lockfile) break;
-              if (path.resolve(cursor) === workspaceAbs) break;
-              const parent = path.dirname(cursor);
-              if (parent === cursor) break;
-              const rel = path.relative(workspaceAbs, parent);
-              if (rel.startsWith('..') || path.isAbsolute(rel)) break;
-              cursor = parent;
-            }
-          }
-        
-        let cacheKeyFile = lockfile;
-        if (!cacheKeyFile) {
-          const pkg = path.join(workingDirAbs, 'package.json');
-          if (!fs.existsSync(pkg)) {
-            throw new Error(
-              `setup-playwright: expected package.json at "${path.relative(workspace, pkg)}" but it does not exist.`
-            );
-          }
-          cacheKeyFile = path.relative(workspace, pkg).replace(/\\/g, '/');
-        } else {
-          const abs = path.resolve(workspace, cacheKeyFile);
-          if (!fs.existsSync(abs)) {
-            throw new Error(`setup-playwright: lockfile "${cacheKeyFile}" does not exist.`);
-          }
-        }
-        
-        const cachePathInput = (process.env.INPUT_CACHE_PATH || '~/.cache/ms-playwright').trim();
-        function expandHome(p) {
-          if (p === '~') return os.homedir();
-          if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(os.homedir(), p.slice(2));
-          return p;
-        }
-        let cachePath = expandHome(cachePathInput);
-        if (!path.isAbsolute(cachePath)) cachePath = path.resolve(workspace, cachePath);
-        
-        const runnerOs = process.env.RUNNER_OS || '';
-        const withDepsInput = (process.env.INPUT_WITH_DEPS || '').trim().toLowerCase();
-        const withDeps = runnerOs === 'Linux' ? (withDepsInput ? withDepsInput === 'true' : true) : false;
-        
-        const cachePathForGitHub = cachePath.replace(/\\/g, '/');
-        
-        // Export env vars for downstream workflow steps.
-        setEnv('PLAYWRIGHT_BROWSERS_PATH', cachePathForGitHub);
-        setEnv('PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1');
-        
-        setOutput('browsers', browsers.join(' '));
-        setOutput('browsers_key', browsersKey || 'none');
-        setOutput('working_directory', workingDirectory.replace(/\\/g, '/'));
-        setOutput('lockfile', lockfile);
-        setOutput('cache_key_file', cacheKeyFile);
-        setOutput('cache_path', cachePathForGitHub);
-        setOutput('with_deps', withDeps ? 'true' : 'false');
-        NODE
+      run: node "${{ github.action_path }}/resolve-inputs.mjs"
         
     - name: Resolve Playwright CLI + version
       id: playwright
-      shell: bash
       working-directory: ${{ steps.vars.outputs.working_directory }}
-      run: |
-        set -euo pipefail
-        node <<'NODE'
-        const fs = require('fs');
-        const path = require('path');
-        
-        const pkgJsonPath = require.resolve('playwright-core/package.json', { paths: [process.cwd()] });
-        const pkg = require(pkgJsonPath);
-        const rootDir = path.dirname(pkgJsonPath);
-        const cli = path.join(rootDir, 'cli.js');
-        
-        if (!fs.existsSync(cli)) {
-          throw new Error(`setup-playwright: expected Playwright CLI at ${cli} but it does not exist`);
-        }
-        
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkg.version}\ncli=${cli}\n`);
-        NODE
+      run: node "${{ github.action_path }}/resolve-cli.mjs"
 
     - name: Check whether browsers are already installed
       id: precheck
-      shell: bash
       env:
         PLAYWRIGHT_BROWSERS_PATH: ${{ steps.vars.outputs.cache_path }}
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
         BROWSERS: ${{ steps.vars.outputs.browsers }}
         PLAYWRIGHT_CLI: ${{ steps.playwright.outputs.cli }}
-      run: |
-        set -euo pipefail
-        node <<'NODE'
-        const fs = require('fs');
-        const { execFileSync } = require('child_process');
-        
-        const browsers = (process.env.BROWSERS || '').split(/\s+/).filter(Boolean);
-        if (!browsers.length) throw new Error('setup-playwright: no browsers requested');
-        
-        const output = execFileSync(
-          process.execPath,
-          [process.env.PLAYWRIGHT_CLI, 'install', '--dry-run', ...browsers],
-          {
-            env: process.env,
-            stdio: ['ignore', 'pipe', 'inherit'],
-          }
-        ).toString('utf8');
-        
-        const conciseOutput = output
-          .split(/\\r?\\n/)
-          .filter((line) => line.startsWith('browser:') || line.trim().startsWith('Install location:'))
-          .join('\\n');
-        if (conciseOutput.trim()) process.stdout.write(`${conciseOutput}\\n`);
-        
-        const locations = [...output.matchAll(/^\s*Install location:\s*(.+)\s*$/gm)]
-          .map((match) => match[1].trim());
-        const unique = [...new Set(locations)];
-        const missing = unique.filter((p) => !fs.existsSync(p));
-
-        if (missing.length) {
-          console.log('Missing install locations:');
-          for (const location of missing) console.log(`- ${location}`);
-        }
-        
-        const delimiter = `EOF_${Math.random().toString(16).slice(2)}`;
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `missing=${missing.length > 0 ? 'true' : 'false'}\n`);
-        fs.appendFileSync(
-          process.env.GITHUB_OUTPUT,
-          `missing_locations<<${delimiter}\n${missing.join('\n')}\n${delimiter}\n`
-        );
-        NODE
+      run: node "${{ github.action_path }}/precheck.mjs"
 
     - name: Restore Playwright browser cache
       id: browser-cache
@@ -284,77 +74,26 @@ runs:
     - name: Re-check browser install after cache restore
       id: check
       if: steps.precheck.outputs.missing == 'true'
-      shell: bash
       env:
         PLAYWRIGHT_BROWSERS_PATH: ${{ steps.vars.outputs.cache_path }}
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
         BROWSERS: ${{ steps.vars.outputs.browsers }}
         PLAYWRIGHT_CLI: ${{ steps.playwright.outputs.cli }}
-      run: |
-        set -euo pipefail
-        node <<'NODE'
-        const fs = require('fs');
-        const { execFileSync } = require('child_process');
-        
-        const browsers = (process.env.BROWSERS || '').split(/\s+/).filter(Boolean);
-        if (!browsers.length) throw new Error('setup-playwright: no browsers requested');
-        
-        const output = execFileSync(
-          process.execPath,
-          [process.env.PLAYWRIGHT_CLI, 'install', '--dry-run', ...browsers],
-          {
-            env: process.env,
-            stdio: ['ignore', 'pipe', 'inherit'],
-          }
-        ).toString('utf8');
-        
-        const conciseOutput = output
-          .split(/\\r?\\n/)
-          .filter((line) => line.startsWith('browser:') || line.trim().startsWith('Install location:'))
-          .join('\\n');
-        if (conciseOutput.trim()) process.stdout.write(`${conciseOutput}\\n`);
-        
-        const locations = [...output.matchAll(/^\\s*Install location:\\s*(.+)\\s*$/gm)]
-          .map((match) => match[1].trim());
-        const unique = [...new Set(locations)];
-        const missing = unique.filter((p) => !fs.existsSync(p));
-        
-        if (missing.length) {
-          console.log('Missing install locations after cache restore:');
-          for (const location of missing) console.log(`- ${location}`);
-        }
-        
-        const delimiter = `EOF_${Math.random().toString(16).slice(2)}`;
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `missing=${missing.length > 0 ? 'true' : 'false'}\n`);
-        fs.appendFileSync(
-          process.env.GITHUB_OUTPUT,
-          `missing_locations<<${delimiter}\n${missing.join('\n')}\n${delimiter}\n`
-        );
-        NODE
+      run: node "${{ github.action_path }}/precheck.mjs"
 
     - name: Install Playwright browsers
       if: steps.check.outputs.missing == 'true'
-      shell: bash
       working-directory: ${{ steps.vars.outputs.working_directory }}
       env:
         PLAYWRIGHT_BROWSERS_PATH: ${{ steps.vars.outputs.cache_path }}
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
-      run: |
-        set -euo pipefail
-        read -r -a browsers <<<"${{ steps.vars.outputs.browsers }}"
-        
-        cmd=(node "${{ steps.playwright.outputs.cli }}" install)
-        if [[ "${{ steps.vars.outputs.with_deps }}" == "true" ]]; then
-          cmd+=(--with-deps)
-        fi
-        cmd+=("${browsers[@]}")
-        
-        echo "Running: ${cmd[*]}"
-        "${cmd[@]}"
+        BROWSERS: ${{ steps.vars.outputs.browsers }}
+        WITH_DEPS: ${{ steps.vars.outputs.with_deps }}
+        PLAYWRIGHT_CLI: ${{ steps.playwright.outputs.cli }}
+      run: node "${{ github.action_path }}/install-browsers.mjs"
 
     - name: Playwright setup summary
       if: always()
-      shell: bash
       env:
         CACHE_HIT: ${{ steps.browser-cache.outputs.cache-hit || 'skipped' }}
         WORKING_DIRECTORY: ${{ steps.vars.outputs.working_directory }}
@@ -366,63 +105,4 @@ runs:
         PLAYWRIGHT_CLI: ${{ steps.playwright.outputs.cli }}
         PLAYWRIGHT_BROWSERS_PATH: ${{ steps.vars.outputs.cache_path }}
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
-      run: |
-        set -euo pipefail
-        node <<'NODE'
-        const fs = require('fs');
-        const path = require('path');
-        const { execFileSync } = require('child_process');
-        
-        const cachePath = process.env.CACHE_PATH;
-        const browsers = (process.env.BROWSERS || '').split(/\s+/).filter(Boolean);
-        const cli = process.env.PLAYWRIGHT_CLI;
-        
-        let cacheEntries = [];
-        try {
-          cacheEntries = fs
-            .readdirSync(cachePath, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => entry.name)
-            .sort();
-        } catch {
-          // Cache path may not exist yet on a cold start; that's fine.
-        }
-        
-        let dryRunSummary = '';
-        try {
-          const dryRun = execFileSync(process.execPath, [cli, 'install', '--dry-run', ...browsers], {
-            env: process.env,
-          }).toString('utf8');
-        
-          dryRunSummary = dryRun
-            .split(/\r?\n/)
-            .filter((line) => line.startsWith('browser:') || line.trim().startsWith('Install location:'))
-            .join('\n');
-        } catch (err) {
-          dryRunSummary = `Failed to run Playwright dry-run: ${String(err)}`;
-        }
-        
-        const summaryPath = process.env.GITHUB_STEP_SUMMARY;
-        const lines = [
-          '### Playwright setup',
-          '',
-          `- Working directory: \`${process.env.WORKING_DIRECTORY}\``,
-          `- Browsers: \`${process.env.BROWSERS}\``,
-          `- Playwright version: \`${process.env.PLAYWRIGHT_VERSION}\``,
-          `- Cache key file: \`${process.env.CACHE_KEY_FILE}\``,
-          `- Cache path: \`${cachePath}\``,
-          `- Cache hit: \`${process.env.CACHE_HIT}\``,
-          `- Browser install needed: \`${process.env.NEEDS_INSTALL}\``,
-        ];
-        
-        if (cacheEntries.length) {
-          const shown = cacheEntries.slice(0, 40).map((entry) => `  - ${entry}`);
-          lines.push('', 'Cache entries (first 40):', ...shown);
-        }
-        
-        if (dryRunSummary.trim()) {
-          lines.push('', 'Dry-run (install locations):', '```text', dryRunSummary.trim(), '```');
-        }
-        
-        fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`);
-        NODE
+      run: node "${{ github.action_path }}/summary.mjs"

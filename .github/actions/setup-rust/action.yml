@@ -35,101 +35,19 @@ runs:
   using: composite
   steps:
     - name: Rust setup inputs
-      shell: bash
-      run: |
-        set -euo pipefail
-        workspace="${GITHUB_WORKSPACE:-.}"
-        workspace="${workspace//\\//}"
-        cd "$workspace"
-        echo "::group::Rust setup"
-        echo "toolchain: ${{ inputs.toolchain }}"
-        echo "targets: ${{ inputs.targets }}"
-        echo "components: ${{ inputs.components }}"
-        echo "cache: ${{ inputs.cache }}"
-        echo "locked: ${{ inputs.locked }}"
-        echo "::endgroup::"
+      env:
+        INPUT_TOOLCHAIN: ${{ inputs.toolchain }}
+        INPUT_TARGETS: ${{ inputs.targets }}
+        INPUT_COMPONENTS: ${{ inputs.components }}
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_LOCKED: ${{ inputs.locked }}
+      run: node "${{ github.action_path }}/log-inputs.mjs"
 
     - name: Resolve toolchain
       id: toolchain
-      shell: bash
-      run: |
-        set -euo pipefail
-        workspace="${GITHUB_WORKSPACE:-.}"
-        workspace="${workspace//\\//}"
-        cd "$workspace"
-        requested="${{ inputs.toolchain }}"
-        resolved="$requested"
-
-        if [[ -z "$requested" ]]; then
-          echo "::error::setup-rust: 'toolchain' input must not be empty."
-          exit 1
-        fi
-
-        # Aero pins stable via rust-toolchain.toml. When callers request "stable"
-        # we resolve it to the pinned version to keep CI reproducible.
-        if [[ "$requested" == "stable" ]]; then
-          if [[ ! -f rust-toolchain.toml ]]; then
-            echo "::error::setup-rust: rust-toolchain.toml not found (required to resolve pinned stable toolchain)."
-            exit 1
-          fi
-
-          pinned=""
-          toolchain_toml="$(< rust-toolchain.toml)"
-          if [[ "$toolchain_toml" =~ (^|[[:space:]])channel[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
-            pinned="${BASH_REMATCH[2]}"
-          fi
-
-          if [[ -z "$pinned" ]]; then
-            echo "::error::setup-rust: unable to resolve toolchain.channel from rust-toolchain.toml."
-            exit 1
-          fi
-
-          if [[ "$pinned" == "stable" ]]; then
-            echo "::error::setup-rust: rust-toolchain.toml must pin stable to an explicit version (channel must not be 'stable')."
-            exit 1
-          fi
-
-          if ! [[ "$pinned" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
-            echo "::error::setup-rust: rust-toolchain.toml channel must look like a semver (e.g. 1.92.0); got '$pinned'."
-            exit 1
-          fi
-
-          resolved="$pinned"
-        fi
-
-        # Aero pins nightly Rust for threaded WASM builds in scripts/toolchains.json.
-        # Treat "nightly" as "use the pinned nightly" so CI doesn't drift.
-        if [[ "$requested" == "nightly" ]]; then
-          if [[ ! -f scripts/toolchains.json ]]; then
-            echo "::error::setup-rust: scripts/toolchains.json not found (required to resolve pinned nightly toolchain)."
-            exit 1
-          fi
-
-          pinned_nightly=""
-          toolchains_json="$(< scripts/toolchains.json)"
-          if [[ "$toolchains_json" =~ \"nightlyWasm\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
-            pinned_nightly="${BASH_REMATCH[1]}"
-          fi
-
-          if [[ -z "$pinned_nightly" ]]; then
-            echo "::error::setup-rust: unable to resolve rust.nightlyWasm from scripts/toolchains.json."
-            exit 1
-          fi
-
-          if ! [[ "$pinned_nightly" =~ ^nightly-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$ ]]; then
-            echo "::error::setup-rust: rust.nightlyWasm must be pinned to nightly-YYYY-MM-DD; got '$pinned_nightly'."
-            exit 1
-          fi
-
-          resolved="$pinned_nightly"
-        fi
-
-        echo "toolchain=$resolved" >> "$GITHUB_OUTPUT"
-
-        echo "::group::Resolved Rust toolchain"
-        echo "requested: $requested"
-        echo "resolved: $resolved"
-        echo "::endgroup::"
+      env:
+        INPUT_TOOLCHAIN: ${{ inputs.toolchain }}
+      run: node "${{ github.action_path }}/resolve-toolchain.mjs"
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -144,61 +62,9 @@ runs:
 
     - name: Determine Cargo.lock flag
       id: cargo-locked
-      shell: bash
-      run: |
-        set -euo pipefail
-        workspace="${GITHUB_WORKSPACE:-.}"
-        workspace="${workspace//\\//}"
-        cd "$workspace"
-        policy="${{ inputs.locked }}"
-        flag=""
-
-        case "$policy" in
-          always)
-            flag="--locked"
-            ;;
-          never)
-            flag=""
-            ;;
-          auto)
-            if [[ -f Cargo.lock ]]; then
-              flag="--locked"
-            else
-              flag=""
-            fi
-            ;;
-          *)
-            echo "::error::Invalid locked policy '$policy' (expected auto|always|never)."
-            exit 1
-            ;;
-        esac
-
-        echo "cargo_locked_flag=$flag" >> "$GITHUB_OUTPUT"
-
-        echo "::group::Cargo.lock policy"
-        if [[ -n "$flag" ]]; then
-          echo "Using cargo $flag"
-        else
-          echo "Not using cargo --locked"
-        fi
-        if [[ -f Cargo.lock ]]; then
-          echo "Cargo.lock: present"
-        else
-          echo "Cargo.lock: missing"
-        fi
-        echo "::endgroup::"
+      env:
+        INPUT_LOCKED: ${{ inputs.locked }}
+      run: node "${{ github.action_path }}/cargo-locked-flag.mjs"
 
     - name: Rust versions
-      shell: bash
-      run: |
-        set -euo pipefail
-        workspace="${GITHUB_WORKSPACE:-.}"
-        workspace="${workspace//\\//}"
-        cd "$workspace"
-        echo "::group::Rust versions"
-        rustc --version
-        cargo --version
-        rustup show active-toolchain || true
-        rustup target list --installed || true
-        rustup component list --installed || true
-        echo "::endgroup::"
+      run: node "${{ github.action_path }}/print-versions.mjs"

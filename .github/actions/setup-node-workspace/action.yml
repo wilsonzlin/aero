@@ -31,120 +31,16 @@ runs:
   steps:
     - id: node-version
       name: Resolve Node version
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        requested="${{ inputs.node-version }}"
-        root="${{ inputs.working-directory }}"
-        if [[ -z "$root" ]]; then
-          root="."
-        fi
-
-        version=""
-        if [[ -n "$requested" ]]; then
-          version="$requested"
-        elif [[ -f "$root/.nvmrc" ]]; then
-          version="$(cat "$root/.nvmrc")"
-        else
-          echo "error: .nvmrc not found at '$root/.nvmrc' (set the action input node-version to override)" >&2
-          exit 1
-        fi
-
-        # Trim whitespace / CRLF and tolerate `.nvmrc` values prefixed with `v`.
-        version="$(echo "$version" | tr -d '\r' | xargs)"
-        version="${version#v}"
-        if [[ -z "$version" ]]; then
-          echo "error: resolved empty Node version" >&2
-          exit 1
-        fi
-        if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          echo "error: expected an exact Node version like 22.11.0 in $root/.nvmrc; got '$version'" >&2
-          exit 1
-        fi
-
-        echo "node_version=$version" >> "$GITHUB_OUTPUT"
+      env:
+        AERO_ACTION_NODE_VERSION: ${{ inputs.node-version }}
+        AERO_ACTION_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: node "${{ github.action_path }}/resolve-node-version.mjs"
 
     - id: detect
       name: Detect Node workspace
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        root="${{ inputs.working-directory }}"
-        if [[ -z "$root" ]]; then
-          root="."
-        fi
-
-        override_dir="${AERO_NODE_DIR:-}"
-        if [[ -z "$override_dir" ]]; then
-          override_dir="${AERO_WEB_DIR:-}"
-        fi
-
-        dir=""
-        if [[ -n "$override_dir" ]]; then
-          if [[ "$override_dir" == /* ]]; then
-            dir="$override_dir"
-          elif [[ "$override_dir" == "." ]]; then
-            dir="$root"
-          elif [[ "$root" == "." ]]; then
-            dir="$override_dir"
-          else
-            dir="$root/$override_dir"
-          fi
-
-          if [[ ! -f "$dir/package.json" ]]; then
-            echo "error: override directory '$override_dir' does not contain package.json" >&2
-            echo "Set AERO_NODE_DIR to a directory containing package.json." >&2
-            exit 1
-          fi
-        else
-          candidates=("$root" "$root/frontend" "$root/web")
-          for candidate in "${candidates[@]}"; do
-            if [[ -f "$candidate/package.json" ]]; then
-              dir="$candidate"
-              break
-            fi
-          done
-        fi
-
-        if [[ -z "$dir" ]]; then
-          echo "error: unable to locate package.json under '$root' (set AERO_NODE_DIR to override)" >&2
-          exit 1
-        fi
-
-        # Normalize for nicer downstream logs (match detect-node-dir output style).
-        dir="${dir%/}"
-        dir="${dir#./}"
-        if [[ -z "$dir" ]]; then
-          dir="."
-        fi
-
-        lockfile=""
-        if [[ -f "$dir/package-lock.json" ]]; then
-          lockfile="$dir/package-lock.json"
-        elif [[ -f "$root/package-lock.json" ]]; then
-          lockfile="$root/package-lock.json"
-        else
-          echo "error: package-lock.json not found in '$dir' or '$root' (npm ci requires a lockfile)" >&2
-          exit 1
-        fi
-
-        lockfile="${lockfile%/}"
-        lockfile="${lockfile#./}"
-        if [[ -z "$lockfile" ]]; then
-          echo "error: internal error: computed empty lockfile path" >&2
-          exit 1
-        fi
-
-        install_dir="$(dirname "$lockfile")"
-        if [[ -z "$install_dir" ]]; then
-          install_dir="."
-        fi
-
-        echo "dir=$dir" >> "$GITHUB_OUTPUT"
-        echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
-        echo "install_dir=$install_dir" >> "$GITHUB_OUTPUT"
+      env:
+        AERO_ACTION_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: node "${{ github.action_path }}/detect-node-workspace.mjs"
 
     - name: Setup Node
       uses: actions/setup-node@v4
@@ -155,7 +51,6 @@ runs:
 
     - name: Install dependencies (npm ci)
       if: ${{ inputs.skip-npm-ci != 'true' }}
-      shell: bash
       working-directory: ${{ steps.detect.outputs.install_dir }}
       env:
         # Prevent Playwright's postinstall hook from downloading browser binaries during npm ci.

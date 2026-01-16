@@ -31,7 +31,6 @@ runs:
   steps:
     - name: Install wasm32 target
       if: ${{ inputs.install-wasm-target == 'true' }}
-      shell: bash
       run: rustup target add wasm32-unknown-unknown
 
     - name: Install wasm-pack
@@ -40,13 +39,6 @@ runs:
 
     - name: Resolve wasm crate
       id: resolve
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        wasm_crate_dir="${{ inputs.wasm-crate-dir }}"
-        if [[ -n "$wasm_crate_dir" ]]; then
-          export AERO_WASM_CRATE_DIR="$wasm_crate_dir"
-        fi
-
-        node "$GITHUB_WORKSPACE/scripts/ci/detect-wasm-crate.mjs" --github-output "$GITHUB_OUTPUT"
+      env:
+        INPUT_WASM_CRATE_DIR: ${{ inputs.wasm-crate-dir }}
+      run: node "${{ github.action_path }}/resolve-wasm-crate.mjs"
