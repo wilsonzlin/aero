@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { formatOneLineError } from "../../src/text.js";
+
 function usageAndExit() {
     console.error(
         [
@@ -152,7 +154,7 @@ function loadPinnedNightlyToolchain() {
         }
         return trimmed;
     } catch (err) {
-        die(`Failed to read pinned toolchains from ${toolchainsPath}.\n\n${err?.message ?? String(err)}`);
+        die(`Failed to read pinned toolchains from ${toolchainsPath}.\n\n${formatOneLineError(err, 512)}`);
     }
 }
 

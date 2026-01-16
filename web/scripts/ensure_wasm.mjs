@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { formatOneLineError } from "../../src/text.js";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -76,7 +78,7 @@ export function ensureVariant(variant) {
     );
     if (result.error) {
         throw new EnsureWasmError(
-            `[wasm] Failed to execute build_wasm.mjs for variant '${variant}': ${result.error.message}`,
+            `[wasm] Failed to execute build_wasm.mjs for variant '${variant}': ${formatOneLineError(result.error, 512)}`,
             1,
         );
     }
@@ -113,7 +115,7 @@ if (isMainModule()) {
         ensureAll();
     } catch (err) {
         const status = err instanceof EnsureWasmError ? err.status : 1;
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         if (message) {
             console.error(message);
         }
