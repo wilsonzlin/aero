@@ -181,6 +181,17 @@ Approach:
 Outcomes:
 - Guardrail tests share a single implementation for composite action discovery.
 
+### Phase 16: GitHub action output hardening (done)
+Goal: reduce subtle CI breakage by centralizing correct `GITHUB_OUTPUT` multiline writing semantics.
+
+Approach:
+- Add shared helpers for multiline outputs (delimiter handling) in `.github/actions/_shared`.
+- Update action scripts to use the shared helper instead of hand-rolled delimiter formatting.
+- Lock in behavior with contract tests.
+
+Outcomes:
+- Action scripts use shared multiline output helpers, and contract tests validate delimiter formatting.
+
 Some coding guidelines:
 
 ## General Principles
