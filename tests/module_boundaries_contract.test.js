@@ -55,17 +55,26 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
     .sort();
 
   // Keep these as concatenated strings so this test doesn't trip itself.
+  //
+  // Note: We intentionally keep this list explicit (instead of auto-deriving it from workspace
+  // package.json "type") because:
+  // - some typeless workspaces contain ESM `.js` sources that are safe to import from repo-root tests
+  // - the concrete failure mode we want to prevent is importing **TypeScript sources** from
+  //   CommonJS/typeless packages where Node's module format inference can break or warn
   const forbidden = [
     {
       id: "net-proxy-src",
-      needle: ["/net-proxy", "/src/"].join(""),
-      reason: "net-proxy is a CommonJS workspace; validate its TS sources via its own package tests (dist output).",
+      pattern: new RegExp([String.raw`/net-proxy`, String.raw`/src/`, String.raw`.*\.(ts|js)\b`].join("")),
+      reason:
+        "net-proxy is a CommonJS workspace; validate TS sources via its own package tests (built dist output), not repo-root imports",
     },
     {
       id: "image-gateway-src",
-      needle: ["/services", "/image-gateway/src/"].join(""),
+      pattern: new RegExp(
+        [String.raw`/services`, String.raw`/image-gateway/src/`, String.raw`.*\.(ts|js)\b`].join(""),
+      ),
       reason:
-        "image-gateway is not ESM-typed for repo-root imports; validate TS sources via its workspace tests (vitest).",
+        "image-gateway is not ESM-typed for repo-root TS source imports; validate via its workspace tests (vitest)",
     },
   ];
 
@@ -74,7 +83,7 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
     const fullPath = path.join(repoRoot, name);
     const content = await readFile(fullPath, "utf8");
     for (const rule of forbidden) {
-      if (content.includes(rule.needle)) {
+      if (rule.pattern.test(content)) {
         violations.push({ file: name, rule: rule.id, reason: rule.reason });
       }
     }
