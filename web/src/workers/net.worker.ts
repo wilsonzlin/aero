@@ -302,7 +302,8 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
     }
 
     if (!res.ok) {
-      throw new Error(`failed to bootstrap gateway session (${res.status}): ${text}`);
+      // Do not reflect response bodies in log-visible errors.
+      throw new Error(`failed to bootstrap gateway session (${res.status})`);
     }
 
     session = parseGatewaySessionResponse(text);
