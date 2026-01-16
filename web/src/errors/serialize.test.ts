@@ -10,6 +10,7 @@ describe("errors/serialize", () => {
   test("serializeErrorForWorker returns message-only for non-error values", () => {
     expect(serializeErrorForWorker(123)).toEqual({ message: "123" });
     expect(serializeErrorForWorker(null)).toEqual({ message: "null" });
+    expect(serializeErrorForWorker({})).toEqual({ message: "Error" });
   });
 
   test("serializeErrorForWorker returns bounded name/message/stack for Error", () => {
