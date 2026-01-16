@@ -416,7 +416,14 @@ export function buildServer(config: Config): ServerBundle {
       shuttingDown = true;
     },
     closeUpgradeSockets: () => {
-      for (const socket of upgradeSockets) socket.destroy();
+      for (const socket of upgradeSockets) {
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+      }
+      upgradeSockets.clear();
     },
   };
 }
