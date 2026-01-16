@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { formatOneLineError } from "../../src/text.js";
 
 function fail(message) {
     console.error(`toolchain check failed: ${message}`);
@@ -131,7 +132,7 @@ let toolchains;
 try {
     toolchains = JSON.parse(readFileSync(toolchainsJsonPath, "utf8"));
 } catch (err) {
-    fail(`Failed to parse ${toolchainsJsonPath}: ${err?.message ?? String(err)}`);
+    fail(`Failed to parse ${toolchainsJsonPath}: ${formatOneLineError(err, 512)}`);
 }
 
 const wasmNightly = toolchains?.rust?.nightlyWasm;

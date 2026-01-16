@@ -23,6 +23,7 @@ import {
   pickThresholdProfile,
 } from "../tools/perf/lib/thresholds.mjs";
 import { normaliseBenchResult } from "../bench/history.js";
+import { formatOneLineError, truncateUtf8 } from "../src/text.js";
 
 function usage(exitCode: number) {
   const msg = `
@@ -74,6 +75,20 @@ function isFiniteNumber(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n);
 }
 
+function coerceScalarString(value: unknown): string {
+  if (value == null) return "";
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    default:
+      return "";
+  }
+}
+
 async function readJson(file: string): Promise<any> {
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
@@ -119,7 +134,7 @@ export function compareGatewayBenchmarks({
 
     const b = (baseGateway as Record<string, unknown>)[metricName];
     const c = (candGateway as Record<string, unknown>)[metricName];
-    const unit = (b?.unit ?? c?.unit ?? "").toString();
+    const unit = coerceScalarString((b as any)?.unit ?? (c as any)?.unit).slice(0, 64);
 
     let effectiveThreshold: any = threshold;
     if (overrideMaxRegressionPct != null) {
@@ -229,7 +244,16 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error(err?.stack ?? String(err));
+    let stack: string | null = null;
+    if (err && typeof err === "object") {
+      try {
+        const raw = (err as { stack?: unknown }).stack;
+        if (typeof raw === "string" && raw) stack = raw;
+      } catch {
+        // ignore getters throwing
+      }
+    }
+    console.error(stack ? truncateUtf8(stack, 8 * 1024) : formatOneLineError(err, 512));
     process.exitCode = 1;
   });
 }

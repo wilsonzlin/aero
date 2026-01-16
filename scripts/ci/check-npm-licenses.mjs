@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { formatOneLineError } from "../../src/text.js";
 
 function usageAndExit() {
     console.error(
@@ -317,7 +318,7 @@ function runCli(argv) {
         die(
             `unable to locate license-checker-rseidelsohn. ` +
                 `Run 'npm ci' in the repo root before running this script.\n` +
-                `details: ${err instanceof Error ? err.message : String(err)}`,
+                `details: ${formatOneLineError(err, 512)}`,
         );
     }
 
@@ -372,7 +373,7 @@ function runCli(argv) {
             die(
                 `failed to parse license-checker output for '${projectRel}'. ` +
                     `Ensure the tool is producing valid JSON.\n` +
-                    `details: ${err instanceof Error ? err.message : String(err)}`,
+                    `details: ${formatOneLineError(err, 512)}`,
             );
         }
 

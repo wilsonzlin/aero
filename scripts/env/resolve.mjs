@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { formatOneLineError } from "../../src/text.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
@@ -53,31 +54,51 @@ Examples:
 `);
 }
 
+function coerceScalarString(value) {
+  if (value == null) return null;
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+      return String(value);
+    case "undefined":
+    case "object":
+    case "function":
+    default:
+      return null;
+  }
+}
+
 function parseBoolean(name, raw, defaultValue) {
-  if (raw === undefined || raw === null || String(raw).trim() === "") return defaultValue;
-  const v = String(raw).trim().toLowerCase();
+  const input = coerceScalarString(raw);
+  if (input === null || input.trim() === "") return defaultValue;
+  const v = input.trim().toLowerCase();
   if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
   if (v === "0" || v === "false" || v === "no" || v === "off") return false;
-  die(`${name} must be a boolean (1/0/true/false/yes/no/on/off), got: ${raw}`);
+  die(`${name} must be a boolean (1/0/true/false/yes/no/on/off), got: ${input}`);
 }
 
 function parseUrl(name, raw) {
-  if (raw === undefined || raw === null) return null;
-  const trimmed = String(raw).trim();
+  const input = coerceScalarString(raw);
+  if (input === null) return null;
+  const trimmed = input.trim();
   if (!trimmed) return null;
   try {
     // eslint-disable-next-line no-new
     new URL(trimmed);
     return trimmed;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    die(`${name} must be a valid URL, got: ${trimmed} (${msg})`);
+    die(`${name} must be a valid URL, got: ${trimmed} (${formatOneLineError(err, 256)})`);
   }
 }
 
 function parseCsvUrls(name, raw) {
-  if (raw === undefined || raw === null) return [];
-  const trimmed = String(raw).trim();
+  const input = coerceScalarString(raw);
+  if (input === null) return [];
+  const trimmed = input.trim();
   if (!trimmed) return [];
   const parts = trimmed
     .split(",")
@@ -119,20 +140,20 @@ function resolveDirFromEnv({ canonical, aliases }) {
   const canonicalValue = process.env[canonical];
   const aliasValues = aliases
     .map((alias) => ({ alias, value: process.env[alias] }))
-    .filter((entry) => entry.value !== undefined && String(entry.value).trim() !== "");
+    .filter((entry) => typeof entry.value === "string" && entry.value.trim() !== "");
 
-  if (canonicalValue !== undefined && String(canonicalValue).trim() !== "") {
+  if (typeof canonicalValue === "string" && canonicalValue.trim() !== "") {
     // Canonical wins, but warn if deprecated aliases are also set (they will be ignored).
     for (const { alias } of aliasValues) {
       warn(`${alias} is deprecated and ignored because ${canonical} is set`);
     }
-    return { value: String(canonicalValue), source: canonical };
+    return { value: canonicalValue, source: canonical };
   }
 
   if (aliasValues.length > 0) {
     const { alias, value } = aliasValues[0];
     warn(`${alias} is deprecated; use ${canonical} instead`);
-    return { value: String(value), source: alias };
+    return { value, source: alias };
   }
 
   return null;
@@ -238,12 +259,12 @@ function resolveWasmCrateDir({ override, require }) {
       // when/if wasm is actually requested.)
       return { abs: null, rel: null, source: source === "cli" ? "auto" : source };
     }
-    const msg = err instanceof Error ? err.message : String(err);
-    die(`failed to resolve wasm crate dir: ${msg}`);
+    die(`failed to resolve wasm crate dir: ${formatOneLineError(err, 256)}`);
   }
 
   let dirRelOrAbs = null;
-  for (const line of String(stdout).split(/\r?\n/u)) {
+  const stdoutText = typeof stdout === "string" ? stdout : "";
+  for (const line of stdoutText.split(/\r?\n/u)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const idx = trimmed.indexOf("=");
@@ -368,7 +389,8 @@ function parseArgs(argv) {
 }
 
 function bashQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+  const s = coerceScalarString(value) ?? "";
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 const args = parseArgs(process.argv);

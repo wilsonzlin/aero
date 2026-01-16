@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { canonicalSecurityHeaders } from '../security_headers.mjs';
+import { formatOneLineError } from '../../src/text.js';
 
 const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '../..');
 
@@ -424,7 +425,7 @@ for (const target of targets) {
     try {
       allErrors.push(...checkViteConfig(target.path, filePath));
     } catch (err) {
-      allErrors.push(`${target.path}: failed to read file: ${err?.message ?? String(err)}`);
+      allErrors.push(`${target.path}: failed to read file: ${formatOneLineError(err, 512)}`);
     }
     continue;
   }
@@ -432,7 +433,7 @@ for (const target of targets) {
     try {
       allErrors.push(...checkHelmValues(target.path, filePath));
     } catch (err) {
-      allErrors.push(`${target.path}: failed to validate Helm values: ${err?.message ?? String(err)}`);
+      allErrors.push(`${target.path}: failed to validate Helm values: ${formatOneLineError(err, 512)}`);
     }
     continue;
   }
@@ -446,7 +447,7 @@ for (const target of targets) {
         allErrors.push(...diffs.map((line) => `  ${line}`));
       }
     } catch (err) {
-      allErrors.push(`${target.path}: failed to validate Fastify headers: ${err?.message ?? String(err)}`);
+      allErrors.push(`${target.path}: failed to validate Fastify headers: ${formatOneLineError(err, 512)}`);
     }
     continue;
   }
@@ -460,7 +461,7 @@ for (const target of targets) {
         allErrors.push(...diffs.map((line) => `  ${line}`));
       }
     } catch (err) {
-      allErrors.push(`${target.path}: failed to validate Node header middleware: ${err?.message ?? String(err)}`);
+      allErrors.push(`${target.path}: failed to validate Node header middleware: ${formatOneLineError(err, 512)}`);
     }
     continue;
   }
@@ -488,7 +489,7 @@ for (const target of targets) {
         continue;
     }
   } catch (err) {
-    allErrors.push(`${target.path}: failed to parse: ${err?.message ?? String(err)}`);
+    allErrors.push(`${target.path}: failed to parse: ${formatOneLineError(err, 512)}`);
     continue;
   }
 

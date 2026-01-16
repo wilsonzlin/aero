@@ -23,6 +23,7 @@ import {
   loadThresholdPolicy,
   pickThresholdProfile,
 } from "../tools/perf/lib/thresholds.mjs";
+import { formatOneLineError, truncateUtf8 } from "../src/text.js";
 
 function usage(exitCode: number) {
   const msg = `
@@ -372,7 +373,16 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error(err?.stack ?? String(err));
+    let stack: string | null = null;
+    if (err && typeof err === "object") {
+      try {
+        const raw = (err as { stack?: unknown }).stack;
+        if (typeof raw === "string" && raw) stack = raw;
+      } catch {
+        // ignore getters throwing
+      }
+    }
+    console.error(stack ? truncateUtf8(stack, 8 * 1024) : formatOneLineError(err, 512));
     process.exitCode = 1;
   });
 }

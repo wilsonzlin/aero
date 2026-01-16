@@ -17,6 +17,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatOneLineError } from "../../src/text.js";
 
 function usageAndExit() {
     console.error(
@@ -87,7 +88,7 @@ function readPackageInfo(outputRoot, workspaceAbs) {
     } catch (err) {
         die(
             `failed to read/parse package.json at '${toOutputRelativePath(outputRoot, packageJsonAbs)}': ` +
-                (err instanceof Error ? err.message : String(err)),
+                formatOneLineError(err, 512),
         );
     }
 }
