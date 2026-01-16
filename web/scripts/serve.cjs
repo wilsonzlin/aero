@@ -5,7 +5,7 @@ const path = require('path');
 // avoid a full Vite build/dev server, but we still need to execute TypeScript
 // modules in the browser. Transpile `.ts`/`.tsx` on the fly using esbuild.
 const esbuild = require('esbuild');
-const { formatOneLineUtf8 } = require('../../scripts/_shared/text_one_line.cjs');
+const { formatOneLineError, formatOneLineUtf8 } = require('../../scripts/_shared/text_one_line.cjs');
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -202,11 +202,15 @@ const server = http.createServer((req, res) => {
     });
     res.end(data);
   })().catch((err) => {
-    res.writeHead(500);
     // Avoid echoing internal error details back to the client.
     // eslint-disable-next-line no-console
-    console.error(err?.stack || err);
-    res.end(safeTextBody("Internal server error"));
+    console.error(`web serve: handler error: ${formatOneLineError(err, 512, "Error")}`);
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    res.writeHead(500);
+    res.end(safeTextBody('Internal server error'));
   });
 });
 

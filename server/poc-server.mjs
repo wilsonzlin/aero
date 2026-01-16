@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatOneLineUtf8 } from './src/text.js';
+import { formatOneLineError, formatOneLineUtf8 } from './src/text.js';
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -195,10 +195,14 @@ const server = http.createServer(async (req, res) => {
     res.end('Not found');
   } catch (err) {
     withCommonHeaders(res);
-    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     // Avoid echoing internal error details back to the client.
     // eslint-disable-next-line no-console
-    console.error(err?.stack || err);
+    console.error(`poc-server: handler error: ${formatOneLineError(err, 512, 'Error')}`);
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Internal server error');
   }
 });

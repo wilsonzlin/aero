@@ -124,7 +124,11 @@ export async function startStaticServer(opts) {
       // Avoid echoing internal errors (and any attacker-controlled strings) back to clients.
       // This server is dev-only; logs are sufficient for debugging.
       // eslint-disable-next-line no-console
-      console.error(err?.stack || err);
+      console.error(`bench static server: handler error: ${formatOneLineError(err, 512, "Error")}`);
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
       sendText(res, 500, "Internal server error");
     }
   });
