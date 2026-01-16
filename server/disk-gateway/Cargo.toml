@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-http-range = { path = "../../crates/aero-http-range" }
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.8", features = ["macros"] }
 async-stream = "0.3"
 bytes = "1"
 futures-core = "0.3"
