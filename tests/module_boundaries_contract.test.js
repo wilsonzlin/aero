@@ -12,6 +12,19 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function buildWorkspaceSrcImportRegex(workspaceRel, extensionsAlternation) {
+  const parts = workspaceRel.split("/").map(escapeRegex);
+  const sep = String.raw`[\\/]+`;
+  const workspace = parts.join(sep);
+  return new RegExp(`${sep}${workspace}${sep}src${sep}[^"'\\s)]+\\.(?:${extensionsAlternation})\\b`, "g");
+}
+
+function matchToRepoFsPath(match) {
+  let rel = match.replace(/^[\\/]+/, "");
+  rel = rel.replace(/[\\/]+/g, "/");
+  return path.join(repoRoot, ...rel.split("/"));
+}
+
 async function fileExists(filePath) {
   try {
     await stat(filePath);
@@ -151,10 +164,8 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
     const content = await readFile(fullPath, "utf8");
 
     for (const rel of forbiddenWorkspaces) {
-      const esc = escapeRegex(rel);
-
       // Direct TS imports are always forbidden for these workspaces.
-      const tsRe = new RegExp(`/${esc}/src/[^"'\\s)]+\\.(ts|tsx|mts|cts)\\b`, "g");
+      const tsRe = buildWorkspaceSrcImportRegex(rel, "ts|tsx|mts|cts");
       for (;;) {
         const m = tsRe.exec(content);
         if (!m) break;
@@ -167,12 +178,12 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
 
       // `.js` specifiers used to reach TS sources (NodeNext-style) are forbidden *only if the
       // referenced `.js` file does not exist* (i.e. it likely maps to a `.ts` file).
-      const jsRe = new RegExp(`/${esc}/src/[^"'\\s)]+\\.js\\b`, "g");
+      const jsRe = buildWorkspaceSrcImportRegex(rel, "js");
       for (;;) {
         const m = jsRe.exec(content);
         if (!m) break;
         const spec = m[0];
-        const fsPath = path.join(repoRoot, spec.replace(/^\//, ""));
+        const fsPath = matchToRepoFsPath(spec);
         if (await fileExists(fsPath)) continue;
         violations.push({
           file: name,
@@ -184,5 +195,17 @@ test("module boundaries: repo-root tests must not import TS sources from CJS wor
   }
 
   assert.deepEqual(violations, [], `Module boundary violations: ${JSON.stringify(violations, null, 2)}`);
+});
+
+test("module boundaries: src import scan matches slash and backslash separators", () => {
+  const tsRe = buildWorkspaceSrcImportRegex("backend/aero-gateway", "ts|tsx|mts|cts");
+  assert.ok(tsRe.test("import x from '../backend/aero-gateway/src/index.ts';"));
+  tsRe.lastIndex = 0;
+  assert.ok(tsRe.test("import x from '..\\\\backend\\\\aero-gateway\\\\src\\\\index.ts';"));
+
+  const jsRe = buildWorkspaceSrcImportRegex("net-proxy", "js");
+  assert.ok(jsRe.test("const p = '../net-proxy/src/text.js';"));
+  jsRe.lastIndex = 0;
+  assert.ok(jsRe.test("const p = '..\\\\net-proxy\\\\src\\\\text.js';"));
 });
 
