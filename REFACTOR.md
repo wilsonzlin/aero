@@ -63,7 +63,7 @@ Outcomes:
 - Network/protocol surfaces use stable, single-line, UTF-8 byte-bounded client-visible errors by default.
 - Shared parsing/formatting invariants are guarded by parity/contract tests to prevent silent drift.
 
-### Phase 5: Cross-platform drift guards (in progress)
+### Phase 5: Cross-platform drift guards (done)
 Goal: catch portability bugs (path separators, platform-specific tooling quirks) early and cheaply.
 
 Approach:
@@ -71,7 +71,84 @@ Approach:
 - Add targeted CI jobs when a portability bug is plausible and expensive jobs already exist.
 
 Outcomes:
-- Add a lightweight Windows CI job that runs `npm run test:contracts` to exercise the contract/parity suite under Windows path semantics.
+- A lightweight Windows CI job runs `npm run test:contracts` to exercise the contract/parity suite under Windows path semantics (see `node-contracts-windows` in `.github/workflows/ci.yml`).
+
+### Phase 6: Contract-suite portability hardening (done)
+Goal: keep the contract/parity suite correct under both POSIX and Windows path semantics, and make its intent harder to accidentally subvert.
+
+Approach:
+- Treat *filesystem paths* and *module specifiers* as distinct domains; normalize explicitly when converting between them.
+- Where tests use regex scans (instead of AST parsing), ensure the patterns match both `/` and escaped Windows separators (`\\`) when appropriate.
+
+Outcomes:
+- Module-boundary scanning is robust to `..\\workspace\\src\\file.ts`-style specifiers (and resolves `.js` existence checks portably).
+
+### Phase 7: CI action portability (done)
+Goal: keep CI steps reliable across OSes by minimizing dependence on runner-specific shells.
+
+Approach:
+- Prefer Node scripts over bash for composite action logic (inputs, path resolution, output writing).
+- Lock the behavior in with small contract tests so the contract suite exercises CI-critical parsing.
+
+Outcomes:
+- `setup-node-workspace` no longer requires bash for version/workspace detection, and its behavior is covered by the contract suite.
+
+### Phase 8: CI action portability sweep (done)
+Goal: reduce runner shell coupling across the remaining composite actions in `.github/actions/` (especially for Windows jobs).
+
+Approach:
+- Replace bash-only parsing logic with Node scripts (ESM) that explicitly handle paths and write `GITHUB_OUTPUT`/`GITHUB_ENV`.
+- Keep scripts dependency-free and make command execution safe (`execFileSync` / `spawnSync` with `shell: false`).
+- Add small contract tests for any new CI-parsing logic that would be painful to debug in CI.
+
+Outcomes:
+- `setup-rust`, `setup-playwright`, and `resolve-wasm-crate` no longer require bash for their internal logic.
+
+### Phase 9: CI action script consolidation (done)
+Goal: keep CI action scripts small and consistent by deduplicating common “GitHub IO” utilities (outputs/env/path normalization) without changing behavior.
+
+Approach:
+- Add a tiny shared helper module under `.github/actions/_shared/` for:
+  - `GITHUB_OUTPUT` / `GITHUB_ENV` append helpers
+  - error formatting + exit behavior
+  - small path normalization helpers used across actions
+- Refactor action-local scripts to import these helpers instead of reimplementing them.
+
+Outcomes:
+- CI action scripts share a single, well-tested implementation for output/env writing and path normalization.
+
+### Phase 10: Composite action cwd robustness (done)
+Goal: ensure composite actions work regardless of step working directory by avoiding repo-relative script paths.
+
+Approach:
+- Use `${{ github.action_path }}` when invoking action-local scripts so paths are cwd-independent.
+- Add a contract test to prevent regressions (no `node .github/actions/...` in composite actions).
+
+Outcomes:
+- All composite actions invoke action-local scripts via `github.action_path`.
+
+### Phase 11: Contract test helper consolidation (done)
+Goal: keep the contract suite easy to maintain by deduplicating common test utilities.
+
+Approach:
+- Add a small `tests/_helpers` module for:
+  - running Node scripts with env overrides (for action script contract tests)
+  - parsing `GITHUB_OUTPUT`/`GITHUB_ENV` key/value files
+- Refactor existing action contract tests to use the helpers (no behavior changes).
+
+Outcomes:
+- Action contract tests share one implementation for “run Node script” + “parse key/value output files”, reducing drift.
+
+### Phase 12: CI action defensive execution (done)
+Goal: avoid CI hangs and resource spikes by bounding “helper” command execution inside action scripts.
+
+Approach:
+- Add small `_shared` helpers for spawning subprocesses with timeouts / bounded buffers.
+- Apply timeouts to detection/dry-run helpers where long runtimes indicate a hang (not real work).
+- Add contract tests for parsing logic that depends on subprocess output (e.g. Playwright dry-run parsing).
+
+Outcomes:
+- Action scripts use timeouts for detection/dry-run subprocesses and have contract coverage for their parsing logic.
 
 Some coding guidelines:
 
