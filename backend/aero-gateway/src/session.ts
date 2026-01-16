@@ -47,6 +47,14 @@ function constantTimeEqual(a: Buffer, b: Buffer): boolean {
   return timingSafeEqual(a, b);
 }
 
+function decodeUtf8Exact(bytes: Buffer): string | null {
+  const text = bytes.toString('utf8');
+  // Node replaces invalid UTF-8 with U+FFFD, which can change the underlying byte length.
+  // Treat that as invalid rather than accepting ambiguous payloads.
+  if (Buffer.from(text, 'utf8').length !== bytes.length) return null;
+  return text;
+}
+
 export function mintSessionToken(payload: SessionTokenPayload, secret: Buffer): string {
   const payloadJson = JSON.stringify(payload);
   const payloadB64 = encodeBase64Url(Buffer.from(payloadJson, 'utf8'));
@@ -93,7 +101,9 @@ export function verifySessionToken(token: string, secret: Buffer, nowMs = Date.n
 
   let payload: SessionTokenPayload;
   try {
-    payload = JSON.parse(payloadRaw.toString('utf8')) as SessionTokenPayload;
+    const payloadJson = decodeUtf8Exact(payloadRaw);
+    if (payloadJson === null) return null;
+    payload = JSON.parse(payloadJson) as SessionTokenPayload;
   } catch {
     return null;
   }

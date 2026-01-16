@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { encodeBase64Url } from '../src/base64url.js';
 import { mintSessionToken, verifySessionToken } from '../src/session.js';
 
 type VectorsFile = {
@@ -126,5 +128,19 @@ describe('gateway session token vectors', () => {
       () => mintSessionToken({ v: 1, sid, exp: 1_700_000_000 }, secret),
       /Session token payload too long/,
     );
+  });
+
+  it('rejects invalid UTF-8 payloads (even with valid signature)', () => {
+    const nowMs = conformance.aero_session.nowMs;
+    const secret = Buffer.from(conformance.aero_session.secret, 'utf8');
+
+    // Not valid UTF-8; Node's decoder would normally replace with U+FFFD.
+    const payloadRaw = Buffer.from([0xc0, 0xaf]);
+    const payloadB64 = encodeBase64Url(payloadRaw);
+    const sig = createHmac('sha256', secret).update(payloadB64).digest();
+    const sigB64 = encodeBase64Url(sig);
+    const token = `${payloadB64}.${sigB64}`;
+
+    assert.equal(verifySessionToken(token, secret, nowMs), null);
   });
 });
