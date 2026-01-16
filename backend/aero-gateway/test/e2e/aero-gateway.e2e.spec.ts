@@ -5,6 +5,7 @@ import http from 'node:http';
 import https from 'node:https';
 import * as dgram from 'node:dgram';
 import net, { type AddressInfo } from 'node:net';
+import { pipeline } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const TLS_KEY = `-----BEGIN PRIVATE KEY-----
@@ -152,7 +153,10 @@ async function startHttpsProxy(targetPort: number, listenPort: number): Promise<
       },
       (upstreamRes) => {
         res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
-        upstreamRes.pipe(res);
+        pipeline(upstreamRes, res, () => {
+          // If we fail mid-stream, it's too late to send a clean 502; just terminate.
+          res.destroy();
+        });
       },
     );
 
@@ -161,7 +165,9 @@ async function startHttpsProxy(targetPort: number, listenPort: number): Promise<
       res.end('Bad gateway\n');
     });
 
-    req.pipe(upstreamReq);
+    pipeline(req, upstreamReq, () => {
+      // Errors here are usually client aborts; upstreamReq will be closed by pipeline.
+    });
   });
 
   server.on('upgrade', (req, socket, head) => {
