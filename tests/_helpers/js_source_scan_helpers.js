@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isIdentContinue, isIdentStart } from "./js_scan_parse_helpers.js";
 
 export const DEFAULT_SOURCE_ROOTS = ["src", "web", "backend", "server", "services", "tools", "scripts", "bench", "net-proxy", "proxy", "packages", "emulator"];
 export const DEFAULT_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
@@ -53,7 +54,15 @@ export function findLineNumber(text, index) {
   // 1-based line number.
   let line = 1;
   for (let i = 0; i < index; i++) {
-    if (text.charCodeAt(i) === 10) line++;
+    const ch = text[i] || "";
+    if (ch === "\n" || ch === "\u2028" || ch === "\u2029") {
+      line++;
+      continue;
+    }
+    if (ch === "\r") {
+      // Treat CRLF as a single line break.
+      if ((text[i + 1] || "") !== "\n") line++;
+    }
   }
   return line;
 }
@@ -91,24 +100,12 @@ export function stripStringsAndComments(source) {
     "of",
   ]);
 
+  const isLineTerminator = (c) => c === "\n" || c === "\r" || c === "\u2028" || c === "\u2029";
+
   const maskChar = (idx) => {
-    if (out[idx] !== "\n") out[idx] = " ";
+    if (!isLineTerminator(out[idx] || "")) out[idx] = " ";
   };
 
-  const isIdentStart = (c) => {
-    const code = c.charCodeAt(0);
-    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || c === "_" || c === "$";
-  };
-  const isIdentPart = (c) => {
-    const code = c.charCodeAt(0);
-    return (
-      (code >= 65 && code <= 90) ||
-      (code >= 97 && code <= 122) ||
-      (code >= 48 && code <= 57) ||
-      c === "_" ||
-      c === "$"
-    );
-  };
   const isDigit = (c) => {
     const code = c.charCodeAt(0);
     return code >= 48 && code <= 57;
@@ -217,7 +214,7 @@ export function stripStringsAndComments(source) {
 
       if (isIdentStart(ch)) {
         let j = i + 1;
-        while (j < len && isIdentPart(source[j])) j++;
+        while (j < len && isIdentContinue(source[j])) j++;
         const word = source.slice(i, j);
         canStartRegex = KEYWORDS_EXPECT_EXPR.has(word);
         i = j;
@@ -231,7 +228,7 @@ export function stripStringsAndComments(source) {
         continue;
       }
 
-      if (ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n") {
+      if (ch !== " " && ch !== "\t" && ch !== "\r" && ch !== "\n" && ch !== "\u2028" && ch !== "\u2029") {
         const consumed2 = onPunct(ch, next);
         if (consumed2) {
           i += 2;
@@ -318,7 +315,7 @@ export function stripStringsAndComments(source) {
 
     if (state === "line_comment") {
       maskChar(i);
-      if (ch === "\n") state = resumeState;
+      if (isLineTerminator(ch)) state = resumeState;
       i++;
       continue;
     }
