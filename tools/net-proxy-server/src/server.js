@@ -362,8 +362,16 @@ export async function createProxyServer(userConfig) {
 
   function rejectUpgrade(socket, statusCode, message) {
     const safeMessage = formatOneLineUtf8(message, MAX_UPGRADE_STATUS_MESSAGE_BYTES) || "Error";
-    socket.write(`HTTP/1.1 ${statusCode} ${safeMessage}\r\n\r\n`);
-    socket.destroy();
+    try {
+      socket.write(`HTTP/1.1 ${statusCode} ${safeMessage}\r\n\r\n`);
+    } catch {
+      // ignore
+    }
+    try {
+      socket.destroy();
+    } catch {
+      // ignore
+    }
   }
 
   httpServer.on("upgrade", (req, socket, head) => {
@@ -538,7 +546,22 @@ export async function createProxyServer(userConfig) {
       while (wsSendQueue.length > 0) {
         const frame = wsSendQueue.shift();
         wsSendQueueBytes -= frame.byteLength;
-        ws.send(frame, { binary: true }, () => {});
+        try {
+          ws.send(frame, { binary: true }, () => {});
+        } catch (err) {
+          log({
+            level: "warn",
+            event: "ws_send_failed",
+            sessionId,
+            message: formatOneLineError(err, 512, "Error"),
+          });
+          try {
+            ws.terminate();
+          } catch {
+            // ignore
+          }
+          return;
+        }
         // Yield if the ws library is starting to buffer; we'll retry on the
         // next immediate.
         if (ws.bufferedAmount > config.wsBackpressureHighWatermarkBytes) break;
@@ -619,7 +642,21 @@ export async function createProxyServer(userConfig) {
       while (stream.pendingWrites.length > 0) {
         const chunk = stream.pendingWrites.shift();
         stream.pendingWriteBytes -= chunk.length;
-        const ok = stream.socket.write(chunk);
+        let ok = false;
+        try {
+          ok = stream.socket.write(chunk);
+        } catch (err) {
+          log({
+            level: "warn",
+            event: "tcp_write_failed",
+            sessionId,
+            streamId,
+            message: formatOneLineError(err, 512, "Error"),
+          });
+          sendStreamError(streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+          destroyStream(streamId);
+          return;
+        }
         if (!ok) {
           stream.writePaused = true;
           return;
@@ -631,7 +668,19 @@ export async function createProxyServer(userConfig) {
       // OPEN+DATA+FIN in a single WebSocket message without losing the DATA.
       if (stream.clientFin && !stream.endSent) {
         stream.endSent = true;
-        stream.socket.end();
+        try {
+          stream.socket.end();
+        } catch (err) {
+          log({
+            level: "warn",
+            event: "tcp_end_failed",
+            sessionId,
+            streamId,
+            message: formatOneLineError(err, 512, "Error"),
+          });
+          destroyStream(streamId);
+          return;
+        }
       }
 
       if (stream.clientFin && stream.serverFin) {
@@ -817,7 +866,21 @@ export async function createProxyServer(userConfig) {
         return;
       }
 
-      const ok = stream.socket.write(frame.payload);
+      let ok = false;
+      try {
+        ok = stream.socket.write(frame.payload);
+      } catch (err) {
+        log({
+          level: "warn",
+          event: "tcp_write_failed",
+          sessionId,
+          streamId: frame.streamId,
+          message: formatOneLineError(err, 512, "Error"),
+        });
+        sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+        destroyStream(frame.streamId);
+        return;
+      }
       if (!ok) {
         stream.writePaused = true;
       }
