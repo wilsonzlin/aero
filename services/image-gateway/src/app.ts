@@ -28,6 +28,7 @@ import { ApiError } from "./errors";
 import { DISK_BYTES_CONTENT_TYPE, buildRangeProxyHeaders, buildRangeProxyResponse } from "./rangeProxy";
 import type { ImageRecord, ImageStore } from "./store";
 import { buildImageObjectKey } from "./s3";
+import { formatOneLineUtf8 } from "./text";
 
 export interface BuildAppDeps {
   config: Config;
@@ -45,11 +46,8 @@ const MAX_IF_MODIFIED_SINCE_LEN = 128;
 const MAX_IF_RANGE_LEN = 256;
 const MAX_FORWARD_VALUE_LEN = 4 * 1024;
 const MAX_PROTO_VALUE_LEN = 64;
-
-function isRequestUrlTooLong(req: FastifyRequest): boolean {
-  // `req.raw.url` is the path + query string (no scheme/host).
-  return typeof req.raw.url === "string" && req.raw.url.length > MAX_REQUEST_URL_LEN;
-}
+const MAX_UPLOAD_ID_LEN = 1024;
+const MAX_ETAG_LEN = 4 * 1024;
 
 function firstCommaSeparatedValue(raw: string): string {
   const idx = raw.indexOf(",");
@@ -487,10 +485,21 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     logger: process.env.NODE_ENV !== "test",
   });
 
+  const MAX_CLIENT_ERROR_MESSAGE_BYTES = 512;
+
+  function formatClientErrorMessage(message: unknown): string {
+    const formatted = formatOneLineUtf8(message, MAX_CLIENT_ERROR_MESSAGE_BYTES);
+    return formatted || "Request failed";
+  }
+
   app.addHook("onRequest", async (req, reply) => {
     applyCorsHeaders(reply, deps.config);
 
-    if (isRequestUrlTooLong(req)) {
+    const rawUrl = req.raw.url;
+    if (typeof rawUrl !== "string") {
+      return reply.status(400).send({ error: { code: "BAD_REQUEST", message: "Bad Request" } });
+    }
+    if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       return reply.status(414).send({ error: { code: "URL_TOO_LONG", message: "URL too long" } });
     }
 
@@ -513,7 +522,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     const message =
       statusCode >= 500
         ? "Internal Server Error"
-        : err.message || "Request failed";
+        : err instanceof ApiError
+          ? formatClientErrorMessage(err.message)
+          : "Request failed";
 
     if (statusCode >= 500) {
       app.log.error({ err });
@@ -594,6 +605,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     if (typeof uploadId !== "string" || !uploadId) {
       throw new ApiError(400, "uploadId must be a string", "BAD_REQUEST");
     }
+    if (uploadId.length > MAX_UPLOAD_ID_LEN) {
+      throw new ApiError(400, "uploadId is too long", "BAD_REQUEST");
+    }
     if (typeof partNumber !== "number" || !Number.isInteger(partNumber) || partNumber <= 0) {
       throw new ApiError(400, "partNumber must be a positive integer", "BAD_REQUEST");
     }
@@ -638,6 +652,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
     if (typeof uploadId !== "string" || !uploadId) {
       throw new ApiError(400, "uploadId must be a string", "BAD_REQUEST");
     }
+    if (uploadId.length > MAX_UPLOAD_ID_LEN) {
+      throw new ApiError(400, "uploadId is too long", "BAD_REQUEST");
+    }
     if (!Array.isArray(parts) || parts.length === 0) {
       throw new ApiError(400, "parts must be a non-empty array", "BAD_REQUEST");
     }
@@ -677,6 +694,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           );
         }
         if (typeof etag !== "string" || !etag) {
+          throw new ApiError(400, "Invalid etag", "BAD_REQUEST");
+        }
+        if (etag.length > MAX_ETAG_LEN) {
           throw new ApiError(400, "Invalid etag", "BAD_REQUEST");
         }
         return { PartNumber: partNumber, ETag: normalizeEtag(etag) };
@@ -805,9 +825,9 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           expiresAt,
         });
 
-         url = signedUrl;
-         auth = { type: "url", expiresAt: expiresAt.toISOString() };
-       }
+        url = signedUrl;
+        auth = { type: "url", expiresAt: expiresAt.toISOString() };
+      }
 
       if (chunkedManifestKey) {
         if (deps.config.cloudfrontAuthMode === "cookie") {

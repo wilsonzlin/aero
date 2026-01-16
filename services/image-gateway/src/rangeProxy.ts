@@ -8,8 +8,10 @@ export interface RangeProxyResponse {
 }
 
 export const DISK_BYTES_CONTENT_TYPE = "application/octet-stream";
+const MAX_CONTENT_RANGE_LEN = 256;
 
 function computeContentLengthFromContentRange(contentRange: string): string | undefined {
+  if (contentRange.length > MAX_CONTENT_RANGE_LEN) return undefined;
   const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(contentRange.trim());
   if (!match) return undefined;
   const start = BigInt(match[1]);

@@ -84,6 +84,28 @@ describe("app", () => {
     expect(createMultipartInput?.Key).toMatch(/\/disk\.img$/);
   });
 
+  it("rejects overly long X-User-Id headers", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called when auth header is invalid");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/images",
+      headers: { "x-user-id": "a".repeat(10_000) },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: { code: "BAD_REQUEST" } });
+  });
+
   it("supports public immutable cache-control for newly created objects", async () => {
     const config = makeConfig({ imageCacheControl: CACHE_CONTROL_PUBLIC_IMMUTABLE });
     const store = new MemoryImageStore();
