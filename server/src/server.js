@@ -12,8 +12,16 @@ const MAX_UPGRADE_STATUS_MESSAGE_BYTES = 64;
 
 function writeUpgradeResponse(socket, statusCode, statusMessage) {
   const safeStatusMessage = formatOneLineUtf8(statusMessage, MAX_UPGRADE_STATUS_MESSAGE_BYTES) || "Error";
-  socket.write(`HTTP/1.1 ${statusCode} ${safeStatusMessage}\r\n\r\n`);
-  socket.destroy();
+  try {
+    socket.write(`HTTP/1.1 ${statusCode} ${safeStatusMessage}\r\n\r\n`);
+  } catch {
+    // ignore
+  }
+  try {
+    socket.destroy();
+  } catch {
+    // ignore
+  }
 }
 
 export function createAeroServer(config, { logger = createLogger({ level: config.logLevel }), metrics = createMetrics() } = {}) {

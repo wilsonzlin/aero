@@ -95,13 +95,19 @@ class TcpProxySession {
   }
 
   #send(buf) {
+    if (this.ws.readyState !== this.ws.OPEN) return;
     if (!this.outBucket.tryRemove(buf.length)) {
       this.logger.warn("rate_limited_out", { sessionId: this.sessionId, clientIp: this.clientIp });
       closeWebSocket(this.ws, WS_CLOSE_POLICY_VIOLATION, "Rate limited");
       return;
     }
     this.metrics.increment("bytesOutTotal", buf.length);
-    this.ws.send(buf, { binary: true });
+    try {
+      this.ws.send(buf, { binary: true });
+    } catch (err) {
+      this.logger.warn("ws_send_error", { sessionId: this.sessionId, clientIp: this.clientIp, err: formatOneLineError(err, 512) });
+      closeWebSocket(this.ws, WS_CLOSE_POLICY_VIOLATION, "WebSocket error");
+    }
   }
 
   #sendOpened(connId, status, message = "") {
@@ -241,13 +247,33 @@ class TcpProxySession {
       if (this.ws.readyState === this.ws.OPEN) this.#sendClose(connId, CloseReason.PROTOCOL, "Unknown connId");
       return;
     }
-    conn.socket.write(data);
+    try {
+      conn.socket.write(data);
+    } catch (err) {
+      conn.lastErrorMessage = "tcp error";
+      this.logger.warn("tcp_socket_write_error", { sessionId: this.sessionId, connId, clientIp: this.clientIp, err: formatOneLineError(err, 512) });
+      try {
+        conn.socket.destroy(new Error("write failed"));
+      } catch {
+        // ignore
+      }
+    }
   }
 
   #handleClientEnd(connId) {
     const conn = this.connections.get(connId);
     if (!conn) return;
-    conn.socket.end();
+    try {
+      conn.socket.end();
+    } catch (err) {
+      conn.lastErrorMessage = "tcp error";
+      this.logger.warn("tcp_socket_end_error", { sessionId: this.sessionId, connId, clientIp: this.clientIp, err: formatOneLineError(err, 512) });
+      try {
+        conn.socket.destroy(new Error("end failed"));
+      } catch {
+        // ignore
+      }
+    }
   }
 
   #handleClientClose(connId) {
