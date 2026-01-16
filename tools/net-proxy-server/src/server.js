@@ -2,7 +2,7 @@ import http from "node:http";
 import { lookup } from "node:dns/promises";
 import net from "node:net";
 import WebSocket, { WebSocketServer } from "ws";
-import { formatOneLineUtf8 } from "./text.js";
+import { formatOneLineError, formatOneLineUtf8 } from "./text.js";
 import { hasWebSocketSubprotocol } from "./wsSubprotocol.js";
 import {
   TCP_MUX_HEADER_BYTES,
@@ -39,8 +39,7 @@ function wsCloseSafe(ws, code, reason) {
 }
 
 function formatTcpMuxErrorMessage(err) {
-  const raw = err && typeof err === "object" && "message" in err ? err.message : err;
-  return formatOneLineUtf8(raw, MAX_TCP_MUX_ERROR_MESSAGE_BYTES) || "Error";
+  return formatOneLineError(err, MAX_TCP_MUX_ERROR_MESSAGE_BYTES);
 }
 
 function normalizeRemoteAddress(remoteAddress) {
@@ -287,7 +286,8 @@ function defaultLogger(obj) {
 }
 
 function normalizeOpenHost(host) {
-  let out = String(host ?? "").trim();
+  if (typeof host !== "string") return "";
+  let out = host.trim();
   if (out.startsWith("[") && out.endsWith("]")) out = out.slice(1, -1);
   return out;
 }
@@ -296,7 +296,8 @@ function asBuffer(data) {
   if (Buffer.isBuffer(data)) return data;
   if (data instanceof ArrayBuffer) return Buffer.from(data);
   if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  throw new TypeError(`Unsupported WebSocket message payload: ${Object.prototype.toString.call(data)}`);
+  const t = data === null ? "null" : typeof data;
+  throw new TypeError(`Unsupported WebSocket message payload type: ${t}`);
 }
 
 export async function createProxyServer(userConfig) {

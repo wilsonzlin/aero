@@ -42,7 +42,8 @@ function asBuffer(data) {
   if (Buffer.isBuffer(data)) return data;
   if (data instanceof ArrayBuffer) return Buffer.from(data);
   if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  throw new TypeError(`Unsupported ws message payload: ${Object.prototype.toString.call(data)}`);
+  const t = data === null ? "null" : typeof data;
+  throw new TypeError(`Unsupported ws message payload type: ${t}`);
 }
 
 function createFrameWaiter(ws) {

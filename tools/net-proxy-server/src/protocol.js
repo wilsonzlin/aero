@@ -209,8 +209,38 @@ export function decodeTcpMuxClosePayload(buf) {
   return { flags: buf.readUInt8(0) };
 }
 
+function coerceTcpMuxErrorMessage(message) {
+  if (message == null) return "";
+  switch (typeof message) {
+    case "string":
+      return message;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(message);
+    case "symbol":
+    case "undefined":
+      return "";
+    case "object": {
+      try {
+        const msg = message && typeof message.message === "string" ? message.message : null;
+        return msg ?? "";
+      } catch {
+        // ignore getters throwing
+        return "";
+      }
+    }
+    case "function":
+    default:
+      return "";
+  }
+}
+
 export function encodeTcpMuxErrorPayload(code, message) {
-  const safeMessage = truncateUtf8(sanitizeOneLine(String(message ?? "")), MAX_TCP_MUX_ERROR_MESSAGE_BYTES);
+  const safeMessage = truncateUtf8(
+    sanitizeOneLine(coerceTcpMuxErrorMessage(message)),
+    MAX_TCP_MUX_ERROR_MESSAGE_BYTES,
+  );
   const messageBytes = Buffer.from(safeMessage, "utf8");
   const buf = Buffer.allocUnsafe(2 + 2 + messageBytes.length);
   buf.writeUInt16BE(code & 0xffff, 0);
