@@ -5,18 +5,44 @@ const LEVELS = Object.freeze({
   error: 40,
 });
 
+import { formatOneLineError } from "./text.js";
+
 export function createLogger({ level = "info" } = {}) {
   const threshold = LEVELS[level] ?? LEVELS.info;
 
   function emit(levelName, msg, fields) {
     if ((LEVELS[levelName] ?? LEVELS.info) < threshold) return;
+    const extra =
+      fields && typeof fields === "object" && !Array.isArray(fields)
+        ? fields
+        : { fields };
     const entry = {
       time: new Date().toISOString(),
       level: levelName,
       msg,
-      ...fields,
+      ...extra,
     };
-    process.stdout.write(`${JSON.stringify(entry)}\n`);
+    let line = "";
+    try {
+      line = JSON.stringify(entry);
+    } catch (err) {
+      const fallback = {
+        time: entry.time,
+        level: "error",
+        msg: "logger: failed to stringify log entry",
+        err: formatOneLineError(err, 512, "Error"),
+      };
+      try {
+        line = JSON.stringify(fallback);
+      } catch {
+        return;
+      }
+    }
+    try {
+      process.stdout.write(`${line}\n`);
+    } catch {
+      // ignore
+    }
   }
 
   return {
