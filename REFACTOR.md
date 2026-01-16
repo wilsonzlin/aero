@@ -315,6 +315,54 @@ Approach:
 Outcomes:
 - Contract suite fails if `child_process.exec/execSync` is reachable via alias/namespace/destructuring patterns.
 
+### Phase 28: Timer-string eval sink guardrails (done)
+Goal: prevent accidental reintroduction of string-based timer eval sinks.
+
+Approach:
+- Extend the eval sink scan to detect:
+  - `setTimeout("...")` / `setInterval("...")`
+  - `window.setTimeout("...")` / `globalThis.setTimeout("...")` variants
+- Add focused parsing contract coverage.
+
+Outcomes:
+- Contract suite fails if string-based timer eval sinks appear in production sources.
+
+### Phase 29: Sink scanner helper consolidation (done)
+Goal: reduce drift between security sink scanners by sharing a tiny “parse JS around a match” utility layer.
+
+Approach:
+- Add `tests/_helpers/js_scan_parse_helpers.js` for common utilities:
+  - whitespace/comment skipping
+  - parsing quoted string literals
+- Refactor sink scanners to use the shared helper.
+
+Outcomes:
+- Sink scanner helpers share one implementation for basic parsing primitives, reducing future drift.
+
+### Phase 30: DOM XSS sink guardrail completeness (done)
+Goal: ensure DOM sink guardrails catch bracket-notation access (`obj["innerHTML"]`) in addition to dot access.
+
+Approach:
+- Add a shared DOM XSS sink scanner helper that:
+  - uses masked code to locate bracket expressions outside strings/comments/regex
+  - parses the string literal property name from source
+- Refactor the DOM XSS contract to use the shared helper and add focused parsing contract coverage.
+
+Outcomes:
+- Contract suite fails if bracket-notation DOM HTML injection sinks appear in production sources.
+
+### Phase 31: Bracket-notation eval/timer sink coverage (done)
+Goal: prevent bypassing eval/timer sink guardrails via bracket notation (e.g. `globalThis["eval"]`).
+
+Approach:
+- Extend eval sink scanning to detect:
+  - `globalThis["eval"](...)` / `window["eval"](...)`
+  - `globalThis["setTimeout"]("...")` / `window["setInterval"]("...")` (string first-arg only)
+- Add focused parsing contract coverage.
+
+Outcomes:
+- Contract suite fails if bracket-notation global eval/timer sinks appear in production sources.
+
 Some coding guidelines:
 
 ## General Principles
