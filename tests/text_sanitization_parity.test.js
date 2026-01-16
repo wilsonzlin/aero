@@ -33,11 +33,19 @@ test("text helpers: sanitizeOneLine is consistent", () => {
     { input: "a\u00a0b", expected: "a b" }, // NBSP
   ];
 
+  const throwingToString = {
+    toString() {
+      throw new Error("boom");
+    },
+  };
+
   for (const { name, mod } of MODULES) {
     const sanitize = impl(name, mod, "sanitizeOneLine");
     for (const { input, expected } of cases) {
       assert.equal(sanitize(input), expected, `${name}.sanitizeOneLine mismatch`);
     }
+    assert.doesNotThrow(() => sanitize(throwingToString), `${name}.sanitizeOneLine threw on toString()`);
+    assert.equal(sanitize(throwingToString), "", `${name}.sanitizeOneLine mismatch on toString() throw`);
   }
 });
 
@@ -55,11 +63,19 @@ test("text helpers: truncateUtf8 is consistent", () => {
     { input: "x", maxBytes: 1.2, expected: "" },
   ];
 
+  const throwingToString = {
+    toString() {
+      throw new Error("boom");
+    },
+  };
+
   for (const { name, mod } of MODULES) {
     const truncate = impl(name, mod, "truncateUtf8");
     for (const { input, maxBytes, expected } of cases) {
       assert.equal(truncate(input, maxBytes), expected, `${name}.truncateUtf8 mismatch`);
     }
+    assert.doesNotThrow(() => truncate(throwingToString, 16), `${name}.truncateUtf8 threw on toString()`);
+    assert.equal(truncate(throwingToString, 16), "", `${name}.truncateUtf8 mismatch on toString() throw`);
   }
 });
 
@@ -70,11 +86,19 @@ test("text helpers: formatOneLineUtf8 composes sanitize+truncate", () => {
     { input: "🙂", maxBytes: 3, expected: "" },
   ];
 
+  const throwingToString = {
+    toString() {
+      throw new Error("boom");
+    },
+  };
+
   for (const { name, mod } of MODULES) {
     const format = impl(name, mod, "formatOneLineUtf8");
     for (const { input, maxBytes, expected } of cases) {
       assert.equal(format(input, maxBytes), expected, `${name}.formatOneLineUtf8 mismatch`);
     }
+    assert.doesNotThrow(() => format(throwingToString, 16), `${name}.formatOneLineUtf8 threw on toString()`);
+    assert.equal(format(throwingToString, 16), "", `${name}.formatOneLineUtf8 mismatch on toString() throw`);
   }
 });
 
