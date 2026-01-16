@@ -38,6 +38,8 @@ export type SessionManager = Readonly<{
   verifySessionRequest: (req: IncomingMessage) => VerifiedSession | null;
 }>;
 
+const utf8DecoderFatal = new TextDecoder('utf-8', { fatal: true });
+
 function sign(payloadBase64Url: string, secret: Buffer): Buffer {
   return createHmac('sha256', secret).update(payloadBase64Url).digest();
 }
@@ -48,11 +50,11 @@ function constantTimeEqual(a: Buffer, b: Buffer): boolean {
 }
 
 function decodeUtf8Exact(bytes: Buffer): string | null {
-  const text = bytes.toString('utf8');
-  // Node replaces invalid UTF-8 with U+FFFD, which can change the underlying byte length.
-  // Treat that as invalid rather than accepting ambiguous payloads.
-  if (Buffer.from(text, 'utf8').length !== bytes.length) return null;
-  return text;
+  try {
+    return utf8DecoderFatal.decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 export function mintSessionToken(payload: SessionTokenPayload, secret: Buffer): string {

@@ -33,12 +33,14 @@ export enum TcpMuxErrorCode {
   STREAM_BUFFER_OVERFLOW = 6
 }
 
+const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
+
 function decodeUtf8Exact(bytes: Buffer, context: string): string {
-  const text = bytes.toString("utf8");
-  if (Buffer.from(text, "utf8").length !== bytes.length) {
+  try {
+    return utf8DecoderFatal.decode(bytes);
+  } catch {
     throw new Error(`${context} is not valid UTF-8`);
   }
-  return text;
 }
 
 function hasControlOrWhitespace(value: string): boolean {
