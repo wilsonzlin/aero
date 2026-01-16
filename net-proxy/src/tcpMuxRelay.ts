@@ -173,7 +173,24 @@ export function handleTcpMuxRelay(
     while (stream.pendingWrites.length > 0) {
       const chunk = stream.pendingWrites.shift()!;
       stream.pendingWriteBytes -= chunk.length;
-      const ok = stream.socket.write(chunk);
+      let ok = false;
+      try {
+        ok = stream.socket.write(chunk);
+      } catch (err) {
+        metrics.incConnectionError("error");
+        sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
+        destroyStream(stream.id);
+        log("error", "connect_error", {
+          connId,
+          proto: "tcp-mux",
+          streamId: stream.id,
+          host: stream.host,
+          port: stream.port,
+          clientAddress,
+          err: formatError(err)
+        });
+        return;
+      }
       if (!ok) {
         stream.writePaused = true;
         break;
@@ -182,7 +199,22 @@ export function handleTcpMuxRelay(
 
     if (stream.clientFin && !stream.clientFinSent && stream.pendingWrites.length === 0) {
       stream.clientFinSent = true;
-      stream.socket.end();
+      try {
+        stream.socket.end();
+      } catch (err) {
+        metrics.incConnectionError("error");
+        sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
+        destroyStream(stream.id);
+        log("error", "connect_error", {
+          connId,
+          proto: "tcp-mux",
+          streamId: stream.id,
+          host: stream.host,
+          port: stream.port,
+          clientAddress,
+          err: formatError(err)
+        });
+      }
     }
   };
 
@@ -391,7 +423,24 @@ export function handleTcpMuxRelay(
       return;
     }
 
-    const ok = stream.socket.write(frame.payload);
+    let ok = false;
+    try {
+      ok = stream.socket.write(frame.payload);
+    } catch (err) {
+      metrics.incConnectionError("error");
+      sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
+      destroyStream(stream.id);
+      log("error", "connect_error", {
+        connId,
+        proto: "tcp-mux",
+        streamId: stream.id,
+        host: stream.host,
+        port: stream.port,
+        clientAddress,
+        err: formatError(err)
+      });
+      return;
+    }
     if (!ok) {
       stream.writePaused = true;
     }
