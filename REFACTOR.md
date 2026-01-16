@@ -363,6 +363,307 @@ Approach:
 Outcomes:
 - Contract suite fails if bracket-notation global eval/timer sinks appear in production sources.
 
+### Phase 32: Sink scanner string-literal hardening (done)
+Goal: prevent bypassing sink scanners via JS string literal escape tricks while keeping scans conservative (no full parser).
+
+Approach:
+- Harden the shared string-literal parser used by sink scanners to correctly interpret:
+  - common escape sequences (`\xNN`, `\uNNNN`, `\u{...}`, line continuations)
+  - no-substitution template literals (`` `...` ``) for bracket keys / dynamic import specifiers
+  - JS line terminators (LF/CR/CRLF and U+2028/U+2029) in quoted strings and line-comment termination
+- Add focused contract coverage to lock in parsing behavior and real bypass cases.
+
+Outcomes:
+- Contract suite catches escaped and no-subst-template variants like:
+  - `document["wr\u0069te"]`, `globalThis[\`eval\`]`, `require("child\x5fprocess")`
+- Contract suite treats U+2028/U+2029 as line terminators for both the source masker and parse helpers.
+- Contract suite treats CR/CRLF as line terminators for `//` comments and line numbering.
+- Shared parse helper behavior is guarded by contract tests to prevent drift.
+
+### Phase 33: DOM bracket-sink false-positive hardening (done)
+Goal: keep the DOM XSS guardrail high-signal by reducing obvious false positives from array literals without weakening real sink detection.
+
+Approach:
+- Keep bracket-notation sink detection focused on computed property access like `obj["innerHTML"]`.
+- Avoid flagging array literals that merely contain sink-like strings, including common statement shapes:
+  - `return ["innerHTML"]`
+  - `if (x) ["innerHTML"];` (and similar control-flow headers)
+- Lock in the expected behavior with focused contract coverage.
+
+Outcomes:
+- Contract suite does not fail on array literals containing sink-like strings.
+- Contract suite still fails on computed-property sinks like `el["innerHTML"] = ...`.
+
+### Phase 34: Subprocess sink reference-taking hardening (done)
+Goal: prevent bypassing the subprocess sink guardrail by taking references to `child_process.exec/execSync` without calling them inline.
+
+Approach:
+- Extend the subprocess sink scanner to flag:
+  - property access via child_process aliases (e.g. `cp.exec`, `cp["execSync"]`)
+  - property access via direct `require("child_process").exec` / `["execSync"]`
+- Keep detection scoped to confirmed `child_process` namespaces/specifiers to avoid false positives.
+- Add focused contract coverage.
+
+Outcomes:
+- Contract suite fails if `child_process.exec/execSync` is reachable via reference-taking patterns, not just calls/destructuring.
+
+### Phase 35: Awaited dynamic import subprocess sink closure (done)
+Goal: prevent bypassing the subprocess sink guardrail via awaited dynamic import member access (e.g. `(await import("child_process")).execSync(...)`).
+
+Approach:
+- Extend the subprocess sink scanner to detect `await import("child_process")` followed by:
+  - direct member access (dot or bracket), including optional chaining
+  - `default` hop patterns where Node ESM interop exposes `child_process` as `module.default`
+- Add focused parsing contract coverage for the bypass shapes.
+
+Outcomes:
+- Contract suite fails if `child_process.exec/execSync` is reachable via awaited dynamic import member access.
+
+### Phase 36: Unicode-escaped identifier sink hardening (done)
+Goal: prevent bypassing sink guardrails via unicode escapes in identifier names (e.g. `document.wr\u0069te(...)`, `globalThis.e\u0076al(...)`, `cp.e\u0078ec(...)`).
+
+Approach:
+- Add a conservative identifier parser for `\uXXXX` / `\u{...}` escapes (ASCII-only) for use in sink scanners (no full JS parser).
+- Extend sink scanners to detect unicode-escaped identifier forms for:
+  - DOM dot-access sinks (`innerHTML`, `outerHTML`, `insertAdjacentHTML`, `createContextualFragment`, and `document.write/writeln`)
+  - global eval/timer sinks (`globalThis.e\u0076al`, `window.setTime\u006fut("...")`)
+  - subprocess sinks (`cp.e\u0078ec`, `require("child_process").e\u0078ecSync`)
+- Add focused parsing contracts for these bypass shapes.
+
+Outcomes:
+- Contract suite catches the unicode-escaped identifier bypass patterns above without expanding into a full JS lexer/parser.
+
+### Phase 37: Eval/Function reference-taking hardening (done)
+Goal: prevent bypassing eval-sink guardrails via taking references to global eval/Function (e.g. `const e = globalThis["eval"]`, `globalThis["Function"]("...")`).
+
+Approach:
+- Extend eval sink scanning to treat global-object dot/bracket access of:
+  - `eval`
+  - `Function`
+  as sinks even when not immediately called (reference-taking), including unicode-escaped identifiers and escaped bracket-string properties.
+- Add focused parsing contract coverage to lock in these bypass shapes.
+
+Outcomes:
+- Contract suite catches `globalThis.eval`, `globalThis["eval"]`, `globalThis["Function"]`, and unicode-escaped variants.
+
+### Phase 38: Unicode-escaped direct eval/timer identifier hardening (done)
+Goal: prevent bypassing eval/timer guardrails via unicode-escaped **direct** identifiers (e.g. `ev\u0061l(...)`, `setTime\u006fut("...")`).
+
+Approach:
+- Extend eval sink scanning to detect unicode-escaped direct identifier calls for:
+  - `eval(...)`
+  - `Function(...)`
+  - `setTimeout("...")` / `setInterval("...")` (string first arg only)
+- Keep it conservative: only treat direct identifiers (not `.prop` access) and only when the raw identifier text includes a `\u` escape.
+- Add focused parsing contract coverage for these cases.
+
+Outcomes:
+- Contract suite catches direct-call unicode-escape bypasses without broadening the scanner into a full JS parser.
+
+### Phase 39: Timer optional-call hardening (done)
+Goal: prevent bypassing timer-string eval guardrails via optional-call syntax (e.g. `setTimeout?.("...")`, `window.setTimeout?.("...")`).
+
+Approach:
+- Update timer-string sink scanning to use `isOptionalCallStart` so both `(... )` and `?.( ... )` forms are recognized.
+- Keep the guardrail conservative by requiring a literal string/template first argument.
+- Add focused contract coverage for optional-call variants.
+
+Outcomes:
+- Contract suite catches `setTimeout?.("...")`, `setInterval?.("...")`, and `window.setTimeout?.("...")` string-timer sinks.
+
+### Phase 40: HTTP error reflection guardrail (done)
+Goal: prevent accidental reintroduction of client-visible error reflection in HTTP response bodies (large/untrusted `err.message` values leaking to clients or bloating logs).
+
+Approach:
+- Add a contract test that scans production JS/TS sources for high-risk response patterns:
+  - `res.send(err.message)` / `reply.send(err.message)`
+  - `res.end(String(err))` / `reply.end(String(error))`
+  - `socket.end(err.message)` in ad-hoc HTTP responders
+- Keep the scan conservative (only `err`/`error` variables; ignore strings/comments).
+- Add a focused parsing contract test to lock in scanner correctness (detect sinks, avoid false positives from nearby `catch (err)` blocks).
+
+Outcomes:
+- Contract suite fails if new direct `err.message` / `String(err)` response-body reflection patterns appear in production sources.
+- Scanner is statement-local: it inspects the matched call’s argument expression (parentheses-balanced) to avoid false positives from nearby `catch (err)` blocks.
+- The guardrail also flags status-line reflection via `res.writeHead(status, err.message)` and JSON-body reflection via `JSON.stringify(err)` passed directly to response writers.
+- The guardrail is chain-aware: it also covers fluent forms like `reply.code(...).send(...)` and `reply.raw.end(...)`.
+
+### Phase 41: De-duplicate ESM text helpers (done)
+Goal: reduce redundant copies of the ESM (JS) text helpers while keeping behavior stable and test-locked.
+
+Approach:
+- Make `server/src/text.js` and `tools/net-proxy-server/src/text.js` re-export from the canonical `src/text.js`.
+- Keep the existing text parity/contract tests as the drift guard.
+
+Outcomes:
+- Removes large duplicated implementations without changing any public behavior (`npm run test:contracts` remains green).
+
+### Phase 42: HTTP error reflection optional-chain hardening (done)
+Goal: prevent bypassing the HTTP error reflection guardrail with optional chaining / bracket access on `err`/`error` (e.g. `res.send(err?.message)`, `reply.send(err?.["message"])`).
+
+Approach:
+- Extend HTTP response sink scanning to treat `err?.message` and `err?.["message"]` as equivalent to `err.message` when used in response writers.
+- Add focused parsing contract coverage for these bypass shapes.
+
+Outcomes:
+- Contract suite fails if new optional-chaining / bracket-access error-message reflection patterns appear in production sources.
+
+### Phase 43: HTTP error reflection response-method bracket hardening (done)
+Goal: prevent bypassing the HTTP error reflection guardrail via bracket-notation response methods (e.g. `res["send"](err.message)`, `reply?.["send"]?.(err.message)`).
+
+Approach:
+- Extend the chain-aware response-call scanner to parse bracket string properties in receiver chains, so `res["send"](...)` and `reply["json"](...)` are scanned like `res.send(...)`.
+- Add focused parsing contract coverage for bracket-method variants.
+
+Outcomes:
+- Contract suite catches bracket-method response sink bypasses without broadening into full dataflow.
+
+### Phase 44: De-duplicate browser public text helpers (done)
+Goal: remove duplicated `formatOneLineError` / UTF-8 one-line formatting helpers in `web/public` scripts while preserving behavior (and keeping CSP fixtures intact).
+
+Approach:
+- Add a small shared ESM module in `web/public/_shared/` for one-line UTF-8 formatting and safe error-to-message conversion (optionally including `err.name` fallback).
+- Replace duplicated implementations in:
+  - `web/public/wasm-jit-csp/main.js`
+  - `web/public/assets/security_headers_worker.js`
+
+Outcomes:
+- `web/public` scripts stay self-contained (no bundler required) but no longer carry multiple copies of the same helper logic.
+
+### Phase 45: Snapshot UI integration hygiene (done)
+Goal: de-duplicate the ad-hoc snapshot UI script and make it usable as a first-class Vite-served page.
+
+Approach:
+- Convert `web/snapshot-ui.js` to use the shared `web/public/_shared/text_one_line.js` helper.
+- Add `web/snapshot-ui.html` that wires up the expected DOM and loads the script as a module.
+- Extend the shared helper to support a `includeNameFallback: "missing"` mode so we can preserve prior semantics where `err.name` is only used when `.message` is missing (not merely empty).
+
+Outcomes:
+- Snapshot UI is now a runnable page (`/snapshot-ui.html`) and no longer carries a private copy of one-line error formatting helpers.
+
+### Phase 46: De-duplicate PoC Node server text helpers (done)
+Goal: reduce duplicated one-line error formatting helpers in small Node ESM PoC servers.
+
+Approach:
+- For ESM PoC servers, import `formatOneLineError` from the canonical `src/text.js` instead of carrying a local `TextEncoder` + UTF-8 truncation implementation.
+
+Outcomes:
+- `poc/browser-memory/server.mjs` now uses `src/text.js` for safe, byte-bounded error messages without duplicating the implementation.
+
+### Phase 47: De-duplicate CJS helper copies (done)
+Goal: remove duplicated UTF-8 one-line text helpers across CJS utilities without forcing a full CJS→ESM migration.
+
+Approach:
+- Introduce a small shared CJS helper: `scripts/_shared/text_one_line.cjs`.
+- Replace local helper copies in:
+  - `web/scripts/serve.cjs`
+  - `tools/disk-streaming-browser-e2e/src/servers.js`
+- Add the new CJS helper to the existing text parity tests to prevent drift.
+
+Outcomes:
+- CJS utilities share one implementation for `formatOneLineUtf8`/`formatOneLineError`, and parity tests keep it aligned with the canonical `src/text.js`.
+
+### Phase 48: De-duplicate perf dashboard text helpers (done)
+Goal: remove duplicated one-line UTF-8 error formatting helpers from the nightly performance dashboard without breaking the gh-pages artifact.
+
+Approach:
+- Convert the dashboard script to ESM and import a shared helper from `web/public/_shared/text_one_line.js`.
+- Add a local shim module under `bench/dashboard/_shared/` for repo-local serving, and ensure the perf-nightly workflow copies the canonical helper into the published `dist/perf-dashboard/_shared/` so the artifact remains self-contained.
+
+Outcomes:
+- `bench/dashboard/app.js` no longer embeds a local UTF-8 one-line formatting implementation; the published dashboard includes the shared helper file.
+
+### Phase 49: HTTP error reflection parenthesized err hardening (done)
+Goal: prevent bypassing the HTTP error reflection guardrail via parenthesized `err`/`error` message access (e.g. `res.send((err).message)`, `res.send((err)["message"])`).
+
+Approach:
+- Extend the response-argument scan patterns to also catch parenthesized `err`/`error` message access forms while staying conservative (avoid call-argument false positives like `foo(err).message`).
+- Add focused parsing contract coverage for these bypass shapes.
+
+Outcomes:
+- Contract suite catches the parenthesized error-message reflection bypass shapes without expanding into full dataflow analysis.
+
+### Phase 50: HTTP error reflection bracket-string correctness (done)
+Goal: correctly detect `err["message"]` / `err?.["message"]` style sinks despite the scanner masking string literal contents.
+
+Approach:
+- Replace regex-based `["message"]` matching with a small parser-based check that scans only masked (non-string/comment) regions, then parses bracket-string properties from the original source and compares the decoded property value to `"message"`.
+- Add focused parsing contract coverage for `err?.['message']`, `err['message']`, and escaped string forms like `err["m\\u0065ssage"]`.
+
+Outcomes:
+- Contract suite now genuinely enforces bracket-string error message reflection sinks (including escaped string literals) instead of relying on masked string contents.
+
+### Phase 51: HTTP error reflection dot unicode-escape hardening (done)
+Goal: prevent bypassing the HTTP error reflection guardrail with unicode-escaped identifier member access (e.g. `err.m\u0065ssage`, `(err).m\u0065ssage`).
+
+Approach:
+- Add a small parser-based check that looks for `err`/`error` followed by `.` (or `?.`) and parses the following identifier with unicode escapes, treating a decoded `"message"` property as a sink when the raw identifier includes a `\` escape.
+- Add focused parsing contract coverage for `err.m\u0065ssage`, `err?.m\u0065ssage`, and `(err).m\u0065ssage`.
+
+Outcomes:
+- Contract suite catches unicode-escaped `.message` bypass shapes without expanding into full dataflow analysis.
+
+### Phase 52: HTTP error reflection unicode optional-chain correctness (done)
+Goal: ensure the unicode-escaped dot-property guardrail truly covers optional-chaining `?.` member access (e.g. `err?.m\u0065ssage`, `(err)?.m\u0065ssage`).
+
+Approach:
+- Fix the parser-based unicode-dot check to treat `?.` as including the dot (parse the identifier immediately after `?.`).
+- Add a focused parsing contract test that isolates unicode-escaped dot-access sinks and asserts they are detected.
+
+Outcomes:
+- Contract suite now genuinely enforces unicode-escaped `.message` sinks for both `.` and `?.` forms.
+
+### Phase 53: HTTP error reflection parenthesized direct-arg hardening (done)
+Goal: prevent bypassing the HTTP error reflection guardrail via parenthesized direct `err`/`error` arguments (e.g. `reply.raw.end((err))`).
+
+Approach:
+- Extend direct-argument parsing to allow harmless grouping parentheses around `err`/`error` while staying statement-local.
+- Add focused parsing contract coverage for `reply.raw.end((err))`.
+
+Outcomes:
+- Contract suite catches parenthesized direct-err response sinks without expanding into general expression dataflow.
+
+### Phase 54: Text helper drift guard for `web/public` (done)
+Goal: keep the browser-public helper `web/public/_shared/text_one_line.js` behavior aligned with the canonical `src/text.js`, preventing silent drift.
+
+Approach:
+- Add parity coverage that compares `formatOneLineUtf8` and default `formatOneLineError` outputs against `src/text.js`.
+- Add contract coverage for `includeNameFallback` option modes used by public scripts.
+
+Outcomes:
+- Contract suite fails if `web/public/_shared/text_one_line.js` formatting diverges from the canonical semantics.
+
+### Phase 55: HTTP error reflection parenthesized String/JSON args (done)
+Goal: prevent bypassing HTTP error reflection guardrails via grouping parentheses in `String(...)` / `JSON.stringify(...)` (e.g. `res.send(String((err)))`, `res.send(JSON.stringify((err)))`).
+
+Approach:
+- Extend the existing `String(err)` / `JSON.stringify(err)` patterns to accept grouped `(err)`/`((err))` forms.
+- Add focused parsing contract coverage for these bypass shapes.
+
+Outcomes:
+- Contract suite catches parenthesized `String((err))` and `JSON.stringify((err))` reflection patterns.
+
+### Phase 56: Unicode-brace escape drift guards (done)
+Goal: lock in brace-form unicode escape support (`\u{...}`) for identifier parsing and HTTP error reflection sink shapes.
+
+Approach:
+- Extend `js_scan_parse_helpers_contract` to cover `parseIdentifierWithUnicodeEscapes` with `\u{...}` (plus an out-of-range rejection case).
+- Extend the HTTP error reflection parsing contract to cover `err["m\u{65}ssage"]` and `err.m\u{65}ssage` shapes (and `?.` / parenthesized variants).
+
+Outcomes:
+- Contract suite fails if brace-form escape decoding regresses, preventing bypass drift across scanners that rely on these parsing primitives.
+
+### Phase 57: Brace-form unicode escapes end-to-end scanner coverage (done)
+Goal: ensure sink scanners themselves remain robust to brace-form escapes (`\u{...}`), not just the shared parsing primitives.
+
+Approach:
+- Extend eval sink parsing contract to include brace-form escaped identifiers (e.g. `ev\u{61}l(...)`, `setTime\u{6f}ut("...")`).
+- Extend DOM XSS parsing contract to include brace-form escaped sink properties (e.g. `el.inn\u{65}rHTML = ...`, `document.wr\u{69}te(...)`).
+- Extend subprocess sink parsing contract to include brace-form escaped `exec`/`execSync` properties (e.g. `cp.e\u{78}ec(...)`).
+
+Outcomes:
+- Contract suite will fail if scanner-level detection regresses for `\u{...}` escape bypass shapes.
+
 Some coding guidelines:
 
 ## General Principles
