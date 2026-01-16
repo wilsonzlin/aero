@@ -21,6 +21,7 @@ import {
   contentEncodingIsIdentity,
   formatHeaderValueForError,
 } from "./http_headers";
+import { formatOneLineError } from "../text";
 
 // Keep in sync with the Rust snapshot bounds where sensible.
 const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -1990,7 +1991,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         release();
       }
     }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    throw lastErr instanceof Error ? lastErr : new Error(formatOneLineError(lastErr, 512));
   }
 
   private async downloadChunkOnce(chunkIndex: number, generation: number, signal: AbortSignal): Promise<Uint8Array> {

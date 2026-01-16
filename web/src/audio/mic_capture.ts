@@ -6,6 +6,7 @@ import {
   type MicRingBuffer,
   WRITE_POS_INDEX,
 } from "./mic_ring.js";
+import { formatOneLineError } from "../text";
 // Load the AudioWorklet processor module via a URL derived from `import.meta.url`.
 //
 // Avoid Vite-only `?worker&url` imports so this module can be imported in non-bundled
@@ -180,7 +181,7 @@ export class MicCapture extends EventTarget {
           this.workletNode = node;
         } catch (err) {
           workletErr = err;
-          this.workletInitError = err instanceof Error ? err.message : String(err);
+          this.workletInitError = formatOneLineError(err, 512);
           // Fall back to ScriptProcessorNode when possible. This keeps microphone capture working
           // in environments where AudioWorklet is present but fails to initialize (e.g. older
           // browsers or restrictive CSP).
@@ -197,7 +198,7 @@ export class MicCapture extends EventTarget {
       if (!this.workletNode) {
         this.backend = "script";
         if (typeof audioContext.createScriptProcessor !== "function") {
-          const message = workletErr instanceof Error ? workletErr.message : String(workletErr ?? "unknown");
+          const message = formatOneLineError(workletErr ?? "unknown", 512);
           throw new Error(
             `Microphone capture cannot initialize: AudioWorklet failed (${message}) and ScriptProcessorNode is unavailable.`,
           );

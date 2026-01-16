@@ -6,6 +6,7 @@ import {
   type AudioWorkletRingBufferViews,
   wrapRingBuffer as wrapAudioWorkletRingBuffer,
 } from "../audio/audio_worklet_ring";
+import { formatOneLineError, formatOneLineUtf8 } from "../text";
 
 // The audio worklet processor is loaded at runtime via `AudioWorklet.addModule()`.
 //
@@ -619,11 +620,12 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   }
 
   if (!context) {
+    const detail = formatOneLineError(lastContextError, 256, "");
+    const rawMessage = detail
+      ? `Failed to create AudioContext (${lastContextAttemptLabel}): ${detail}`
+      : `Failed to create AudioContext (${lastContextAttemptLabel}).`;
     return createDisabledAudioOutput({
-      message:
-        lastContextError instanceof Error
-          ? `Failed to create AudioContext (${lastContextAttemptLabel}): ${lastContextError.message}`
-          : `Failed to create AudioContext (${lastContextAttemptLabel}).`,
+      message: formatOneLineUtf8(rawMessage, 512) || "Failed to create AudioContext.",
       sampleRate,
     });
   }
@@ -677,7 +679,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   } catch (err) {
     await context.close();
     return createDisabledAudioOutput({
-      message: err instanceof Error ? err.message : "Failed to allocate SharedArrayBuffer for audio.",
+      message: formatOneLineError(err, 512, "Failed to allocate SharedArrayBuffer for audio."),
       sampleRate: actualSampleRate,
     });
   }
@@ -694,11 +696,10 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     await context.audioWorklet.addModule(audioWorkletProcessorUrl);
   } catch (err) {
     await context.close();
+    const detail = formatOneLineError(err, 512, "");
+    const rawMessage = detail ? `Failed to load AudioWorklet module: ${detail}` : "Failed to load AudioWorklet module.";
     return createDisabledAudioOutput({
-      message:
-        err instanceof Error
-          ? `Failed to load AudioWorklet module: ${err.message}`
-          : "Failed to load AudioWorklet module.",
+      message: formatOneLineUtf8(rawMessage, 512) || "Failed to load AudioWorklet module.",
       ringBuffer,
       sampleRate: actualSampleRate,
     });
@@ -726,11 +727,12 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       node = new AudioWorkletNode(context, "aero-audio-processor", nodeOptionsReduced);
     } catch (retryErr) {
       await context.close();
+      const detail = formatOneLineError(retryErr, 512, "");
+      const rawMessage = detail
+        ? `Failed to create AudioWorkletNode (without outputChannelCount): ${detail}`
+        : "Failed to create AudioWorkletNode (without outputChannelCount).";
       return createDisabledAudioOutput({
-        message:
-          retryErr instanceof Error
-            ? `Failed to create AudioWorkletNode (without outputChannelCount): ${retryErr.message}`
-            : "Failed to create AudioWorkletNode (without outputChannelCount).",
+        message: formatOneLineUtf8(rawMessage, 512) || "Failed to create AudioWorkletNode (without outputChannelCount).",
         ringBuffer,
         sampleRate: actualSampleRate,
       });

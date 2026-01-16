@@ -1,4 +1,5 @@
 import { LogHistogram, RunningStats, msToUs, usToMs } from '../perf/stats';
+import { formatOneLineError } from '../text';
 
 export type WebGpuBenchOptions = {
   frames?: number;
@@ -118,8 +119,7 @@ function clampInt(value: number, min: number, max: number): number {
 }
 
 function errToReason(err: unknown): string {
-  if (err instanceof Error) return err.message || err.name;
-  return String(err);
+  return formatOneLineError(err, 512);
 }
 
 async function getAdapterInfo(adapter: GPUAdapter): Promise<WebGpuBenchAdapterInfo | null> {
@@ -201,7 +201,7 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
       ctorName;
     const errorMessage =
       err && typeof err === "object" && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : "";
-    let msg = errorMessage || (err != null ? String(err) : "WebGPU uncaptured error");
+    let msg = formatOneLineError(errorMessage || (err ?? "WebGPU uncaptured error"), 512);
     if (errorName && msg && !msg.toLowerCase().startsWith(errorName.toLowerCase())) {
       msg = `${errorName}: ${msg}`;
     }

@@ -9,6 +9,7 @@ import type {
   StorageBenchThroughputSummary,
 } from "./storage_types";
 import { createRandomSource, randomAlignedOffset, randomInt } from "./seeded_rng";
+import { formatOneLineError } from "../text";
 
 type WorkerRequest = { type: "run"; id: string; opts?: StorageBenchOpts };
 type WorkerResponse =
@@ -76,12 +77,15 @@ function summarizeLatency(runs: StorageBenchLatencyRun[]): StorageBenchLatencySu
 }
 
 function toErrorString(err: unknown): string {
-  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  const msg = formatOneLineError(err, 512);
+  let name = "";
   try {
-    return JSON.stringify(err);
+    name = err && typeof err === "object" && typeof (err as { name?: unknown }).name === "string" ? (err as { name: string }).name : "";
   } catch {
-    return String(err);
+    name = "";
   }
+  if (name && msg && !msg.toLowerCase().startsWith(name.toLowerCase())) return `${name}: ${msg}`;
+  return msg;
 }
 
 function createChunkBuffer(bytes: number): Uint8Array<ArrayBuffer> {

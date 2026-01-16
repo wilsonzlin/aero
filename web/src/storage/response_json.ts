@@ -1,3 +1,5 @@
+import { formatOneLineError } from "../text";
+
 function parsePositiveIntHeader(value: string | null): number | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -106,7 +108,7 @@ export async function readJsonResponseWithLimit(resp: Response, opts: { maxBytes
     return JSON.parse(text) as unknown;
   } catch (err) {
     // Include the label to make debugging easier.
-    throw new Error(`${opts.label} is not valid JSON (${err instanceof Error ? err.message : String(err)})`);
+    throw new Error(`${opts.label} is not valid JSON (${formatOneLineError(err, 256)})`);
   }
 }
 

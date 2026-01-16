@@ -53,13 +53,7 @@ import {
   contentEncodingIsIdentity,
   formatHeaderValueForError,
 } from "./http_headers.ts";
-import { serializeErrorForWorker, type WorkerSerializedError } from "../errors/serialize";
-
-type DiskWorkerError = WorkerSerializedError;
-
-function serializeError(err: unknown): DiskWorkerError {
-  return serializeErrorForWorker(err);
-}
+import { serializeErrorForWorker } from "../errors/serialize";
 
 function isPowerOfTwo(n: number): boolean {
   if (!Number.isSafeInteger(n) || n <= 0) return false;
@@ -479,7 +473,7 @@ function postErr(requestId: number, error: unknown): void {
     type: "response",
     requestId,
     ok: false,
-    error: serializeError(error),
+    error: serializeErrorForWorker(error),
   });
 }
 
@@ -2422,7 +2416,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           }
         } catch (err) {
           try {
-            port.postMessage({ type: "error", error: serializeError(err) });
+            port.postMessage({ type: "error", error: serializeErrorForWorker(err) });
           } finally {
             port.close();
           }

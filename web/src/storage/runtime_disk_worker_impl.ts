@@ -51,7 +51,7 @@ import { createDiskAccessLeaseFromLeaseEndpoint } from "./disk_access_lease";
 import { RUNTIME_DISK_MAX_IO_BYTES } from "./runtime_disk_limits";
 import { MAX_REMOTE_URL_LEN } from "./url_limits";
 import { assertNonSecretUrl, assertValidLeaseEndpoint } from "./url_safety";
-import { serializeErrorForWorker, type WorkerSerializedError } from "../errors/serialize";
+import { serializeErrorForWorker } from "../errors/serialize";
 
 export type DiskEntry = {
   disk: AsyncSectorDisk;
@@ -85,10 +85,6 @@ type DiskIoTelemetry = {
 };
 
 type TrackedDiskEntry = DiskEntry & { io: DiskIoTelemetry };
-
-function serializeError(err: unknown): WorkerSerializedError {
-  return serializeErrorForWorker(err);
-}
 
 function emptyIoTelemetry(): DiskIoTelemetry {
   return {
@@ -1115,7 +1111,7 @@ async function openDiskFromMetadata(
         await base?.close?.();
         if (hasLegacyRemoteBase) {
           // The remote base is read-only, so we cannot fall back to direct writes.
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = serializeErrorForWorker(err).message;
           throw new Error(`failed to open COW overlay for remote-streaming disk (id=${id}): ${msg}`);
         }
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
@@ -1719,7 +1715,7 @@ export class RuntimeDiskWorker {
   }
 
   private postErr(requestId: number, err: unknown): void {
-    const msg: RuntimeDiskResponseMessage = { type: "response", requestId, ok: false, error: serializeError(err) };
+    const msg: RuntimeDiskResponseMessage = { type: "response", requestId, ok: false, error: serializeErrorForWorker(err) };
     this.postMessage(msg);
   }
 

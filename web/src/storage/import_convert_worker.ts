@@ -3,10 +3,6 @@ import { serializeErrorForWorker, type WorkerSerializedError } from "../errors/s
 
 type WorkerError = WorkerSerializedError;
 
-function serializeError(err: unknown): WorkerError {
-  return serializeErrorForWorker(err);
-}
-
 type ConvertRequest = {
   type: "convert";
   requestId: number;
@@ -118,7 +114,7 @@ self.onmessage = (event: MessageEvent<unknown>) => {
       const payload: OutgoingMessage = { type: "result", requestId, ok: true, manifest };
       (self as DedicatedWorkerGlobalScope).postMessage(payload);
     } catch (err) {
-      const payload: OutgoingMessage = { type: "result", requestId, ok: false, error: serializeError(err) };
+      const payload: OutgoingMessage = { type: "result", requestId, ok: false, error: serializeErrorForWorker(err) };
       (self as DedicatedWorkerGlobalScope).postMessage(payload);
     } finally {
       aborters.delete(requestId);
