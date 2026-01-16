@@ -103,7 +103,13 @@ export async function handleUdpRelay(
       return;
     }
 
-    ws.send(msg);
+    try {
+      ws.send(msg);
+    } catch (err) {
+      closeBoth("ws_send_error", 1011, "WebSocket error");
+      metrics.incConnectionError("error");
+      log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
+    }
   });
 
   ws.on("message", (data, isBinary) => {
@@ -111,7 +117,13 @@ export async function handleUdpRelay(
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
     bytesIn += buf.length;
     metrics.addBytesIn("udp", buf.length);
-    socket.send(buf);
+    try {
+      socket.send(buf);
+    } catch (err) {
+      closeBoth("udp_send_error", 1011, "UDP error");
+      metrics.incConnectionError("error");
+      log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
+    }
   });
 }
 
@@ -404,7 +416,13 @@ export async function handleUdpRelayMultiplexed(
         return;
       }
 
-      ws.send(frame);
+      try {
+        ws.send(frame);
+      } catch (err) {
+        closeAll("ws_send_error", 1011, "WebSocket error");
+        metrics.incConnectionError("error");
+        log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err) });
+      }
     });
 
     bindings.set(key, binding);
