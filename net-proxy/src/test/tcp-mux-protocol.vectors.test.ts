@@ -189,6 +189,38 @@ test("tcp-mux OPEN payload limits: rejects oversized metadata", () => {
   );
 });
 
+test("tcp-mux OPEN payload limits: rejects invalid UTF-8 and whitespace/control in host", () => {
+  const hostWithSpace = Buffer.from("a b", "utf8");
+  const payloadSpace = Buffer.allocUnsafe(2 + hostWithSpace.length + 2 + 2);
+  let off = 0;
+  payloadSpace.writeUInt16BE(hostWithSpace.length, off);
+  off += 2;
+  hostWithSpace.copy(payloadSpace, off);
+  off += hostWithSpace.length;
+  payloadSpace.writeUInt16BE(80, off);
+  off += 2;
+  payloadSpace.writeUInt16BE(0, off); // metadata_len
+  assert.throws(
+    () => decodeTcpMuxOpenPayload(payloadSpace),
+    (err) => err instanceof Error && err.message.toLowerCase().includes("invalid host"),
+  );
+
+  const invalidUtf8 = Buffer.from([0xc0, 0xaf]);
+  const payloadInvalidUtf8 = Buffer.allocUnsafe(2 + invalidUtf8.length + 2 + 2);
+  off = 0;
+  payloadInvalidUtf8.writeUInt16BE(invalidUtf8.length, off);
+  off += 2;
+  invalidUtf8.copy(payloadInvalidUtf8, off);
+  off += invalidUtf8.length;
+  payloadInvalidUtf8.writeUInt16BE(80, off);
+  off += 2;
+  payloadInvalidUtf8.writeUInt16BE(0, off); // metadata_len
+  assert.throws(
+    () => decodeTcpMuxOpenPayload(payloadInvalidUtf8),
+    (err) => err instanceof Error && err.message.toLowerCase().includes("not valid utf-8"),
+  );
+});
+
 test("tcp-mux ERROR payload limits: rejects oversized message", () => {
   const messageBytes = Buffer.alloc(MAX_TCP_MUX_ERROR_MESSAGE_BYTES + 1, 0x61);
   const payload = Buffer.allocUnsafe(2 + 2 + messageBytes.length);

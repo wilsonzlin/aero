@@ -39,6 +39,25 @@ export const TcpMuxErrorCode = {
 } as const;
 export type TcpMuxErrorCode = (typeof TcpMuxErrorCode)[keyof typeof TcpMuxErrorCode];
 
+function decodeUtf8Exact(bytes: Buffer, context: string): string {
+  const text = bytes.toString("utf8");
+  // Node replaces invalid UTF-8 with U+FFFD, which can change the underlying byte length.
+  // Treat that as protocol-invalid rather than letting ambiguous strings through.
+  if (Buffer.from(text, "utf8").length !== bytes.length) {
+    throw new Error(`${context} is not valid UTF-8`);
+  }
+  return text;
+}
+
+function hasControlOrWhitespace(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) return true;
+  }
+  return false;
+}
+
 export type TcpMuxFrame = {
   msgType: TcpMuxMsgType;
   streamId: number;
@@ -157,7 +176,9 @@ export function decodeTcpMuxOpenPayload(buf: Buffer): TcpMuxOpenPayload {
   if (buf.length < offset + hostLen + 2 + 2) {
     throw new Error('OPEN payload truncated (host)');
   }
-  const host = buf.subarray(offset, offset + hostLen).toString('utf8');
+  const host = decodeUtf8Exact(buf.subarray(offset, offset + hostLen), "host");
+  if (!host) throw new Error("host is empty");
+  if (hasControlOrWhitespace(host)) throw new Error("invalid host");
   offset += hostLen;
   const port = buf.readUInt16BE(offset);
   offset += 2;
@@ -169,7 +190,7 @@ export function decodeTcpMuxOpenPayload(buf: Buffer): TcpMuxOpenPayload {
   if (buf.length < offset + metadataLen) {
     throw new Error('OPEN payload truncated (metadata)');
   }
-  const metadata = metadataLen > 0 ? buf.subarray(offset, offset + metadataLen).toString('utf8') : undefined;
+  const metadata = metadataLen > 0 ? decodeUtf8Exact(buf.subarray(offset, offset + metadataLen), "metadata") : undefined;
   offset += metadataLen;
   if (offset !== buf.length) {
     throw new Error('OPEN payload has trailing bytes');
@@ -213,5 +234,7 @@ export function decodeTcpMuxErrorPayload(buf: Buffer): { code: number; message: 
     throw new Error('ERROR payload length mismatch');
   }
   const message = buf.subarray(4).toString('utf8');
-  return { code, message: sanitizeOneLine(message) };
+  // Defensive: invalid UTF-8 sequences can expand when decoded (replacement chars), so ensure the
+  // decoded+sanitized message still respects the byte cap.
+  return { code, message: formatOneLineUtf8(message, MAX_TCP_MUX_ERROR_MESSAGE_BYTES) };
 }
