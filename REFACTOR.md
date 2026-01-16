@@ -235,6 +235,17 @@ Approach:
 Outcomes:
 - Contract suite fails if new DOM HTML injection sinks appear in production sources.
 
+### Phase 21: JS source-scan consolidation + subprocess guardrails (done)
+Goal: reduce duplicated source-scanner logic while adding a guardrail against unsafe subprocess APIs.
+
+Approach:
+- Add `tests/_helpers/js_source_scan_helpers.js` to centralize production JS/TS file discovery and string/comment masking.
+- Refactor existing JS guardrail tests to use the helper.
+- Add a new contract test that forbids `child_process.exec/execSync` imports and `shell: true` in production JS/TS sources.
+
+Outcomes:
+- JS guardrail tests share a single scanner implementation, and the contract suite blocks unsafe subprocess APIs in production sources.
+
 Some coding guidelines:
 
 ## General Principles
