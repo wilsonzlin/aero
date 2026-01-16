@@ -8,6 +8,7 @@ import {
   MAX_TCP_MUX_ERROR_MESSAGE_BYTES,
   MAX_TCP_MUX_OPEN_HOST_BYTES,
   MAX_TCP_MUX_OPEN_METADATA_BYTES,
+  TcpMuxMsgType,
   type TcpMuxMsgType,
   TcpMuxFrameParser,
   decodeTcpMuxClosePayload,
@@ -227,5 +228,19 @@ describe("tcp-mux protocol vectors", () => {
       () => decodeTcpMuxErrorPayload(payload),
       (err) => err instanceof Error && err.message.includes("error message too long"),
     );
+  });
+
+  it("frameParser exposes oversized header without throwing", () => {
+    const parser = new TcpMuxFrameParser();
+    const header = Buffer.allocUnsafe(9);
+    header.writeUInt8(TcpMuxMsgType.DATA, 0);
+    header.writeUInt32BE(1, 1);
+    const oversizedLen = 16 * 1024 * 1024 + 1;
+    header.writeUInt32BE(oversizedLen, 5);
+
+    assert.doesNotThrow(() => parser.push(header));
+    const pending = parser.peekHeader();
+    assert.ok(pending);
+    assert.equal(pending.payloadLength, oversizedLen);
   });
 });
