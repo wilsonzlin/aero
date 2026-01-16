@@ -5,6 +5,67 @@
  * by the tiny CSP test server (`server/poc-server.mjs`) with precise headers.
  */
 
+const UTF8 = Object.freeze({ encoding: "utf-8" });
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder(UTF8.encoding);
+
+function formatOneLineUtf8(input, maxBytes) {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
+  if (maxBytes === 0) return "";
+
+  const buf = new Uint8Array(maxBytes);
+  let written = 0;
+  let pendingSpace = false;
+  for (const ch of String(input ?? "")) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) {
+      pendingSpace = written > 0;
+      continue;
+    }
+
+    if (pendingSpace) {
+      const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
+      if (spaceRes.written === 0) break;
+      written += spaceRes.written;
+      pendingSpace = false;
+      if (written >= maxBytes) break;
+    }
+
+    const res = textEncoder.encodeInto(ch, buf.subarray(written));
+    if (res.written === 0) break;
+    written += res.written;
+    if (written >= maxBytes) break;
+  }
+  return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
+}
+
+function safeErrorMessageInput(err) {
+  if (err === null) return "null";
+  const t = typeof err;
+  if (t === "string") return err;
+  if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
+  if (t === "object") {
+    try {
+      const msg = err && typeof err.message === "string" ? err.message : "";
+      if (msg) return msg;
+    } catch {
+      // ignore
+    }
+    try {
+      const name = err && typeof err.name === "string" ? err.name : "";
+      if (name) return name;
+    } catch {
+      // ignore
+    }
+  }
+  return "Error";
+}
+
+function formatOneLineError(err, maxBytes) {
+  return formatOneLineUtf8(safeErrorMessageInput(err), maxBytes) || "Error";
+}
+
 const Op = {
   PushI32: 0x01,
   Add: 0x02,
@@ -103,7 +164,7 @@ function encodeI32Leb(value) {
 }
 
 function encodeString(str) {
-  const utf8 = new TextEncoder().encode(str);
+  const utf8 = textEncoder.encode(str);
   return [...encodeU32Leb(utf8.length), ...utf8];
 }
 
@@ -371,7 +432,8 @@ async function main() {
 
 main().catch((err) => {
   const reportEl = document.getElementById('report');
-  if (reportEl) reportEl.textContent = `Error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`;
-  globalThis.__aeroWasmJitCspPoc = { ready: true, error: String(err) };
+  const message = formatOneLineError(err, 512);
+  if (reportEl) reportEl.textContent = `Error: ${message}`;
+  globalThis.__aeroWasmJitCspPoc = { ready: true, error: message };
 });
 

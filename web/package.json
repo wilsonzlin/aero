@@ -28,6 +28,8 @@
     "test:unit:watch": "vitest",
     "pretest:unit:coverage": "npm run check:node",
     "test:unit:coverage": "node ./scripts/vitest_grep_shim.mjs --coverage",
+    "pretest:node": "npm run check:node",
+    "test:node": "node --test --experimental-strip-types --import ../scripts/register-ts-strip-loader.mjs test/*.test.ts",
     "wasm:build:dev": "node ./scripts/build_wasm.mjs single dev",
     "wasm:build:release": "npm run wasm:build",
     "wasm:size": "node ./scripts/wasm-size.mjs"

@@ -10,38 +10,37 @@ const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
 const MAX_ERROR_BODY_BYTES = 512;
 
-function sanitizeOneLine(input) {
-  let out = '';
+const UTF8 = Object.freeze({ encoding: 'utf-8' });
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder(UTF8.encoding);
+
+function formatOneLineUtf8(input, maxBytes) {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
+  if (maxBytes === 0) return '';
+
+  const buf = new Uint8Array(maxBytes);
+  let written = 0;
   let pendingSpace = false;
   for (const ch of String(input ?? '')) {
     const code = ch.codePointAt(0) ?? 0;
     const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
     if (forbidden || /\s/u.test(ch)) {
-      pendingSpace = out.length > 0;
+      pendingSpace = written > 0;
       continue;
     }
     if (pendingSpace) {
-      out += ' ';
+      const spaceRes = textEncoder.encodeInto(' ', buf.subarray(written));
+      if (spaceRes.written === 0) break;
+      written += spaceRes.written;
       pendingSpace = false;
+      if (written >= maxBytes) break;
     }
-    out += ch;
+    const res = textEncoder.encodeInto(ch, buf.subarray(written));
+    if (res.written === 0) break;
+    written += res.written;
+    if (written >= maxBytes) break;
   }
-  return out.trim();
-}
-
-function truncateUtf8(input, maxBytes) {
-  if (!Number.isInteger(maxBytes) || maxBytes < 0) return '';
-  const s = String(input ?? '');
-  const buf = Buffer.from(s, 'utf8');
-  if (buf.length <= maxBytes) return s;
-  let cut = maxBytes;
-  while (cut > 0 && (buf[cut] & 0xc0) === 0x80) cut -= 1;
-  if (cut <= 0) return '';
-  return buf.subarray(0, cut).toString('utf8');
-}
-
-function formatOneLineUtf8(input, maxBytes) {
-  return truncateUtf8(sanitizeOneLine(input), maxBytes);
+  return written === 0 ? '' : textDecoder.decode(buf.subarray(0, written));
 }
 
 function safeTextBody(message) {
