@@ -16,13 +16,18 @@ import https from "node:https";
 import { createHash, randomBytes } from "node:crypto";
 import { Duplex } from "node:stream";
 import { isValidHttpToken } from "../src/httpTokens.js";
+import { formatOneLineUtf8 } from "../src/text.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
 
 const MAX_UPGRADE_URL_LEN = 8 * 1024;
 const MAX_SUBPROTOCOL_HEADER_LEN = 4 * 1024;
 const MAX_SUBPROTOCOL_TOKENS = 32;
 const MAX_WS_KEY_LEN = 256;
+// RFC 6455 close reason is limited to 123 bytes (125 total payload bytes incl. 2-byte code).
+const MAX_WS_CLOSE_REASON_BYTES = 123;
 
 function destroyQuietly(socket) {
   try {
@@ -260,7 +265,8 @@ function decodeClosePayload(payload) {
 }
 
 function encodeClosePayload(code, reason) {
-  const reasonBuf = reason ? Buffer.from(reason, "utf8") : Buffer.alloc(0);
+  const safeReason = reason ? formatOneLineUtf8(reason, MAX_WS_CLOSE_REASON_BYTES) : "";
+  const reasonBuf = safeReason ? Buffer.from(safeReason, "utf8") : Buffer.alloc(0);
   const buf = Buffer.alloc(2 + reasonBuf.length);
   buf.writeUInt16BE(code, 0);
   reasonBuf.copy(buf, 2);
@@ -418,7 +424,14 @@ class BaseWebSocket extends EventEmitter {
     }
 
     // Text
-    this.emit("message", payload.toString("utf8"), false);
+    let text;
+    try {
+      text = utf8DecoderFatal.decode(payload);
+    } catch {
+      this.#sendCloseAndDrop(1007);
+      return;
+    }
+    this.emit("message", text, false);
   }
 
   #finalizeClose(code, reason) {
