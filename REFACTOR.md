@@ -302,6 +302,19 @@ Approach:
 Outcomes:
 - Contract suite fails if `Function(` appears in production sources (outside of allowlisted fixtures).
 
+### Phase 27: Subprocess sink guardrail expansion (done)
+Goal: catch additional common ways of reaching `child_process.exec/execSync` beyond the direct import/require call patterns.
+
+Approach:
+- Extend the subprocess sink scanner to detect:
+  - Namespace/default `child_process` aliases (e.g. `import * as cp from "child_process"; cp.exec(...)`)
+  - CommonJS aliases assigned from `require("child_process")`
+  - Destructuring `exec` / `execSync` from `require("child_process")`
+- Add focused parsing contracts to lock in these cases and prevent regressions.
+
+Outcomes:
+- Contract suite fails if `child_process.exec/execSync` is reachable via alias/namespace/destructuring patterns.
+
 Some coding guidelines:
 
 ## General Principles
