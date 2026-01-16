@@ -11,7 +11,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { formatOneLineUtf8 } from "./src/text.js";
+import { formatOneLineError, formatOneLineUtf8 } from "./src/text.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -21,6 +21,19 @@ const MAX_IF_NONE_MATCH_LEN = 16 * 1024;
 const MAX_IF_MODIFIED_SINCE_LEN = 128;
 const MAX_IF_RANGE_LEN = 256;
 const MAX_ERROR_BODY_BYTES = 512;
+
+function logServerError(prefix, err) {
+  // eslint-disable-next-line no-console
+  console.error(`${prefix}: ${formatOneLineError(err, 512, "Error")}`);
+}
+
+function clearHeaders(res) {
+  try {
+    for (const name of res.getHeaderNames()) res.removeHeader(name);
+  } catch {
+    // ignore
+  }
+}
 
 function parseArgs(argv) {
   const args = { dir: process.cwd(), port: 8080, coopCoep: false, authToken: null };
@@ -451,12 +464,32 @@ const server = http.createServer((req, res) => {
         contentLength: endExclusive - start,
         contentRange: `bytes ${start}-${endInclusive}/${stat.size}`,
       });
-      fs.createReadStream(filePath, { start, end: endInclusive }).pipe(res);
+      const stream = fs.createReadStream(filePath, { start, end: endInclusive });
+      stream.once("error", (e) => {
+        logServerError("range_server: stream error", e);
+        if (res.headersSent) {
+          res.destroy();
+          return;
+        }
+        clearHeaders(res);
+        sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
+      });
+      stream.pipe(res);
       return;
     }
 
     sendHeaders(res, stat, { contentLength: stat.size, statusCode: 200 });
-    fs.createReadStream(filePath).pipe(res);
+    const stream = fs.createReadStream(filePath);
+    stream.once("error", (e) => {
+      logServerError("range_server: stream error", e);
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      clearHeaders(res);
+      sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
+    });
+    stream.pipe(res);
   });
 });
 

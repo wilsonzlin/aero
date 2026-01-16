@@ -67,6 +67,20 @@ function withCommonHeaders(res) {
   res.setHeader('Cache-Control', 'no-store');
 }
 
+function pipeFile(res, filePath) {
+  const stream = createReadStream(filePath);
+  stream.once('error', (err) => {
+    // eslint-disable-next-line no-console
+    console.error(`poc-server: stream error: ${formatOneLineError(err, 512, 'Error')}`);
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    sendText(res, 500, 'Internal server error');
+  });
+  stream.pipe(res);
+}
+
 function contentTypeFor(filePath) {
   if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
   if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8';
@@ -110,7 +124,7 @@ function handleStaticFile(reqPath, res) {
     if (!isPathInside(webDistRoot, filePath) || !existsSync(filePath)) return false;
     withCommonHeaders(res);
     res.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
-    createReadStream(filePath).pipe(res);
+    pipeFile(res, filePath);
     return true;
   }
 
@@ -123,7 +137,7 @@ function handleStaticFile(reqPath, res) {
     if (isPathInside(webPublicRoot, filePath) && existsSync(filePath)) {
       withCommonHeaders(res);
       res.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
-      createReadStream(filePath).pipe(res);
+      pipeFile(res, filePath);
       return true;
     }
   }
