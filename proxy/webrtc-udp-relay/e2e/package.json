@@ -8,7 +8,7 @@
   },
   "scripts": {
     "check:node": "node ../../../scripts/check-node-version.mjs",
-    "pretest": "npm run check:node && node -e \"const {execSync}=require('child_process'); const skip=process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD; if(process.env.GITHUB_ACTIONS==='true'||skip==='1'||skip==='true') process.exit(0); const wantDeps=String(process.env.PLAYWRIGHT_WITH_DEPS||'').toLowerCase(); const withDeps=process.platform==='linux'&&(wantDeps==='1'||wantDeps==='true')?'--with-deps':''; const cmd=['playwright','install',withDeps,'chromium'].filter(Boolean).join(' '); console.log('Running:',cmd); execSync(cmd,{stdio:'inherit'});\"",
+    "pretest": "npm run check:node && node ../../../scripts/playwright_install.mjs chromium",
     "test": "playwright test"
   },
   "devDependencies": {
