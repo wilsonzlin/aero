@@ -28,6 +28,19 @@ test("CONNECT framing round-trips (ipv4)", () => {
   assert.deepEqual(frame, { type: "connect", connId: 1, host: "1.2.3.4", port: 80 });
 });
 
+test("CONNECT framing rejects invalid hostname encoding and whitespace", () => {
+  const baseHeader = Buffer.from([FrameType.CONNECT, 0, 0, 0, 1, AddrType.HOSTNAME]);
+  const portBytes = Buffer.from([0x01, 0xbb]); // 443
+
+  const hostWithSpace = Buffer.from("a b", "utf8");
+  const frameWithSpace = Buffer.concat([baseHeader, Buffer.from([hostWithSpace.length]), hostWithSpace, portBytes]);
+  assert.throws(() => decodeClientFrame(frameWithSpace), /Invalid hostname/);
+
+  const invalidUtf8 = Buffer.from([0xc0, 0xaf]);
+  const frameInvalidUtf8 = Buffer.concat([baseHeader, Buffer.from([invalidUtf8.length]), invalidUtf8, portBytes]);
+  assert.throws(() => decodeClientFrame(frameInvalidUtf8), /hostname is not valid UTF-8/);
+});
+
 test("DATA framing round-trips", () => {
   const buf = encodeClientDataFrame({ connId: 7, data: Buffer.from("hello") });
   const frame = decodeClientFrame(buf);

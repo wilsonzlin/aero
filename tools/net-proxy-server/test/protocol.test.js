@@ -24,6 +24,32 @@ test("tcp-mux: OPEN payload encode/decode (host + port + metadata)", () => {
   assert.deepEqual(decoded, { host: "example.com", port: 443, metadata: '{"k":"v"}' });
 });
 
+test("tcp-mux: OPEN payload rejects invalid utf8 and whitespace in host", () => {
+  const hostWithSpace = Buffer.from("a b", "utf8");
+  const payloadSpace = Buffer.allocUnsafe(2 + hostWithSpace.length + 2 + 2);
+  let off = 0;
+  payloadSpace.writeUInt16BE(hostWithSpace.length, off);
+  off += 2;
+  hostWithSpace.copy(payloadSpace, off);
+  off += hostWithSpace.length;
+  payloadSpace.writeUInt16BE(80, off);
+  off += 2;
+  payloadSpace.writeUInt16BE(0, off); // metadata_len
+  assert.throws(() => decodeTcpMuxOpenPayload(payloadSpace), /invalid host/i);
+
+  const invalidUtf8 = Buffer.from([0xc0, 0xaf]);
+  const payloadInvalidUtf8 = Buffer.allocUnsafe(2 + invalidUtf8.length + 2 + 2);
+  off = 0;
+  payloadInvalidUtf8.writeUInt16BE(invalidUtf8.length, off);
+  off += 2;
+  invalidUtf8.copy(payloadInvalidUtf8, off);
+  off += invalidUtf8.length;
+  payloadInvalidUtf8.writeUInt16BE(80, off);
+  off += 2;
+  payloadInvalidUtf8.writeUInt16BE(0, off); // metadata_len
+  assert.throws(() => decodeTcpMuxOpenPayload(payloadInvalidUtf8), /host is not valid UTF-8/i);
+});
+
 test("tcp-mux: CLOSE payload encode/decode", () => {
   const payload = encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN);
   const decoded = decodeTcpMuxClosePayload(payload);

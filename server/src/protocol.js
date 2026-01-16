@@ -39,6 +39,23 @@ export const CloseReason = Object.freeze({
 
 const MAX_PROTOCOL_MESSAGE_BYTES = 1024;
 
+function decodeUtf8Exact(bytes, context) {
+  const text = bytes.toString("utf8");
+  if (Buffer.from(text, "utf8").length !== bytes.length) {
+    throw new Error(`${context} is not valid UTF-8`);
+  }
+  return text;
+}
+
+function hasControlOrWhitespace(value) {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) return true;
+  }
+  return false;
+}
+
 function u32be(value) {
   const b = Buffer.alloc(4);
   b.writeUInt32BE(value >>> 0, 0);
@@ -124,8 +141,9 @@ export function decodeClientFrame(buf) {
 
     let host;
     if (addrType === AddrType.HOSTNAME) {
-      host = addrBytes.toString("utf8");
+      host = decodeUtf8Exact(addrBytes, "hostname");
       if (!host) throw new Error("Empty hostname");
+      if (hasControlOrWhitespace(host)) throw new Error("Invalid hostname");
     } else if (addrType === AddrType.IPV4 || addrType === AddrType.IPV6) {
       const expectedLen = addrType === AddrType.IPV4 ? 4 : 16;
       if (addrLen !== expectedLen) throw new Error("Invalid IP address length");
