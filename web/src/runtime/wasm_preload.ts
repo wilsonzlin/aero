@@ -134,7 +134,8 @@ export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledW
 
       const response = await fetch(url);
       if (!response.ok) {
-        throw new Error(`Failed to fetch WASM binary (${variant}): ${response.status} ${response.statusText}`);
+        // Avoid reflecting server-controlled HTTP reason phrases (statusText).
+        throw new Error(`Failed to fetch WASM binary (${variant}) (${response.status})`);
       }
 
       if (typeof WebAssembly.compileStreaming === "function") {
