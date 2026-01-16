@@ -17,7 +17,7 @@ jobs:
       # Cache only installer/download payloads (not the installed WDK itself).
       WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Needed for `git describe --tags` in INF stamping/version derivation.
           fetch-depth: 0
@@ -168,7 +168,7 @@ jobs:
     needs: build-sign-package
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Needed for version stamping and deterministic version derivation inside CI scripts.
           fetch-depth: 0

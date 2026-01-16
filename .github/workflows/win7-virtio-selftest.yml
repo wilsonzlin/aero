@@ -31,7 +31,7 @@ jobs:
             out_exe: aero-virtio-selftest-x64.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Configure + build
         shell: pwsh

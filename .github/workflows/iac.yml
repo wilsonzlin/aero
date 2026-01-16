@@ -59,7 +59,7 @@ jobs:
       TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
       TF_IN_AUTOMATION: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -147,7 +147,7 @@ jobs:
       KUBECONFORM_SHA256: "2ff56999a6ed9e96fe5ab9ee52271f2db5335baf7f17789035b9561970cdd3eb"
       KUBECONFORM_CRD_SCHEMA: "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
@@ -266,7 +266,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node
         uses: actions/setup-node@v4
