@@ -192,6 +192,17 @@ Approach:
 Outcomes:
 - Action scripts use shared multiline output helpers, and contract tests validate delimiter formatting.
 
+### Phase 17: GitHub action output/env correctness guards (done)
+Goal: prevent accidental invalid writes to `GITHUB_OUTPUT` / `GITHUB_ENV` that can silently corrupt downstream steps.
+
+Approach:
+- Reject newline-containing values for single-line output/env helpers (`appendOutput`/`appendEnv`) and provide clear guidance to use multiline helpers.
+- Add `appendMultilineEnv` to match `appendMultilineOutput`.
+- Add contract coverage by spawning a node process to observe exit behavior (since helpers terminate on invalid inputs).
+
+Outcomes:
+- Shared helpers enforce correct GitHub file command formats and are covered by contract tests.
+
 Some coding guidelines:
 
 ## General Principles
