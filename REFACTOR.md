@@ -203,6 +203,16 @@ Approach:
 Outcomes:
 - Shared helpers enforce correct GitHub file command formats and are covered by contract tests.
 
+### Phase 18: Action subprocess helper consolidation (done)
+Goal: keep composite action scripts consistent and defensive by centralizing subprocess execution patterns.
+
+Approach:
+- Extend `.github/actions/_shared/exec.mjs` with helpers for invoking Node-based CLIs with consistent encoding/timeouts.
+- Refactor action scripts to use the shared helpers rather than ad-hoc `execFileSync` calls.
+
+Outcomes:
+- Action scripts share one implementation for “run Node CLI, capture UTF-8 output” and “run Node CLI with inherited stdio”.
+
 Some coding guidelines:
 
 ## General Principles
