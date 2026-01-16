@@ -150,6 +150,37 @@ Approach:
 Outcomes:
 - Action scripts use timeouts for detection/dry-run subprocesses and have contract coverage for their parsing logic.
 
+### Phase 13: Guardrail hardening (done)
+Goal: keep the repo resilient to accidental regressions by expanding “cheap, high-signal” contracts.
+
+Approach:
+- Make CI guardrail tests discover targets automatically (e.g. scan all composite actions) so new additions inherit the guardrails by default.
+- Keep rules conservative: flag only patterns that are known to be brittle (e.g. repo-relative action script paths).
+
+Outcomes:
+- The composite-action path contract automatically covers all actions under `.github/actions/`.
+
+### Phase 14: Composite action shell guardrails (done)
+Goal: prevent reintroducing brittle cross-OS patterns in composite actions (especially for Windows runners).
+
+Approach:
+- Add a contract test that scans all `.github/actions/**/action.yml` files and forbids:
+  - `shell: bash` (forces a non-default shell on Windows)
+  - heredoc-style inline scripts (`<<'NODE'`, etc.) that are shell-dependent
+
+Outcomes:
+- Composite actions remain shell-agnostic by default; regressions are caught by the contract suite.
+
+### Phase 15: Guardrail test deduplication (done)
+Goal: keep the guardrail contract tests concise by sharing common “action discovery” logic.
+
+Approach:
+- Add `tests/_helpers/github_actions_contract_helpers.js` to centralize discovery of `.github/actions/**/action.yml`.
+- Refactor guardrail tests to use the helper.
+
+Outcomes:
+- Guardrail tests share a single implementation for composite action discovery.
+
 Some coding guidelines:
 
 ## General Principles
