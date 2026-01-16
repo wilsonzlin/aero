@@ -1,8 +1,31 @@
 import { describe, expect, it } from "vitest";
 
 import { formatOneLineError, formatOneLineUtf8, sanitizeOneLine, truncateUtf8 } from "../src/text";
+import * as rootText from "../../../src/text.js";
 
 describe("text", () => {
+  it("matches repo-root text helpers (parity)", () => {
+    const cases = [
+      { input: "", maxBytes: 512 },
+      { input: "  a  ", maxBytes: 512 },
+      { input: "a\tb\nc", maxBytes: 512 },
+      { input: "a\u0000b", maxBytes: 512 },
+      { input: "\u0000", maxBytes: 512 },
+      { input: "a\u2028b", maxBytes: 512 },
+      { input: "a\u2029b", maxBytes: 512 },
+      { input: "a\u00a0b", maxBytes: 512 }, // NBSP
+      { input: "🙂", maxBytes: 3 },
+      { input: "x".repeat(600), maxBytes: 512 },
+    ];
+
+    for (const { input, maxBytes } of cases) {
+      expect(sanitizeOneLine(input)).toBe(rootText.sanitizeOneLine(input));
+      expect(truncateUtf8(input, maxBytes)).toBe(rootText.truncateUtf8(input, maxBytes));
+      expect(formatOneLineUtf8(input, maxBytes)).toBe(rootText.formatOneLineUtf8(input, maxBytes));
+      expect(formatOneLineError(input, maxBytes)).toBe(rootText.formatOneLineError(input, maxBytes));
+    }
+  });
+
   it("sanitizeOneLine collapses whitespace and removes control chars", () => {
     expect(sanitizeOneLine("")).toBe("");
     expect(sanitizeOneLine("  a  ")).toBe("a");
