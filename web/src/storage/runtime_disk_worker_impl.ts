@@ -51,7 +51,7 @@ import { createDiskAccessLeaseFromLeaseEndpoint } from "./disk_access_lease";
 import { RUNTIME_DISK_MAX_IO_BYTES } from "./runtime_disk_limits";
 import { MAX_REMOTE_URL_LEN } from "./url_limits";
 import { assertNonSecretUrl, assertValidLeaseEndpoint } from "./url_safety";
-import { formatOneLineUtf8, truncateUtf8 } from "../text";
+import { serializeErrorForWorker, type WorkerSerializedError } from "../errors/serialize";
 
 export type DiskEntry = {
   disk: AsyncSectorDisk;
@@ -86,19 +86,8 @@ type DiskIoTelemetry = {
 
 type TrackedDiskEntry = DiskEntry & { io: DiskIoTelemetry };
 
-const MAX_ERROR_NAME_BYTES = 128;
-const MAX_ERROR_MESSAGE_BYTES = 512;
-const MAX_ERROR_STACK_BYTES = 8 * 1024;
-
-function serializeError(err: unknown): { message: string; name?: string; stack?: string } {
-  if (err instanceof Error) {
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || "Error";
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || "Error";
-    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
-    return { message, name, stack };
-  }
-  const message = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || "Error";
-  return { message };
+function serializeError(err: unknown): WorkerSerializedError {
+  return serializeErrorForWorker(err);
 }
 
 function emptyIoTelemetry(): DiskIoTelemetry {

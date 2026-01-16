@@ -53,23 +53,12 @@ import {
   contentEncodingIsIdentity,
   formatHeaderValueForError,
 } from "./http_headers.ts";
-import { formatOneLineUtf8, truncateUtf8 } from "../text";
+import { serializeErrorForWorker, type WorkerSerializedError } from "../errors/serialize";
 
-type DiskWorkerError = { message: string; name?: string; stack?: string };
-
-const MAX_ERROR_NAME_BYTES = 128;
-const MAX_ERROR_MESSAGE_BYTES = 512;
-const MAX_ERROR_STACK_BYTES = 8 * 1024;
+type DiskWorkerError = WorkerSerializedError;
 
 function serializeError(err: unknown): DiskWorkerError {
-  if (err instanceof Error) {
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || "Error";
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || "Error";
-    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
-    return { message, name, stack };
-  }
-  const message = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || "Error";
-  return { message };
+  return serializeErrorForWorker(err);
 }
 
 function isPowerOfTwo(n: number): boolean {

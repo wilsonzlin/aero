@@ -5,7 +5,7 @@
  * High-frequency traffic (port/mmio/disk I/O) continues to use the AIPC command/event
  * rings (`web/src/ipc/*`).
  */
-import { formatOneLineUtf8, truncateUtf8 } from "../text";
+import { serializeErrorForProtocol } from "../errors/serialize";
 
 export type VmSnapshotRequestId = number;
 
@@ -175,23 +175,8 @@ export type WorkerToCoordinatorSnapshotMessage =
   | VmSnapshotMachineSavedMessage
   | VmSnapshotMachineRestoredMessage;
 
-const MAX_ERROR_NAME_BYTES = 128;
-const MAX_ERROR_MESSAGE_BYTES = 512;
-const MAX_ERROR_STACK_BYTES = 8 * 1024;
-
 export function serializeVmSnapshotError(err: unknown): VmSnapshotSerializedError {
-  if (err instanceof Error) {
-    const name = formatOneLineUtf8(err.name || "Error", MAX_ERROR_NAME_BYTES) || "Error";
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || "Error";
-    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
-    return {
-      name,
-      message,
-      stack,
-    };
-  }
-  const message = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || "Error";
-  return { name: "Error", message };
+  return serializeErrorForProtocol(err);
 }
 
 export function isWorkerToCoordinatorSnapshotMessage(value: unknown): value is WorkerToCoordinatorSnapshotMessage {

@@ -1,27 +1,10 @@
 import { importConvertToOpfs, type ImportSource, type ImportConvertOptions } from "./import_convert.ts";
-import { formatOneLineUtf8, truncateUtf8 } from "../text";
+import { serializeErrorForWorker, type WorkerSerializedError } from "../errors/serialize";
 
-type WorkerError = { name?: string; message: string; stack?: string };
-
-const MAX_ERROR_NAME_BYTES = 128;
-const MAX_ERROR_MESSAGE_BYTES = 512;
-const MAX_ERROR_STACK_BYTES = 8 * 1024;
+type WorkerError = WorkerSerializedError;
 
 function serializeError(err: unknown): WorkerError {
-  if (err instanceof DOMException) {
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || "Error";
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || "Error";
-    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
-    return { name, message, stack };
-  }
-  if (err instanceof Error) {
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || "Error";
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || "Error";
-    const stack = typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
-    return { name, message, stack };
-  }
-  const message = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || "Error";
-  return { message };
+  return serializeErrorForWorker(err);
 }
 
 type ConvertRequest = {
