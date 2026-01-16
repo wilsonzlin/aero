@@ -1,6 +1,5 @@
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
-import { actionTimeoutMs } from "../_shared/exec.mjs";
+import { actionTimeoutMs, execNodeCliUtf8 } from "../_shared/exec.mjs";
 
 function safeString(value) {
   try {
@@ -32,11 +31,11 @@ try {
 
 let dryRunSummary = "";
 try {
-  const dryRun = execFileSync(process.execPath, [cli, "install", "--dry-run", ...browsers], {
+  const dryRun = execNodeCliUtf8([cli, "install", "--dry-run", ...browsers], {
     env: process.env,
     maxBuffer: 10 * 1024 * 1024,
     timeout: actionTimeoutMs(120_000),
-  }).toString("utf8");
+  });
   dryRunSummary = dryRun
     .split(/\r?\n/u)
     .filter((line) => line.startsWith("browser:") || line.trim().startsWith("Install location:"))

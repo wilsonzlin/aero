@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
 import { fail } from "../_shared/github_io.mjs";
+import { execNodeCliInherit } from "../_shared/exec.mjs";
 
 const cli = process.env.PLAYWRIGHT_CLI;
 if (!cli) fail("setup-playwright: PLAYWRIGHT_CLI is not set");
@@ -14,5 +14,5 @@ if (withDeps) args.push("--with-deps");
 args.push(...browsers);
 
 console.log(`Running: node ${args.join(" ")}`);
-execFileSync(process.execPath, args, { env: process.env, stdio: "inherit" });
+execNodeCliInherit(args, { env: process.env });
 

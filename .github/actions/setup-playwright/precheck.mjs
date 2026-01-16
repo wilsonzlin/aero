@@ -1,7 +1,6 @@
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import { appendMultilineOutput, appendOutput, fail } from "../_shared/github_io.mjs";
-import { actionTimeoutMs } from "../_shared/exec.mjs";
+import { actionTimeoutMs, execNodeCliUtf8 } from "../_shared/exec.mjs";
 
 const browsers = (process.env.BROWSERS || "").split(/\s+/u).filter(Boolean);
 if (!browsers.length) fail("setup-playwright: no browsers requested");
@@ -9,12 +8,12 @@ if (!browsers.length) fail("setup-playwright: no browsers requested");
 const cli = process.env.PLAYWRIGHT_CLI;
 if (!cli) fail("setup-playwright: PLAYWRIGHT_CLI is not set");
 
-const output = execFileSync(process.execPath, [cli, "install", "--dry-run", ...browsers], {
+const output = execNodeCliUtf8([cli, "install", "--dry-run", ...browsers], {
   env: process.env,
   stdio: ["ignore", "pipe", "inherit"],
   maxBuffer: 10 * 1024 * 1024,
   timeout: actionTimeoutMs(120_000),
-}).toString("utf8");
+});
 
 const conciseOutput = output
   .split(/\r?\n/u)
