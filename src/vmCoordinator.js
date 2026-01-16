@@ -1,5 +1,6 @@
 import { Worker } from 'node:worker_threads';
 import { ErrorCode, serializeError } from './errors.js';
+import { formatOneLineError, formatOneLineUtf8 } from './text.js';
 
 const DEFAULT_CONFIG = Object.freeze({
   cpu: {
@@ -8,6 +9,8 @@ const DEFAULT_CONFIG = Object.freeze({
   },
   autoSaveSnapshotOnCrash: false,
 });
+
+const MAX_COORDINATOR_ERROR_MESSAGE_BYTES = 512;
 
 function mergeConfig(base, overrides) {
   return {
@@ -317,10 +320,28 @@ export class VmCoordinator extends EventTarget {
   }
 
   _emitError(error, { snapshot } = {}) {
-    const structured = error && typeof error === 'object' ? error : { code: ErrorCode.InternalError, message: String(error) };
+    let structured = error && typeof error === 'object' ? error : null;
+    let safeMessage = formatOneLineError(error, MAX_COORDINATOR_ERROR_MESSAGE_BYTES);
+    if (structured) {
+      try {
+        const msg = (structured).message;
+        if (typeof msg === 'string') {
+          safeMessage = formatOneLineUtf8(msg, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || 'Error';
+        }
+      } catch {
+        // ignore hostile getters
+      }
+      try {
+        (structured).message = safeMessage;
+      } catch {
+        // ignore non-writable messages
+      }
+    } else {
+      structured = { code: ErrorCode.InternalError, message: safeMessage };
+    }
     if (this.config.autoSaveSnapshotOnCrash) this.lastSnapshot = snapshot ?? this.lastSnapshot;
     this.dispatchEvent(new CustomEvent('error', { detail: { error: structured, snapshot } }));
-    this._rejectAllAcks(new Error(structured.message));
+    this._rejectAllAcks(new Error(safeMessage));
     this._stopWatchdog();
     const worker = this.worker;
     this._onTerminated();

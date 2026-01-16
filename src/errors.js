@@ -1,9 +1,18 @@
 import { formatBytes } from './utils.js';
-import { formatOneLineUtf8, truncateUtf8 } from './text.js';
+import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from './text.js';
 
 const MAX_ERROR_NAME_BYTES = 128;
 const MAX_ERROR_MESSAGE_BYTES = 512;
 const MAX_ERROR_STACK_BYTES = 8 * 1024;
+
+function tryGetStringProp(obj, key) {
+  try {
+    const v = obj?.[key];
+    return typeof v === 'string' ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export const ErrorCode = Object.freeze({
   WatchdogTimeout: 'WatchdogTimeout',
@@ -26,10 +35,11 @@ export class EmulatorError extends Error {
 }
 
 export function serializeError(err, fallback = {}) {
-  if (err && typeof err === 'object' && err.name === 'EmulatorError' && typeof err.code === 'string') {
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || 'Error';
-    const stack = typeof err.stack === 'string' ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
+  if (err instanceof EmulatorError) {
+    const name = formatOneLineUtf8(tryGetStringProp(err, 'name') ?? 'EmulatorError', MAX_ERROR_NAME_BYTES) || 'Error';
+    const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
+    const stackRaw = tryGetStringProp(err, 'stack');
+    const stack = stackRaw ? truncateUtf8(stackRaw, MAX_ERROR_STACK_BYTES) : undefined;
     return {
       name,
       code: err.code,
@@ -41,10 +51,13 @@ export function serializeError(err, fallback = {}) {
   }
 
   if (err instanceof Error) {
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const messageRaw = typeof fallback.message === 'string' ? fallback.message : err.message;
-    const message = formatOneLineUtf8(messageRaw, MAX_ERROR_MESSAGE_BYTES) || 'Error';
-    const stack = typeof err.stack === 'string' ? truncateUtf8(err.stack, MAX_ERROR_STACK_BYTES) : undefined;
+    const name = formatOneLineUtf8(tryGetStringProp(err, 'name') ?? 'Error', MAX_ERROR_NAME_BYTES) || 'Error';
+    const message =
+      typeof fallback.message === 'string'
+        ? formatOneLineUtf8(fallback.message, MAX_ERROR_MESSAGE_BYTES) || 'Error'
+        : formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
+    const stackRaw = tryGetStringProp(err, 'stack');
+    const stack = stackRaw ? truncateUtf8(stackRaw, MAX_ERROR_STACK_BYTES) : undefined;
     return {
       name,
       code: fallback.code ?? ErrorCode.InternalError,
@@ -55,8 +68,10 @@ export function serializeError(err, fallback = {}) {
     };
   }
 
-  const messageRaw = typeof fallback.message === 'string' ? fallback.message : String(err);
-  const message = formatOneLineUtf8(messageRaw, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+  const message =
+    typeof fallback.message === 'string'
+      ? formatOneLineUtf8(fallback.message, MAX_ERROR_MESSAGE_BYTES) || 'Error'
+      : formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
   return {
     name: 'Error',
     code: fallback.code ?? ErrorCode.InternalError,

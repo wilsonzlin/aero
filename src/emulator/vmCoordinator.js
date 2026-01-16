@@ -1,4 +1,5 @@
 import { ErrorCode, serializeError } from "../errors.js";
+import { formatOneLineError } from "../text.js";
 
 const DEFAULT_CONFIG = Object.freeze({
   cpu: {
@@ -376,7 +377,7 @@ export class VmCoordinator extends EventTarget {
     // diagnose why the worker failed to load/execute. `worker.onerror` is often
     // the only signal for module-load failures (e.g. missing chunks, syntax
     // errors, COEP/CSP issues, etc).
-    const baseMessage = err instanceof Error ? err.message : String(err);
+    const baseMessage = formatOneLineError(err, 512);
     const message = baseMessage ? `CPU worker crashed: ${baseMessage}` : "CPU worker crashed.";
     this._emitError(
       serializeError(err, {
@@ -473,7 +474,100 @@ export class VmCoordinator extends EventTarget {
   }
 
   _emitError(error, { snapshot } = {}) {
-    const structured = error && typeof error === "object" ? error : { code: ErrorCode.InternalError, message: String(error) };
+    let structured = null;
+    if (error instanceof Error) {
+      structured = serializeError(error);
+    }
+
+    let code = ErrorCode.InternalError;
+    let message = "Error";
+    let name = "Error";
+    let details = undefined;
+    let suggestion = undefined;
+    let stack = undefined;
+
+    if (structured && typeof structured === "object") {
+      try {
+        if (typeof structured.code === "string") code = structured.code;
+      } catch {
+        // ignore getters throwing
+      }
+      try {
+        if (typeof structured.name === "string") name = structured.name;
+      } catch {
+        // ignore getters throwing
+      }
+      try {
+        if (typeof structured.message === "string") message = structured.message;
+      } catch {
+        // ignore getters throwing
+      }
+      try {
+        details = structured.details;
+      } catch {
+        details = undefined;
+      }
+      try {
+        suggestion = structured.suggestion;
+      } catch {
+        suggestion = undefined;
+      }
+      try {
+        if (typeof structured.stack === "string") stack = structured.stack;
+      } catch {
+        stack = undefined;
+      }
+    } else if (error && typeof error === "object") {
+      const errObj = error;
+      try {
+        if (typeof errObj.code === "string") code = errObj.code;
+      } catch {
+        // ignore getters throwing
+      }
+      try {
+        if (typeof errObj.name === "string") name = errObj.name;
+      } catch {
+        // ignore getters throwing
+      }
+      try {
+        if (typeof errObj.message === "string") message = errObj.message;
+      } catch {
+        // ignore getters throwing
+      }
+      try {
+        details = errObj.details;
+      } catch {
+        details = undefined;
+      }
+      try {
+        suggestion = errObj.suggestion;
+      } catch {
+        suggestion = undefined;
+      }
+      try {
+        if (typeof errObj.stack === "string") stack = errObj.stack;
+      } catch {
+        stack = undefined;
+      }
+      if (message === "Error") {
+        message = formatOneLineError(errObj, 512) || "Error";
+      }
+    } else {
+      message = formatOneLineError(error, 512) || "Error";
+    }
+
+    const safeMessage = formatOneLineError(message, 512) || "Error";
+    const safeName = formatOneLineError(name, 128) || "Error";
+
+    structured = {
+      name: safeName,
+      code,
+      message: safeMessage,
+      ...(details !== undefined ? { details } : {}),
+      ...(suggestion !== undefined ? { suggestion } : {}),
+      ...(stack ? { stack } : {}),
+    };
+
     this.lastError = { error: structured, snapshot };
     if (this.config.autoSaveSnapshotOnCrash) {
       this.lastSnapshot = snapshot ?? this.lastSnapshot;
@@ -496,7 +590,7 @@ export class VmCoordinator extends EventTarget {
       }
     }
     this.dispatchEvent(new CustomEvent("error", { detail: { error: structured, snapshot } }));
-    this._rejectAllAcks(new Error(structured.message));
+    this._rejectAllAcks(new Error(safeMessage));
     this._stopWatchdog();
     const worker = this.worker;
     this._onTerminated();
