@@ -233,3 +233,16 @@ test("tcp-mux ERROR payload limits: rejects oversized message", () => {
     (err) => err instanceof Error && err.message.includes("error message too long"),
   );
 });
+
+test("tcp-mux ERROR payload limits: rejects invalid UTF-8 message", () => {
+  const invalidUtf8 = Buffer.from([0xc0, 0xaf]);
+  const payload = Buffer.allocUnsafe(2 + 2 + invalidUtf8.length);
+  payload.writeUInt16BE(1, 0); // code
+  payload.writeUInt16BE(invalidUtf8.length, 2);
+  invalidUtf8.copy(payload, 4);
+
+  assert.throws(
+    () => decodeTcpMuxErrorPayload(payload),
+    (err) => err instanceof Error && err.message.toLowerCase().includes("message is not valid utf-8"),
+  );
+});

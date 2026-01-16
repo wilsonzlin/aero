@@ -230,6 +230,19 @@ describe("tcp-mux protocol vectors", () => {
     );
   });
 
+  it("errorPayload rejects invalid UTF-8 message", () => {
+    const invalidUtf8 = Buffer.from([0xc0, 0xaf]);
+    const payload = Buffer.allocUnsafe(2 + 2 + invalidUtf8.length);
+    payload.writeUInt16BE(1, 0); // code
+    payload.writeUInt16BE(invalidUtf8.length, 2);
+    invalidUtf8.copy(payload, 4);
+
+    assert.throws(
+      () => decodeTcpMuxErrorPayload(payload),
+      (err) => err instanceof Error && err.message.toLowerCase().includes("message is not valid utf-8"),
+    );
+  });
+
   it("frameParser exposes oversized header without throwing", () => {
     const parser = new TcpMuxFrameParser();
     const header = Buffer.allocUnsafe(9);

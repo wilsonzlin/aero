@@ -62,6 +62,15 @@ test("tcp-mux: ERROR payload encode/decode", () => {
   assert.deepEqual(decoded, { code: TcpMuxErrorCode.POLICY_DENIED, message: "nope" });
 });
 
+test("tcp-mux: ERROR payload rejects invalid UTF-8 message", () => {
+  const invalidUtf8 = Buffer.from([0xc0, 0xaf]);
+  const payload = Buffer.allocUnsafe(2 + 2 + invalidUtf8.length);
+  payload.writeUInt16BE(TcpMuxErrorCode.POLICY_DENIED, 0);
+  payload.writeUInt16BE(invalidUtf8.length, 2);
+  invalidUtf8.copy(payload, 4);
+  assert.throws(() => decodeTcpMuxErrorPayload(payload), /message is not valid utf-8/i);
+});
+
 test("tcp-mux: frame parser supports split + concatenated chunks", () => {
   const openFrame = encodeTcpMuxFrame(
     TcpMuxMsgType.OPEN,

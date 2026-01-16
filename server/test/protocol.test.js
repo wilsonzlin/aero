@@ -55,6 +55,27 @@ test("server OPENED framing round-trips", () => {
   assert.deepEqual(frame, { type: "opened", connId: 9, status: 3, message: "nope" });
 });
 
+test("server OPENED/CLOSE framing rejects invalid UTF-8 message", () => {
+  const invalidUtf8 = Buffer.from([0xc0, 0xaf]);
+  const connId = 9;
+
+  const opened = Buffer.allocUnsafe(1 + 4 + 1 + 2 + invalidUtf8.length);
+  opened.writeUInt8(FrameType.OPENED, 0);
+  opened.writeUInt32BE(connId, 1);
+  opened.writeUInt8(3, 5); // status
+  opened.writeUInt16BE(invalidUtf8.length, 6);
+  invalidUtf8.copy(opened, 8);
+  assert.throws(() => decodeServerFrame(opened), /message is not valid UTF-8/i);
+
+  const close = Buffer.allocUnsafe(1 + 4 + 1 + 2 + invalidUtf8.length);
+  close.writeUInt8(FrameType.CLOSE_FROM_REMOTE, 0);
+  close.writeUInt32BE(connId, 1);
+  close.writeUInt8(1, 5); // reason
+  close.writeUInt16BE(invalidUtf8.length, 6);
+  invalidUtf8.copy(close, 8);
+  assert.throws(() => decodeServerFrame(close), /message is not valid UTF-8/i);
+});
+
 test("invalid frames are rejected", () => {
   assert.throws(() => decodeClientFrame(Buffer.from([])), /Frame too short/);
   assert.throws(() => decodeClientFrame(Buffer.from([FrameType.CONNECT, 0, 0, 0, 1])), /Frame too short/);
