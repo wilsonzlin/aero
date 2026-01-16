@@ -50,12 +50,8 @@ function post(msg: DemoVmWorkerMessage): void {
   ctx.postMessage(msg);
 }
 
-function serializeError(err: unknown): DemoVmWorkerSerializedError {
-  return serializeErrorForProtocol(err);
-}
-
 function postError(err: unknown): void {
-  post({ type: "error", error: serializeError(err) });
+  post({ type: "error", error: serializeErrorForProtocol(err) });
 }
 
 function ensureVm(): InstanceType<WasmApi["DemoVm"]> {
@@ -307,7 +303,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const result = await handleRequest(req);
         post({ type: "rpcResult", id: req.id, ok: true, result } satisfies DemoVmWorkerMessage);
       } catch (err) {
-        const serialized = serializeError(err);
+        const serialized: DemoVmWorkerSerializedError = serializeErrorForProtocol(err);
         post({ type: "rpcResult", id: req.id, ok: false, error: serialized } satisfies DemoVmWorkerRpcResultErr);
         post({ type: "error", error: serialized } satisfies DemoVmWorkerMessage);
       } finally {

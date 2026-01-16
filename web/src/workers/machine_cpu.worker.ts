@@ -1003,10 +1003,6 @@ function pushEventBlocking(evt: Event, timeoutMs = 250): void {
   }
 }
 
-function serializeError(err: unknown): MachineSnapshotSerializedError {
-  return serializeVmSnapshotError(err);
-}
-
 function trySetMachineBootDrive(m: unknown, drive: number): boolean {
   // Prefer the explicit `set_boot_drive(DL)` API when available.
   try {
@@ -2502,7 +2498,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
   const m = machine;
 
   if (!api || !m) {
-    const error = serializeError(new Error("WASM Machine is not initialized."));
+    const error = serializeVmSnapshotError(new Error("WASM Machine is not initialized."));
     if (op.kind === "vm.machine.saveToOpfs") {
       postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: false, error } satisfies VmSnapshotMachineSavedMessage);
     } else if (op.kind === "vm.machine.restoreFromOpfs") {
@@ -2644,7 +2640,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
     invalidateInputStateAfterSnapshotRestore();
     postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
   } catch (err) {
-    const error = serializeError(err);
+    const error = serializeVmSnapshotError(err);
     if (op.kind === "vm.machine.saveToOpfs") {
       postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: false, error } satisfies VmSnapshotMachineSavedMessage);
     } else if (op.kind === "vm.machine.restoreFromOpfs") {
@@ -3312,7 +3308,7 @@ ctx.onmessage = (ev) => {
             kind: "vm.snapshot.machine.saved",
             requestId,
             ok: false,
-            error: serializeError(new Error("vm.snapshot.machine.saveToOpfs requires a non-empty path.")),
+            error: serializeVmSnapshotError(new Error("vm.snapshot.machine.saveToOpfs requires a non-empty path.")),
           } satisfies VmSnapshotMachineSavedMessage);
           return;
         }
@@ -3321,7 +3317,7 @@ ctx.onmessage = (ev) => {
             kind: "vm.snapshot.machine.saved",
             requestId,
             ok: false,
-            error: serializeError(new Error("VM is not paused; call vm.snapshot.pause before saving.")),
+            error: serializeVmSnapshotError(new Error("VM is not paused; call vm.snapshot.pause before saving.")),
           } satisfies VmSnapshotMachineSavedMessage);
           return;
         }
@@ -3337,7 +3333,7 @@ ctx.onmessage = (ev) => {
             kind: "vm.snapshot.machine.restored",
             requestId,
             ok: false,
-            error: serializeError(new Error("vm.snapshot.machine.restoreFromOpfs requires a non-empty path.")),
+            error: serializeVmSnapshotError(new Error("vm.snapshot.machine.restoreFromOpfs requires a non-empty path.")),
           } satisfies VmSnapshotMachineRestoredMessage);
           return;
         }
@@ -3346,7 +3342,7 @@ ctx.onmessage = (ev) => {
             kind: "vm.snapshot.machine.restored",
             requestId,
             ok: false,
-            error: serializeError(new Error("VM is not paused; call vm.snapshot.pause before restoring.")),
+            error: serializeVmSnapshotError(new Error("VM is not paused; call vm.snapshot.pause before restoring.")),
           } satisfies VmSnapshotMachineRestoredMessage);
           return;
         }
@@ -3366,7 +3362,7 @@ ctx.onmessage = (ev) => {
         kind: "machine.snapshot.restored",
         requestId: requestId < 0 ? 0 : requestId,
         ok: false,
-        error: serializeError(new Error("Invalid machine.snapshot.restoreFromOpfs message.")),
+        error: serializeVmSnapshotError(new Error("Invalid machine.snapshot.restoreFromOpfs message.")),
       });
       return;
     }
@@ -3383,7 +3379,7 @@ ctx.onmessage = (ev) => {
         kind: "machine.snapshot.restored",
         requestId: requestId < 0 ? 0 : requestId,
         ok: false,
-        error: serializeError(new Error("Invalid machine.snapshot.restore message.")),
+        error: serializeVmSnapshotError(new Error("Invalid machine.snapshot.restore message.")),
       });
       return;
     }
