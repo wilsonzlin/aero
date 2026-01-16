@@ -5,6 +5,7 @@ import { asI64, asU64, u64ToNumber } from './bigint';
 import { JIT_BIGINT_ABI_WASM_BYTES, JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES } from './wasm-bytes';
 import { HIGH_RAM_START as HIGH_RAM_START_U53, LOW_RAM_END as LOW_RAM_END_U32 } from '../../web/src/arch/guest_phys.ts';
 import { initWasmForContext, type WasmApi } from '../../web/src/runtime/wasm_context';
+import { formatOneLineError } from '../text.js';
 
 declare global {
   // Tiered VM bus exit hooks installed by this worker for deterministic JIT smoke tests.
@@ -143,7 +144,7 @@ function shrinkMeta(pre: JsCompiledBlockMeta, codeByteLen: number): JsCompiledBl
 }
 
 function platformSharedMemoryError(err: unknown): string {
-  const detail = err instanceof Error ? err.message : String(err);
+  const detail = formatOneLineError(err, 512);
   return (
     'Failed to allocate shared WebAssembly.Memory. This requires a cross-origin isolated page.\n' +
     '\n' +
@@ -291,7 +292,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   } catch (err) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: err instanceof Error ? err.message : String(err),
+      reason: formatOneLineError(err, 512),
     });
     return;
   }
@@ -1731,7 +1732,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     } catch (err) {
       postToMain({
         type: 'CpuWorkerError',
-        reason: `Tiered VM run_blocks failed: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `Tiered VM run_blocks failed: ${formatOneLineError(err, 512)}`,
       });
       jitWorker.terminate();
       try {
@@ -1751,7 +1752,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     } catch (err) {
       postToMain({
         type: 'CpuWorkerError',
-        reason: `JIT compile failed: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `JIT compile failed: ${formatOneLineError(err, 512)}`,
       });
       jitWorker.terminate();
       try {
@@ -1874,7 +1875,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     } catch (err) {
       postToMain({
         type: 'CpuWorkerError',
-        reason: `Self-modifying code regression: unexpected error during recompilation: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `Self-modifying code regression: unexpected error during recompilation: ${formatOneLineError(err, 512)}`,
       });
       jitWorker.terminate();
       try {
@@ -1955,7 +1956,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       return false;
     });
   } catch (err) {
-    console.warn(`[cpu-worker] stale compile scenario failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[cpu-worker] stale compile scenario failed: ${formatOneLineError(err, 512)}`);
   }
 
   // ---------------------------------------------------------------------------
@@ -2031,7 +2032,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     stale_existing_slot_preserved = typeof fnBefore === 'function' && fnBefore === fnAfter;
 
   } catch (err) {
-    console.warn(`[cpu-worker] stale race scenario failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[cpu-worker] stale race scenario failed: ${formatOneLineError(err, 512)}`);
   } finally {
     jitWorker2?.terminate();
   }

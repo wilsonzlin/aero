@@ -5,7 +5,7 @@
 // entrypoint (`web/index.html`) is legacy/experimental.
 import './style.css';
 
-import { formatOneLineUtf8 } from './text.js';
+import { formatOneLineError, formatOneLineUtf8 } from './text.js';
 
 import { installPerfHud } from '../web/src/perf/hud_entry';
 import { perf } from '../web/src/perf/perf';
@@ -41,6 +41,8 @@ import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webus
 
 const MAX_UI_ERROR_NAME_BYTES = 128;
 const MAX_UI_ERROR_MESSAGE_BYTES = 512;
+
+const formatUiErrorMessage = (err: unknown): string => formatOneLineError(err, MAX_UI_ERROR_MESSAGE_BYTES);
 
 declare global {
   interface Window {
@@ -128,7 +130,7 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
       type: 'module',
     });
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = formatUiErrorMessage(err);
     window.__jit_smoke_result = { type: 'CpuWorkerError', reason };
     output.textContent = reason;
     return;
@@ -160,7 +162,7 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
     });
 
     cpuWorker.addEventListener('error', (ev) => {
-      settle({ type: 'CpuWorkerError', reason: ev instanceof ErrorEvent ? ev.message : String(ev) });
+      settle({ type: 'CpuWorkerError', reason: formatUiErrorMessage(ev) });
     });
 
     cpuWorker.addEventListener('messageerror', () => {
@@ -257,7 +259,7 @@ function renderWebGpuPanel(): HTMLElement {
           2,
         );
       } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
+        output.textContent = formatUiErrorMessage(err);
       }
     },
   });
@@ -340,7 +342,7 @@ function ensureWebUsbProbeWorker(): Worker {
   });
 
   worker.addEventListener('error', (ev) => {
-    rejectAllWebUsbProbePending(new Error(ev instanceof ErrorEvent ? ev.message : String(ev)));
+    rejectAllWebUsbProbePending(new Error(formatUiErrorMessage(ev)));
     resetWebUsbProbeWorker();
   });
 
@@ -406,26 +408,18 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   let workerProbeError: { name: string; message: string } | null = null;
 
   function serializeError(err: unknown): { name: string; message: string } {
-    if (err instanceof DOMException) {
-      const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || 'Error';
-      const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
-      return { name, message };
+    const message = formatUiErrorMessage(err);
+    let nameRaw: string | null = null;
+    if (err && typeof err === "object") {
+      try {
+        const maybeName = (err as { name?: unknown }).name;
+        if (typeof maybeName === "string") nameRaw = maybeName;
+      } catch {
+        // ignore getters throwing
+      }
     }
-    if (err instanceof Error) {
-      const name = formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || 'Error';
-      const message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
-      return { name, message };
-    }
-    if (err && typeof err === 'object') {
-      const maybe = err as { name?: unknown; message?: unknown };
-      const name = typeof maybe.name === 'string' ? maybe.name : 'Error';
-      const message = typeof maybe.message === 'string' ? maybe.message : String(err);
-      const safeName = formatOneLineUtf8(name, MAX_UI_ERROR_NAME_BYTES) || 'Error';
-      const safeMessage = formatOneLineUtf8(message, MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
-      return { name: safeName, message: safeMessage };
-    }
-    const message = formatOneLineUtf8(String(err), MAX_UI_ERROR_MESSAGE_BYTES) || 'Error';
-    return { name: 'Error', message };
+    const name = formatOneLineUtf8(nameRaw ?? "Error", MAX_UI_ERROR_NAME_BYTES) || "Error";
+    return { name, message };
   }
 
   function clearError(): void {
@@ -907,7 +901,7 @@ function renderOpfsPanel(): HTMLElement {
         });
         status.textContent = `Imported to OPFS: ${destPath}`;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   });
@@ -1136,7 +1130,7 @@ function renderAudioPanel(): HTMLElement {
         startTone(output);
         await output.resume();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -1176,7 +1170,7 @@ function renderAudioPanel(): HTMLElement {
         // `StatusIndex.IoReady`.
         workerCoordinator.setBootDisks({}, null, null);
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -1219,7 +1213,7 @@ function renderAudioPanel(): HTMLElement {
         );
         await output.resume();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -1331,7 +1325,7 @@ function renderAudioPanel(): HTMLElement {
       try {
         await workerReady;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         stopHdaDemo();
         return;
       }
@@ -1339,7 +1333,7 @@ function renderAudioPanel(): HTMLElement {
       try {
         await output.resume();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         stopHdaDemo();
         return;
       }
@@ -1475,7 +1469,7 @@ function renderAudioPanel(): HTMLElement {
       try {
         await workerReady;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         stopVirtioSndDemo();
         return;
       }
@@ -1483,7 +1477,7 @@ function renderAudioPanel(): HTMLElement {
       try {
         await output.resume();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         stopVirtioSndDemo();
         return;
       }
@@ -1584,7 +1578,7 @@ function renderAudioPanel(): HTMLElement {
         workerCoordinator.start(workerConfig);
         workerCoordinator.setBootDisks({}, null, null);
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -1646,14 +1640,14 @@ function renderAudioPanel(): HTMLElement {
       try {
         initInfo = await ready;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
       try {
         await output.resume();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -1724,7 +1718,7 @@ function renderAudioPanel(): HTMLElement {
           gain: 0.2,
         });
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -1773,7 +1767,7 @@ function renderAudioPanel(): HTMLElement {
         );
       } catch (err) {
         backend = "main";
-        workerError = err instanceof Error ? err.message : String(err);
+        workerError = formatUiErrorMessage(err);
 
         // Ensure we don't have both the worker and main thread consuming the mic/output rings.
         workerCoordinator.setMicrophoneRingBuffer(null, 0);
@@ -1822,7 +1816,7 @@ function renderAudioPanel(): HTMLElement {
       try {
         await output.resume();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -2038,7 +2032,7 @@ function renderAudioPanel(): HTMLElement {
           `micReadDelta=${micReadDelta} micWriteDelta=${micWriteDelta} micDroppedDelta=${micDroppedDelta}\n` +
           `pcmFirst16=${result.pcmFirst16.join(",")}`;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatUiErrorMessage(err);
         result.error = message;
         result.ok = false;
         status.textContent = message;
@@ -2140,7 +2134,7 @@ function renderInputBackendHudPanel(): HTMLElement {
         `usb configured: keyboard=${usbKbOk} mouse=${usbMouseOk}\n` +
         `held: keys=${keysHeld} mouseButtons=${buttonsHeld} mask=0x${(buttonsMask & 0x1f).toString(16)}`;
     } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     }
   };
 
@@ -2399,7 +2393,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       await client.closeDisk(cur);
     } catch (err) {
       // Best-effort; if the worker is gone, nothing else to do.
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     }
   }
 
@@ -2519,7 +2513,7 @@ function renderRemoteDiskPanel(): HTMLElement {
         `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
         `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? '—' : remote.lastFetchMs.toFixed(1)}ms)\n`;
     } catch (err) {
-      stats.textContent = err instanceof Error ? err.message : String(err);
+      stats.textContent = formatUiErrorMessage(err);
     } finally {
       statsPollPending = false;
     }
@@ -2541,7 +2535,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       output.textContent = JSON.stringify(res.remote, null, 2);
       updateButtons();
     } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     }
   };
 
@@ -2563,7 +2557,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       );
       progress.value = 1;
     } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     }
   };
 
@@ -2579,7 +2573,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       progress.value = 1;
       void refreshStats();
     } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     }
   };
 
@@ -2604,7 +2598,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       output.textContent = 'Cache cleared.';
       updateButtons();
     } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     }
   };
 
@@ -2622,7 +2616,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       output.textContent = 'Stats reset.';
       void refreshStats();
     } catch (err) {
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     }
   };
 
@@ -2700,7 +2694,7 @@ function renderJitSmokePanel(report: PlatformFeatureReport): HTMLElement {
 
   const run = () => {
     void runJitSmokeTest(output).catch((err) => {
-      output.textContent = err instanceof Error ? err.message : String(err);
+      output.textContent = formatUiErrorMessage(err);
     });
   };
   button.onclick = run;
@@ -2832,7 +2826,7 @@ function renderMicrophonePanel(): HTMLElement {
 
         update();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         micAttachment = null;
         attachToVm();
         update();
@@ -2848,7 +2842,7 @@ function renderMicrophonePanel(): HTMLElement {
         await mic?.stop();
         mic = null;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       } finally {
         micAttachment = null;
         attachToVm();
@@ -3063,7 +3057,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         const inst = await ensureVm();
         await inst.start({ mode: 'cooperativeInfiniteLoop' });
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
       update();
     },
@@ -3079,7 +3073,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         const inst = await ensureVm();
         await inst.start({ mode: 'nonYieldingLoop' });
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
       update();
     },
@@ -3095,7 +3089,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         const inst = await ensureVm();
         await inst.start({ mode: 'crash' });
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
       update();
     },
@@ -3108,7 +3102,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       try {
         await vm?.pause();
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
       update();
     },
@@ -3121,7 +3115,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       try {
         await vm?.resume();
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
       update();
     },
@@ -3134,7 +3128,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
       try {
         await vm?.step();
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
       update();
     },
@@ -3169,7 +3163,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         }
         update();
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -3190,7 +3184,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         }
         update();
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -3209,7 +3203,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         snapshotOut.textContent = JSON.stringify(saved.snapshot, null, 2);
         update();
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -3223,7 +3217,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         if (vm) vm.lastSnapshotSavedTo = null;
         update();
       } catch (err) {
-        errorOut.textContent = err instanceof Error ? err.message : String(err);
+        errorOut.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;

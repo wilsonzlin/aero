@@ -2,6 +2,7 @@
 
 import type { CompileBlockRequest, CpuToJitMessage, JitToCpuMessage } from './jit-protocol';
 import { initJitWasmForContext, type JitWasmApi, type Tier1BlockCompilation } from '../../web/src/runtime/jit_wasm_loader';
+import { formatOneLineError } from '../text.js';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -28,7 +29,7 @@ function isDataCloneError(err: unknown): boolean {
     const name = (err as { name?: unknown }).name;
     if (name === 'DataCloneError') return true;
   }
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatOneLineError(err, 2048);
   return /DataCloneError|could not be cloned/i.test(message);
 }
 
@@ -138,7 +139,7 @@ function isTier1CompileError(err: unknown): boolean {
   // Newer aero-jit-wasm builds prefix their error messages with `compile_tier1_block:`. Use that
   // to distinguish genuine compilation failures from ABI mismatches (wrong arg types/count) when
   // running against older wasm-pack outputs.
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatOneLineError(err, 2048);
   return message.trimStart().startsWith('compile_tier1_block:');
 }
 
@@ -147,7 +148,7 @@ function isTier1AbiMismatchError(err: unknown): boolean {
   // wrong arg count, etc). Use a best-effort heuristic so we don't accidentally swallow real
   // compiler/runtime errors by retrying with legacy call signatures.
   if (err instanceof TypeError) return true;
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatOneLineError(err, 2048);
   return /bigint|cannot convert|argument|parameter|is not a function/i.test(message);
 }
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
@@ -248,7 +249,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     // code slice or configured max.
     compilation = normalizeTier1Compilation(result, Math.min(maxBytes, codeBytes.byteLength));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     postMessageToCpu({ type: 'CompileError', id: req.id, entry_rip: req.entry_rip, reason: message });
     return;
   }
@@ -318,7 +319,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
       type: 'CompileError',
       id: req.id,
       entry_rip: req.entry_rip,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: formatOneLineError(err, 512),
     });
   }
 }

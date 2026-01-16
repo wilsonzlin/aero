@@ -29,20 +29,31 @@ export function createHotspotsPanel(options) {
     const { hotspots } = perf.export();
     const rows = hotspots.slice(0, topN);
 
-    table.textContent = '';
+    table.replaceChildren();
 
     const header = document.createElement('tr');
-    header.innerHTML = '<th>PC</th><th>%</th><th>hits</th><th>instr</th>';
+    for (const label of ['PC', '%', 'hits', 'instr']) {
+      const th = document.createElement('th');
+      th.textContent = label;
+      header.appendChild(th);
+    }
     table.appendChild(header);
 
     for (const h of rows) {
       const tr = document.createElement('tr');
       const percent = Number.isFinite(h.percent_of_total) ? h.percent_of_total : 0;
-      tr.innerHTML =
-        `<td>${h.pc}</td>` +
-        `<td>${percent.toFixed(2)}</td>` +
-        `<td>${h.hits}</td>` +
-        `<td>${h.instructions}</td>`;
+
+      const cells = [
+        typeof h.pc === 'string' ? h.pc : '',
+        percent.toFixed(2),
+        Number.isFinite(h.hits) ? String(h.hits) : '0',
+        Number.isFinite(h.instructions) ? String(h.instructions) : '0',
+      ];
+      for (const value of cells) {
+        const td = document.createElement('td');
+        td.textContent = value;
+        tr.appendChild(td);
+      }
       table.appendChild(tr);
     }
   }

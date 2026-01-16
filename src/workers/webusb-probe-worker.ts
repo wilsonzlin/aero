@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { formatOneLineUtf8 } from '../text.js';
+import { formatOneLineError, formatOneLineUtf8 } from '../text.js';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -25,23 +25,22 @@ const MAX_ERROR_MESSAGE_BYTES = 512;
 function serializeError(err: unknown): { name: string; message: string } {
   if (err instanceof DOMException) {
     const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+    const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     return { name, message };
   }
   if (err instanceof Error) {
     const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const message = formatOneLineUtf8(err.message, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+    const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     return { name, message };
   }
   if (err && typeof err === 'object') {
     const maybe = err as { name?: unknown; message?: unknown };
     const name = typeof maybe.name === 'string' ? maybe.name : 'Error';
-    const message = typeof maybe.message === 'string' ? maybe.message : String(err);
     const safeName = formatOneLineUtf8(name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const safeMessage = formatOneLineUtf8(message, MAX_ERROR_MESSAGE_BYTES) || 'Error';
+    const safeMessage = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     return { name: safeName, message: safeMessage };
   }
-  const message = formatOneLineUtf8(String(err), MAX_ERROR_MESSAGE_BYTES) || 'Error';
+  const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
   return { name: 'Error', message };
 }
 
