@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Reference implementation for secure streaming of S3-backed disk images via CloudFront signed access",
+  "type": "commonjs",
   "engines": {
     "node": ">=22.11.0 <23"
   },

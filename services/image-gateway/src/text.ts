@@ -77,17 +77,29 @@ export function formatOneLineUtf8(input: unknown, maxBytes: number): string {
 function safeErrorMessageInput(err: unknown): string {
   if (err === null) return "null";
 
-  const t = typeof err;
-  if (t === "string") return err;
-  if (t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || t === "undefined") return String(err);
-
-  if (t === "object") {
-    try {
-      const msg = err && typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : null;
-      if (msg !== null) return msg;
-    } catch {
-      // ignore getters throwing
+  switch (typeof err) {
+    case "string":
+      return err;
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+    case "undefined":
+      return String(err);
+    case "object": {
+      try {
+        const msg =
+          err && typeof (err as { message?: unknown }).message === "string"
+            ? (err as { message: string }).message
+            : null;
+        if (msg !== null) return msg;
+      } catch {
+        // ignore getters throwing
+      }
+      break;
     }
+    default:
+      break;
   }
 
   // Avoid calling toString() on arbitrary objects/functions (can throw / be expensive).
