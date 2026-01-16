@@ -17,6 +17,7 @@ import {
   wrapScanoutState,
 } from '../ipc/scanout_state';
 import { perf } from '../perf/perf';
+import { formatOneLineError, formatOneLineUtf8 } from "../text";
 
 import { DebugOverlay } from '../../ui/debug_overlay.ts';
 
@@ -105,7 +106,7 @@ export const startFrameScheduler = ({
       canvas ? [canvas] : [],
     );
   } catch (err) {
-    throw err instanceof Error ? err : new Error(String(err));
+    throw err instanceof Error ? err : new Error(formatOneLineError(err, 512));
   }
 
   let overlay: DebugOverlay | null = null;
@@ -188,16 +189,26 @@ export const startFrameScheduler = ({
 
         for (const ev of evs) {
           if (!ev || typeof ev !== "object") {
-            console.error("gpu-worker[Unknown]", String(ev));
+            const value =
+              typeof ev === "string"
+                ? formatOneLineUtf8(ev, 256) || "unknown"
+                : typeof ev === "number" || typeof ev === "boolean" || typeof ev === "bigint"
+                  ? String(ev)
+                  : "unknown";
+            console.error("gpu-worker[Unknown]", value);
             continue;
           }
 
           const record = ev as Record<string, unknown>;
           const sev = typeof record["severity"] === "string" ? record["severity"] : "error";
           const cat = typeof record["category"] === "string" ? record["category"] : "Unknown";
-          const message = typeof record["message"] === "string" ? record["message"] : String(record["message"] ?? "gpu event");
+          const message =
+            typeof record["message"] === "string"
+              ? (formatOneLineUtf8(record["message"], 256) || "gpu event")
+              : formatOneLineError(record["message"] ?? "gpu event", 256, "gpu event");
           const details = record["details"];
-          const prefix = `gpu-worker[${cat}]`;
+          const safeCat = formatOneLineUtf8(cat, 64) || "Unknown";
+          const prefix = `gpu-worker[${safeCat}]`;
           switch (sev) {
             case "info":
               console.info(prefix, message, details);
@@ -217,7 +228,7 @@ export const startFrameScheduler = ({
     }
 
     if (typed.type === 'error') {
-      console.error(`gpu-worker: ${typed.message}`);
+      console.error(`gpu-worker: ${formatOneLineError(typed.message, 512)}`);
     }
   };
 

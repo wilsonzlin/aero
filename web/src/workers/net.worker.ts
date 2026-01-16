@@ -12,6 +12,7 @@ import { perf } from "../perf/perf";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
+import { formatOneLineError } from "../text";
 import { readTextResponseWithLimit } from "../storage/response_json";
 import {
   serializeVmSnapshotError,
@@ -265,7 +266,7 @@ function scheduleReconnect(): void {
     try {
       applyL2TunnelConfig(currentConfig);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       pushEvent({ kind: "log", level: "warn", message: `Failed to reconnect L2 tunnel: ${message}` });
     }
   }, delayMs);
@@ -306,7 +307,7 @@ async function connectL2TunnelWithBootstrap(proxyUrl: string, generation: number
 
     session = parseGatewaySessionResponse(text);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     pushEvent({ kind: "log", level: "warn", message: `Failed to bootstrap gateway session: ${message}` });
   }
 
@@ -696,7 +697,7 @@ function fatal(err: unknown): void {
   l2TunnelProxyUrl = null;
   l2TunnelTelemetry = null;
 
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatOneLineError(err, 512);
   pushEventBlocking({ kind: "panic", message });
   try {
     setReadyFlag(status, role, false);
@@ -925,7 +926,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       try {
         applyL2TunnelConfig(currentConfig);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         pushEvent({ kind: "log", level: "warn", message: `Failed to apply L2 tunnel config: ${message}` });
       }
       return;

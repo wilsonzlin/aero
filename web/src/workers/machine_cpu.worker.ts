@@ -39,6 +39,7 @@ import {
   type SharedMemorySegments,
   type WorkerRole,
 } from "../runtime/shared_layout";
+import { formatOneLineError } from "../text";
 import { u32Delta } from "../utils/u32";
 import {
   restoreMachineSnapshotAndReattachDisks,
@@ -1895,7 +1896,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           try {
             await maybeAwait((fn as (base: string, overlay: string) => unknown).call(m, cowPaths.basePath, cowPaths.overlayPath));
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             throw new Error(
               `setBootDisks: failed to open COW overlay for aerospar HDD (disk_id=0) ` +
                 `base=${cowPaths.basePath} overlay=${cowPaths.overlayPath}: ${message}`,
@@ -1933,7 +1934,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
               ),
             );
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             throw new Error(
               `setBootDisks: failed to create COW overlay for aerospar HDD (disk_id=0) ` +
                 `base=${cowPaths.basePath} overlay=${cowPaths.overlayPath}: ${message}`,
@@ -1968,14 +1969,14 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           try {
             await maybeAwait((openAndSetRef as (path: string) => unknown).call(m, plan.opfsPath));
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
           }
         } else if (typeof open === "function") {
           try {
             await maybeAwait((open as (path: string) => unknown).call(m, plan.opfsPath));
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
           }
           // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
@@ -2026,7 +2027,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
               ),
             );
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
           }
 
@@ -2078,7 +2079,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           ),
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         throw new Error(
           `setBootDisks: failed to attach primary HDD (disk_id=0) ` +
             `base=${cow.basePath} overlay=${cow.overlayPath}: ${message}`,
@@ -2132,7 +2133,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
       try {
         await maybeAwait((eject as () => unknown).call(m));
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         throw new Error(`setBootDisks: failed to eject install media: ${message}`);
       }
       changed = true;
@@ -2192,7 +2193,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     try {
       await maybeAwait((attachIso as (path: string) => unknown).call(m, isoPath));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       throw new Error(`setBootDisks: failed to attach install ISO (disk_id=1) path=${isoPath}: ${message}`);
     }
 
@@ -2230,7 +2231,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     try {
       m.reset();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       throw new Error(`setBootDisks: Machine.reset failed after disk attachment: ${message}`);
     }
 
@@ -2723,7 +2724,7 @@ async function runLoop(): Promise<void> {
         try {
           await applyBootDisks(msg);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           const hddId = msg.hdd ? String((msg.hdd as { id?: unknown }).id ?? "") : "";
           const hddName = msg.hdd ? String((msg.hdd as { name?: unknown }).name ?? "") : "";
           const cdId = msg.cd ? String((msg.cd as { id?: unknown }).id ?? "") : "";
@@ -2825,7 +2826,7 @@ async function runLoop(): Promise<void> {
       }
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     pushEvent({ kind: "panic", message } satisfies Event);
     setReadyFlag(st, role, false);
     post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
@@ -2936,7 +2937,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       void runLoop();
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     if (status) setReadyFlag(status, role, false);
     post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
     ctx.close();
@@ -3399,7 +3400,7 @@ ctx.onmessage = (ev) => {
         console.warn(`[machine_cpu.worker] ${w}`);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       post({ type: MessageType.ERROR, role, message, code: ErrorCode.BOOT_DISKS_INCOMPATIBLE } satisfies ProtocolMessage);
       return;
     }

@@ -7,6 +7,7 @@ import {
   isJitWorkerResponse,
   type JitImportsHint,
 } from "./jit_protocol";
+import { formatOneLineError } from "../text";
 
 export type Tier1CompileResult =
   | { module: WebAssembly.Module; entryRip: number | bigint; codeByteLen: number; exitToInterpreter: boolean }
@@ -42,7 +43,7 @@ export class JitWorkerClient {
         typeof (event as ErrorEvent | undefined)?.message === "string"
           ? (event as ErrorEvent).message
           : "JIT worker error";
-      this.#rejectAll(new Error(message));
+      this.#rejectAll(new Error(formatOneLineError(message, 512, "JIT worker error")));
     };
 
     this.#onMessageError = () => {
@@ -87,7 +88,7 @@ export class JitWorkerClient {
       } catch (err) {
         globalThis.clearTimeout(timeoutId);
         this.#pending.delete(id);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -174,7 +175,7 @@ export class JitWorkerClient {
       } catch (err) {
         globalThis.clearTimeout(timeoutId);
         this.#pending.delete(id);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }

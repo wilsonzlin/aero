@@ -41,6 +41,7 @@ import {
 } from "../../../emulator/protocol/aerogpu/aerogpu_ring.ts";
 import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
+import { formatOneLineError } from "../text";
 
 /**
  * Returns whether the lightweight TypeScript CPU executor can handle the given opcode without
@@ -224,7 +225,7 @@ export const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => 
   try {
     parseAndValidateAbiVersionU32(abiVersion);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     throw new Error(`aerogpu: unsupported alloc table abi_version=0x${abiVersion.toString(16)} (${message})`);
   }
 

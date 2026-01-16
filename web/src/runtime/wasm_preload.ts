@@ -1,6 +1,7 @@
 import { perf } from "../perf/perf";
 import type { WasmVariant } from "./wasm_loader";
 import { registerPrecompiledWasmModule } from "./wasm_precompiled_registry";
+import { formatOneLineError } from "../text";
 
 export type PrecompiledWasm = { module: WebAssembly.Module; url: string };
 
@@ -128,7 +129,7 @@ export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledW
           }
         }
 
-        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+        throw lastErr instanceof Error ? lastErr : new Error(formatOneLineError(lastErr, 512));
       }
 
       const response = await fetch(url);
@@ -144,7 +145,7 @@ export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledW
           // blocks streaming compilation. Fall back to `arrayBuffer()` + `compile()`.
           console.warn(
             `[wasm] compileStreaming failed for ${variant}; falling back to compile(). Error: ${
-              err instanceof Error ? err.message : String(err)
+              formatOneLineError(err, 512)
             }`,
           );
         }

@@ -55,6 +55,7 @@ import { installIoInputTelemetryBackendOnAeroGlobal } from "./runtime/io_input_t
 import { installBootDeviceBackendOnAeroGlobal } from "./runtime/boot_device_backend";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
+import { formatOneLineError } from "./text";
 import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
 import { DiskManager, type RemoteCacheStatusSerializable } from "./storage/disk_manager";
 import { pruneRemoteCachesAndRefresh } from "./storage/remote_cache_ui_actions";
@@ -91,6 +92,9 @@ import {
   type UsbPassthroughDemoRunMessage,
 } from "./usb/usb_passthrough_demo_runtime";
 import { isUsbSelectedMessage, type UsbHostAction, type UsbHostCompletion } from "./usb/usb_proxy_protocol";
+
+const MAX_UI_ERROR_MESSAGE_BYTES = 512;
+const formatUiErrorMessage = (err: unknown): string => formatOneLineError(err, MAX_UI_ERROR_MESSAGE_BYTES);
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -213,7 +217,7 @@ const wasmInitPromise = perf.spanAsync("wasm:init", async () => {
     const { module } = await precompileWasm(preferredVariant);
     return await initWasm({ variant: preferredVariant, module });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     console.warn(`[wasm] Precompile (${preferredVariant}) failed; falling back to default init. Error: ${message}`);
     return await initWasm();
   }
@@ -643,7 +647,7 @@ function renderWasmPanel(): HTMLElement {
       (globalThis as unknown as { __aeroWasmApi?: unknown }).__aeroWasmApi = api;
     })
     .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatUiErrorMessage(err);
       status.textContent = "Failed to initialize WASM";
       error.textContent = message;
       console.error(err);
@@ -1591,7 +1595,7 @@ function renderMachinePanel(): HTMLElement {
           void tryPresentScanoutFrame("vga");
         } catch (err) {
           vgaFailed = true;
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           vgaInfo.textContent = `vga: error (${message})`;
           setError(`Machine demo scanout present failed: ${message}`);
         }
@@ -1651,7 +1655,7 @@ function renderMachinePanel(): HTMLElement {
       testState.ready = true;
     })
     .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatUiErrorMessage(err);
       status.textContent = "Machine unavailable (WASM init failed)";
       setError(message);
       testState.ready = true;
@@ -1926,7 +1930,7 @@ function renderMachineWorkerPanel(): HTMLElement {
       }
 
       if (msg.type === "machineVga.error") {
-        const message = typeof msg.message === "string" ? msg.message : String(msg.message);
+        const message = formatOneLineError(msg.message, 512);
         error.textContent = message;
         testState.error = message;
         status.textContent = "Machine worker demo: error";
@@ -1948,7 +1952,7 @@ function renderMachineWorkerPanel(): HTMLElement {
     });
 
     w.addEventListener("error", (ev) => {
-      const message = String((ev as ErrorEvent).message ?? "Worker error");
+      const message = formatOneLineError((ev as ErrorEvent).message ?? "Worker error", 512);
       error.textContent = message;
       testState.error = message;
       status.textContent = "Machine worker demo: error";
@@ -2094,7 +2098,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   }
 
   function setError(err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatUiErrorMessage(err);
     error.textContent = message;
     testState.error = message;
     console.error(err);
@@ -2560,7 +2564,7 @@ function renderWebGpuPanel(): HTMLElement {
           2,
         );
       } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
+        output.textContent = formatUiErrorMessage(err);
       }
     },
   });
@@ -2630,7 +2634,7 @@ function renderGpuWorkerPanel(): HTMLElement {
         appendLog(`hash actual=${actualHash} expected=${expectedHash}`);
         appendLog(actualHash === expectedHash ? "PASS" : "FAIL");
       } catch (err) {
-        appendLog(err instanceof Error ? err.message : String(err));
+        appendLog(formatUiErrorMessage(err));
       }
     },
   });
@@ -2761,7 +2765,7 @@ fn main(input: PsIn) -> @location(0) vec4<f32> {
         device.queue.submit([encoder.finish()]);
         output.textContent = "Rendered.";
       } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
+        output.textContent = formatUiErrorMessage(err);
       }
     },
   });
@@ -2886,7 +2890,7 @@ function renderOpfsPanel(): HTMLElement {
         status.textContent = `Imported to OPFS: ${destPath}`;
         await refreshStorageInfo();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   });
@@ -2921,7 +2925,7 @@ function renderOpfsPanel(): HTMLElement {
 
   refreshStorageInfo().catch((err) => {
     quotaLine.className = "mono bad";
-    quotaLine.textContent = `Storage quota: error (${err instanceof Error ? err.message : String(err)})`;
+    quotaLine.textContent = `Storage quota: error (${formatUiErrorMessage(err)})`;
     persistenceLine.className = "mono bad";
     persistenceLine.textContent = "Persistent storage: error.";
   });
@@ -3041,7 +3045,7 @@ function renderDisksPanel(): HTMLElement {
           mounts = await manager.setMounts({ ...mounts, hddId: meta.kind === "hdd" ? meta.id : mounts.hddId });
           await refresh();
         } catch (err) {
-          status.textContent = err instanceof Error ? err.message : String(err);
+          status.textContent = formatUiErrorMessage(err);
         }
       },
       disabled: meta.kind !== "hdd" ? "true" : undefined,
@@ -3056,7 +3060,7 @@ function renderDisksPanel(): HTMLElement {
           mounts = await manager.setMounts({ ...mounts, cdId: meta.kind === "cd" ? meta.id : mounts.cdId });
           await refresh();
         } catch (err) {
-          status.textContent = err instanceof Error ? err.message : String(err);
+          status.textContent = formatUiErrorMessage(err);
         }
       },
       disabled: meta.kind !== "cd" ? "true" : undefined,
@@ -3076,7 +3080,7 @@ function renderDisksPanel(): HTMLElement {
           });
           status.textContent = "Export complete.";
         } catch (err) {
-          status.textContent = err instanceof Error ? err.message : String(err);
+          status.textContent = formatUiErrorMessage(err);
         } finally {
           clearProgress();
         }
@@ -3108,7 +3112,7 @@ function renderDisksPanel(): HTMLElement {
           });
           await refresh();
         } catch (err) {
-          status.textContent = err instanceof Error ? err.message : String(err);
+          status.textContent = formatUiErrorMessage(err);
         } finally {
           clearProgress();
         }
@@ -3126,7 +3130,7 @@ function renderDisksPanel(): HTMLElement {
           await manager.deleteDisk(meta.id);
           await refresh();
         } catch (err) {
-          status.textContent = err instanceof Error ? err.message : String(err);
+          status.textContent = formatUiErrorMessage(err);
         }
       },
     }) as HTMLButtonElement;
@@ -3222,7 +3226,7 @@ function renderDisksPanel(): HTMLElement {
     onclick: () => {
       status.textContent = "";
       void refresh().catch((err) => {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       });
     },
   }) as HTMLButtonElement;
@@ -3237,7 +3241,7 @@ function renderDisksPanel(): HTMLElement {
         status.textContent = `Legacy scan: adopted=${res.adopted} found=${res.found}`;
         await refresh();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -3265,7 +3269,7 @@ function renderDisksPanel(): HTMLElement {
         });
         await refresh();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       } finally {
         clearProgress();
       }
@@ -3321,7 +3325,7 @@ function renderDisksPanel(): HTMLElement {
         }
         await refresh();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       } finally {
         clearProgress();
       }
@@ -3451,7 +3455,7 @@ function renderDisksPanel(): HTMLElement {
       remoteCacheCorruptKeys = res.corruptKeys;
       renderRemoteCachesTable();
     } catch (err) {
-      remoteCachesStatus.textContent = `Remote cache list failed: ${err instanceof Error ? err.message : String(err)}`;
+      remoteCachesStatus.textContent = `Remote cache list failed: ${formatUiErrorMessage(err)}`;
       remoteCachesTableBody.replaceChildren(
         el("tr", {}, el("td", { colspan: "5", class: "muted", text: "Failed to list caches." })),
       );
@@ -3501,7 +3505,7 @@ function renderDisksPanel(): HTMLElement {
       }
       remoteCachesPruneStatus.textContent = formatRemoteCachePruneResult(outcome.result, dryRun);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = formatUiErrorMessage(err);
       status.textContent = msg;
       remoteCachesPruneStatus.textContent = `Remote cache prune failed: ${msg}`;
     } finally {
@@ -3557,7 +3561,7 @@ function renderDisksPanel(): HTMLElement {
         await manager.addRemoteStreamingDisk({ url, blockSizeBytes, cacheLimitBytes, prefetchSequentialBlocks: 2 });
         await refresh();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -3568,7 +3572,7 @@ function renderDisksPanel(): HTMLElement {
       mounts = await manager.setMounts({ ...mounts, hddId: hddSelect.value || undefined });
       await refresh();
     })().catch((err) => {
-      status.textContent = err instanceof Error ? err.message : String(err);
+      status.textContent = formatUiErrorMessage(err);
     });
   });
   cdSelect.addEventListener("change", () => {
@@ -3577,7 +3581,7 @@ function renderDisksPanel(): HTMLElement {
       mounts = await manager.setMounts({ ...mounts, cdId: cdSelect.value || undefined });
       await refresh();
     })().catch((err) => {
-      status.textContent = err instanceof Error ? err.message : String(err);
+      status.textContent = formatUiErrorMessage(err);
     });
   });
 
@@ -3629,7 +3633,7 @@ function renderDisksPanel(): HTMLElement {
   );
 
   void refresh().catch((err) => {
-    status.textContent = err instanceof Error ? err.message : String(err);
+    status.textContent = formatUiErrorMessage(err);
   });
   // `AeroConfigManager.init()` asynchronously loads an optional deployment config file. That config
   // may still include legacy `activeDiskImage` values (deprecated) which we treat as a one-time
@@ -3882,7 +3886,7 @@ function renderAudioPanel(): HTMLElement {
         }
       } catch (err) {
         stopTone();
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
       status.textContent = "Audio initialized and test tone started.";
@@ -3913,7 +3917,7 @@ function renderAudioPanel(): HTMLElement {
         // still has a meaningful impact on total SharedArrayBuffer pressure in CI.
         workerCoordinator.start({ ...base, guestMemoryMiB: 1, vramMiB: 0 });
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -3958,7 +3962,7 @@ function renderAudioPanel(): HTMLElement {
           stopPerfSampling = startAudioPerfSampling(output, perf);
         }
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         return;
       }
 
@@ -4100,7 +4104,7 @@ function renderAudioPanel(): HTMLElement {
       try {
         await workerReady;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         stopHdaDemo();
         return;
       }
@@ -4249,7 +4253,7 @@ function renderAudioPanel(): HTMLElement {
       try {
         await workerReady;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         stopVirtioSndDemo();
         return;
       }
@@ -4366,7 +4370,7 @@ function renderAudioPanel(): HTMLElement {
         );
       } catch (err) {
         backend = "main";
-        workerError = err instanceof Error ? err.message : String(err);
+        workerError = formatUiErrorMessage(err);
 
         const header = new Uint32Array(mic.ringBuffer, 0, MIC_HEADER_U32_LEN);
         const capacity = Atomics.load(header, MIC_CAPACITY_SAMPLES_INDEX) >>> 0;
@@ -4496,7 +4500,7 @@ function renderAudioPanel(): HTMLElement {
         })),
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatUiErrorMessage(err);
       return { ok: false, error: message };
     }
   }
@@ -4752,7 +4756,7 @@ function renderAudioPanel(): HTMLElement {
       read = Atomics.load(readIndex, 0) >>> 0;
       write = Atomics.load(writeIndex, 0) >>> 0;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatUiErrorMessage(err);
       return { ok: false, error: `Failed to read audio output ring indices: ${message}` };
     }
     let available = (write - read) >>> 0;
@@ -4944,7 +4948,7 @@ function renderAudioPanel(): HTMLElement {
       };
       return { ok: true, wav, meta };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, error: formatUiErrorMessage(err) };
     }
   }
 
@@ -4978,7 +4982,7 @@ function renderAudioPanel(): HTMLElement {
         pendingFullRestart: workerCoordinator.getPendingFullRestart(),
       };
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      return { error: formatUiErrorMessage(err) };
     }
   }
 
@@ -4996,7 +5000,7 @@ function renderAudioPanel(): HTMLElement {
         capabilities: cfg.capabilities,
       };
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      return { error: formatUiErrorMessage(err) };
     }
   }
 
@@ -5015,7 +5019,7 @@ function renderAudioPanel(): HTMLElement {
         },
       };
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      return { error: formatUiErrorMessage(err) };
     }
   }
 
@@ -5023,7 +5027,7 @@ function renderAudioPanel(): HTMLElement {
     try {
       return workerCoordinator.getRingBufferAttachmentSnapshot();
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      return { error: formatUiErrorMessage(err) };
     }
   }
 
@@ -5035,7 +5039,7 @@ function renderAudioPanel(): HTMLElement {
         overrunCount: workerCoordinator.getAudioProducerOverrunCount(),
       };
     } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
+      return { error: formatUiErrorMessage(err) };
     }
   }
 
@@ -5082,7 +5086,7 @@ function renderAudioPanel(): HTMLElement {
 
         downloadJson(report, `aero-audio-metrics-${ts}.json`);
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -5174,7 +5178,7 @@ function renderAudioPanel(): HTMLElement {
           `aero-hda-codec-state-${ts}.json`,
         );
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -5231,7 +5235,7 @@ function renderAudioPanel(): HTMLElement {
         downloadFile(new Blob([payload], { type: "application/octet-stream" }), `aero-hda-controller-state-${ts}.bin`);
         status.textContent = "Saved HDA controller state.";
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -5337,7 +5341,7 @@ function renderAudioPanel(): HTMLElement {
             data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: cfgOk, ...cfg }, null, 2)),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/aero-config-error.txt`, data: encoder.encode(message) });
         }
 
@@ -5360,7 +5364,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/aero.version-error.txt`, data: encoder.encode(message) });
           entries.push({
             path: `${dir}/aero.version-meta.json`,
@@ -5388,7 +5392,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/workers-error.txt`, data: encoder.encode(message) });
         }
 
@@ -5409,7 +5413,7 @@ function renderAudioPanel(): HTMLElement {
             `# build: version=${build.version} gitSha=${build.gitSha} builtAt=${build.builtAt}\n\n`;
           entries.push({ path: `${dir}/serial.txt`, data: encoder.encode(header + tail) });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/serial-error.txt`, data: encoder.encode(message) });
         }
 
@@ -5522,7 +5526,7 @@ function renderAudioPanel(): HTMLElement {
           }
           entries.push({ path: `${dir}/audio-samples.txt`, data: encoder.encode(summaryLines.join("\n") + "\n") });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/audio-samples-error.txt`, data: encoder.encode(message) });
         }
 
@@ -5575,7 +5579,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({
             path: `${dir}/hda-codec-state.json`,
             data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: message }, null, 2)),
@@ -5640,7 +5644,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/hda-controller-state-error.txt`, data: encoder.encode(message) });
           entries.push({
             path: `${dir}/hda-controller-state.json`,
@@ -5700,7 +5704,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({
             path: `${dir}/hda-tick-stats.json`,
             data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: message }, null, 2)),
@@ -5759,7 +5763,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/virtio-snd-state-error.txt`, data: encoder.encode(message) });
           entries.push({
             path: `${dir}/virtio-snd-state.json`,
@@ -5831,7 +5835,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/screenshot-error.txt`, data: encoder.encode(message) });
           entries.push({
             path: `${dir}/screenshot.json`,
@@ -5858,7 +5862,7 @@ function renderAudioPanel(): HTMLElement {
             ),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/trace-error.txt`, data: encoder.encode(message) });
           entries.push({
             path: `${dir}/trace-meta.json`,
@@ -5907,7 +5911,7 @@ function renderAudioPanel(): HTMLElement {
             });
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/perf-hud-error.txt`, data: encoder.encode(message) });
           entries.push({
             path: `${dir}/perf-hud-meta.json`,
@@ -5943,7 +5947,7 @@ function renderAudioPanel(): HTMLElement {
 
           entries.push({ path: manifestPath, data: manifestBytes });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatUiErrorMessage(err);
           entries.push({ path: `${dir}/manifest-error.txt`, data: encoder.encode(message) });
         }
 
@@ -5953,7 +5957,7 @@ function renderAudioPanel(): HTMLElement {
         downloadFile(new Blob([tarPayload], { type: "application/x-tar" }), `${dir}.tar`);
         status.textContent = `Saved QA bundle → ${dir}.tar`;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -6154,7 +6158,7 @@ function renderMicrophonePanel(): HTMLElement {
         attachToWorkers();
         update();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
         micAttachment = null;
         attachToWorkers();
         update();
@@ -6170,7 +6174,7 @@ function renderMicrophonePanel(): HTMLElement {
         await mic?.stop();
         mic = null;
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatUiErrorMessage(err);
       } finally {
         micAttachment = null;
         attachToWorkers();
@@ -6235,7 +6239,7 @@ function renderMicrobenchPanel(): HTMLElement {
         const results = await window.aero.bench.runMicrobenchSuite();
         output.textContent = JSON.stringify(results, null, 2);
       } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
+        output.textContent = formatUiErrorMessage(err);
       } finally {
         runButton.disabled = false;
       }
@@ -6253,7 +6257,7 @@ function renderMicrobenchPanel(): HTMLElement {
         }
         output.textContent = JSON.stringify(window.aero.perf.export(), null, 2);
       } catch (err) {
-        output.textContent = err instanceof Error ? err.message : String(err);
+        output.textContent = formatUiErrorMessage(err);
       }
     },
   }) as HTMLButtonElement;
@@ -7220,7 +7224,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         snapshotLine.textContent = `snapshot: saved → ${VM_SNAPSHOT_PATH}`;
       } catch (err) {
         snapshotLine.textContent = "snapshot: save failed";
-        error.textContent = err instanceof Error ? err.message : String(err);
+        error.textContent = formatUiErrorMessage(err);
       } finally {
         snapshotInFlight = false;
         update();
@@ -7239,7 +7243,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         snapshotLine.textContent = `snapshot: restored ← ${VM_SNAPSHOT_PATH}`;
       } catch (err) {
         snapshotLine.textContent = "snapshot: restore failed";
-        error.textContent = err instanceof Error ? err.message : String(err);
+        error.textContent = formatUiErrorMessage(err);
       } finally {
         snapshotInFlight = false;
         update();
@@ -7309,7 +7313,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         screenshotLine.textContent = `screenshot: saved → ${filename}`;
       } catch (err) {
         screenshotLine.textContent = "screenshot: failed";
-        error.textContent = err instanceof Error ? err.message : String(err);
+        error.textContent = formatUiErrorMessage(err);
       } finally {
         screenshotInFlight = false;
         update();
@@ -7352,7 +7356,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     try {
       response = await jitClient.compile(wasmBytes, { timeoutMs: 5000 });
     } catch (err) {
-      jitDemoError.textContent = err instanceof Error ? err.message : String(err);
+      jitDemoError.textContent = formatUiErrorMessage(err);
       jitDemoLine.textContent = "jit: demo failed";
       return;
     } finally {
@@ -7385,7 +7389,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       // Instantiation is cheap for the empty module, but keep it async.
       await WebAssembly.instantiate(response.module, {});
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatUiErrorMessage(err);
       jitDemoLine.textContent = "jit: compiled, but validation failed";
       jitDemoError.textContent = message;
       return;
@@ -7508,7 +7512,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           schedulerSharedFramebuffer = sharedFramebuffer;
         }
       } catch (err) {
-        error.textContent = err instanceof Error ? err.message : String(err);
+        error.textContent = formatUiErrorMessage(err);
       } finally {
         booting = false;
       }
@@ -7555,13 +7559,13 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const selection = await getBootDiskSelection(diskManager);
         workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
       } catch (err) {
-        error.textContent = err instanceof Error ? err.message : String(err);
+        error.textContent = formatUiErrorMessage(err);
       }
       try {
         stopWorkersInputCapture();
         workerCoordinator.restart();
       } catch (err) {
-        error.textContent = err instanceof Error ? err.message : String(err);
+        error.textContent = formatUiErrorMessage(err);
       }
       update();
     },

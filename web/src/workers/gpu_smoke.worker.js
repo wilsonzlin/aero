@@ -1,11 +1,12 @@
 /** @typedef {'webgpu' | 'webgl2'} BackendKind */
 
+import { formatOneLineError } from '../text';
+
 /**
  * @param {unknown} err
  */
 function stringifyError(err) {
-  if (err instanceof Error) return `${err.name}: ${err.message}`;
-  return String(err);
+  return formatOneLineError(err, 512);
 }
 
 /**

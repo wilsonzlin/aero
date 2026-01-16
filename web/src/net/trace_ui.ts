@@ -1,4 +1,5 @@
 import { openFileHandle } from "../platform/opfs.ts";
+import { formatOneLineError } from "../text";
 
 export interface NetTraceStats {
   enabled: boolean;
@@ -45,7 +46,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
   try {
     enableCheckbox.checked = backend.isEnabled();
   } catch (err) {
-    status.textContent = err instanceof Error ? err.message : String(err);
+    status.textContent = formatOneLineError(err, 512);
     enableCheckbox.checked = false;
   }
   enableCheckbox.addEventListener("change", () => {
@@ -64,7 +65,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       } catch {
         enableCheckbox.checked = previousChecked;
       }
-      status.textContent = err instanceof Error ? err.message : String(err);
+      status.textContent = formatOneLineError(err, 512);
     }
   });
   enableLabel.appendChild(enableCheckbox);
@@ -103,7 +104,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       }
       await refreshStats?.();
     } catch (err) {
-      status.textContent = err instanceof Error ? err.message : String(err);
+      status.textContent = formatOneLineError(err, 512);
     }
   });
 
@@ -130,7 +131,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
         }
         await refreshStats?.();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatOneLineError(err, 512);
       }
     });
   }
@@ -153,7 +154,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
         await refreshStats?.();
         status.textContent = "Capture cleared.";
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatOneLineError(err, 512);
       }
     });
   }
@@ -206,7 +207,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
       status.textContent = `Saved capture to OPFS: ${path} (${bytes.byteLength.toLocaleString()} bytes)`;
       await refreshStats?.();
     } catch (err) {
-      status.textContent = err instanceof Error ? err.message : String(err);
+      status.textContent = formatOneLineError(err, 512);
     }
   });
 
@@ -260,7 +261,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
         // Snapshot does not drain; still refresh in case the backend updated stats.
         await refreshStats?.();
       } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+      status.textContent = formatOneLineError(err, 512);
       }
     });
   }
@@ -332,7 +333,7 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
         enableCheckbox.checked = stats.enabled;
       } catch (err) {
         if (signal.aborted) return;
-        status.textContent = err instanceof Error ? err.message : String(err);
+        status.textContent = formatOneLineError(err, 512);
       } finally {
         statsRequestInFlight = false;
       }

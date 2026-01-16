@@ -1,3 +1,5 @@
+import { formatOneLineError } from "../text";
+
 export type JitWasmVariant = "threaded" | "single";
 
 export type Tier1BlockCompilation = {
@@ -148,7 +150,7 @@ async function initWasmBindgenModule(
       await doInit(module);
       return;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       console.warn(
         `[jit-wasm] ${variant} init with precompiled module failed; falling back to default loader. Error: ${message}`,
       );

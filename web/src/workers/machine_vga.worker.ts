@@ -2,6 +2,7 @@
 
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
+import { formatOneLineError } from "../text";
 import { negateI32Saturating } from "../input/int32";
 import {
   FRAMEBUFFER_COPY_MESSAGE_TYPE,
@@ -757,7 +758,7 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
     try {
       tick();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       post({ type: "machineVga.error", message } satisfies MachineVgaWorkerErrorMessage);
       stop();
     }
@@ -779,7 +780,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   if (msg.type === "machineVga.start") {
     void start(msg as MachineVgaWorkerStartMessage).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       post({ type: "machineVga.error", message } satisfies MachineVgaWorkerErrorMessage);
       stop();
     });

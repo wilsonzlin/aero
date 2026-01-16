@@ -24,6 +24,7 @@ import {
   type GpuRuntimeStatsMessage,
 } from "../ipc/gpu-protocol";
 import { perf } from "../perf/perf";
+import { formatOneLineError } from "../text";
 
 export interface CreateGpuWorkerParams {
   canvas: HTMLCanvasElement;
@@ -345,7 +346,8 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
       }
       case "error": {
         params.onError?.(typed);
-        const err = new Error(`gpu-worker error: ${typed.message}`);
+        const message = formatOneLineError(typed.message, 512, "unknown");
+        const err = new Error(`gpu-worker error: ${message}`);
         if (!readySettled) {
           readySettled = true;
           readyReject(err);

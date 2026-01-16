@@ -85,11 +85,10 @@ import {
   CursorStateIndex,
   wrapCursorState,
 } from "../ipc/cursor_state";
-import { formatOneLineUtf8, truncateUtf8 } from "../text";
+import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from "../text";
+import { DEFAULT_ERROR_BYTE_LIMITS } from "../errors/serialize";
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 const MAX_PENDING_AEROGPU_SUBMISSIONS = 256;
-const MAX_COORDINATOR_ERROR_MESSAGE_BYTES = 512;
-const MAX_COORDINATOR_ERROR_STACK_BYTES = 8 * 1024;
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
@@ -279,9 +278,9 @@ function formatWorkerError(ev: ErrorEvent): { message: string; stack?: string } 
         ? ev.filename
         : "";
   const rawMessage = location ? `${base} @ ${location}` : base;
-  const message = formatOneLineUtf8(rawMessage, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Worker error";
+  const message = formatOneLineUtf8(rawMessage, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Worker error";
   const stack = (ev.error as { stack?: unknown } | null | undefined)?.stack;
-  const stackText = typeof stack === "string" ? truncateUtf8(stack, MAX_COORDINATOR_ERROR_STACK_BYTES) : undefined;
+  const stackText = typeof stack === "string" ? truncateUtf8(stack, DEFAULT_ERROR_BYTE_LIMITS.maxStackBytes) : undefined;
   return { message, ...(stackText ? { stack: stackText } : {}) };
 }
 
@@ -561,11 +560,20 @@ export class WorkerCoordinator {
 
       void this.postWorkerInitMessages({ runId, segments, perfChannel });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
+      let stack: string | undefined;
+      if (err && typeof err === "object") {
+        try {
+          const raw = (err as { stack?: unknown }).stack;
+          stack = typeof raw === "string" ? truncateUtf8(raw, 8 * 1024) : undefined;
+        } catch {
+          stack = undefined;
+        }
+      }
       this.recordFatal({
         kind: "start_failed",
         message,
-        stack: err instanceof Error ? err.stack : undefined,
+        stack,
         atMs: nowMs(),
       });
       this.stopWorkersInternal({ clearShared: true });
@@ -1422,7 +1430,7 @@ export class WorkerCoordinator {
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceStatusRequests.delete(requestId);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -1453,7 +1461,7 @@ export class WorkerCoordinator {
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceRequests.delete(requestId);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -1484,7 +1492,7 @@ export class WorkerCoordinator {
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceRequests.delete(requestId);
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -1962,7 +1970,13 @@ export class WorkerCoordinator {
   private assertSnapshotOk(context: string, msg: { ok: boolean; error?: VmSnapshotSerializedError; kind?: unknown }): void {
     if (msg.ok) return;
     const err = msg.error;
-    const suffix = err ? `${err.name}: ${err.message}` : "unknown error";
+    const suffix = err
+      ? (() => {
+          const name = formatOneLineUtf8(err.name, DEFAULT_ERROR_BYTE_LIMITS.maxNameBytes) || "Error";
+          const message = formatOneLineUtf8(err.message, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Error";
+          return `${name}: ${message}`;
+        })()
+      : "unknown error";
     throw new Error(`Snapshot ${context} failed: ${suffix}`);
   }
 
@@ -2048,7 +2062,7 @@ export class WorkerCoordinator {
         }
       } catch (err) {
         cleanup();
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -2077,8 +2091,8 @@ export class WorkerCoordinator {
   }
 
   private recordFatal(detail: WorkerCoordinatorFatalDetail): void {
-    const message = formatOneLineUtf8(detail.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Error";
-    const stack = detail.stack ? truncateUtf8(detail.stack, MAX_COORDINATOR_ERROR_STACK_BYTES) : undefined;
+    const message = formatOneLineUtf8(detail.message, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Error";
+    const stack = detail.stack ? truncateUtf8(detail.stack, DEFAULT_ERROR_BYTE_LIMITS.maxStackBytes) : undefined;
     const sanitized = { ...detail, message, ...(stack ? { stack } : {}) };
     this.lastFatal = sanitized;
     this.emitEvent("fatal", sanitized);
@@ -2086,8 +2100,8 @@ export class WorkerCoordinator {
   }
 
   private recordNonFatal(detail: WorkerCoordinatorNonFatalDetail): void {
-    const message = formatOneLineUtf8(detail.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Error";
-    const stack = detail.stack ? truncateUtf8(detail.stack, MAX_COORDINATOR_ERROR_STACK_BYTES) : undefined;
+    const message = formatOneLineUtf8(detail.message, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Error";
+    const stack = detail.stack ? truncateUtf8(detail.stack, DEFAULT_ERROR_BYTE_LIMITS.maxStackBytes) : undefined;
     const sanitized = { ...detail, message, ...(stack ? { stack } : {}) };
     this.lastNonFatal = sanitized;
     this.emitEvent("nonfatal", sanitized);
@@ -2464,7 +2478,7 @@ export class WorkerCoordinator {
         precompiled = { variant, module: compiled.module };
         break;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         console.warn(`[wasm] Precompile (${variant}) failed; falling back. Error: ${message}`);
       }
     }
@@ -2519,7 +2533,7 @@ export class WorkerCoordinator {
           : { ...baseInit, wasmVariant: variantToSend };
         info.worker.postMessage(msg);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = formatOneLineError(err, 512);
         console.warn(`[wasm] Failed to send precompiled module to worker (${role}); falling back. Error: ${msg}`);
         moduleToSend = undefined;
         // Preserve the variant preference even if we cannot send the precompiled module.
@@ -2692,8 +2706,8 @@ export class WorkerCoordinator {
 
       if (isGpuWorkerGpuErrorMessage(data)) {
         const err = data.error as { message?: unknown; stack?: unknown } | undefined;
-        const msgText = typeof err?.message === "string" ? err.message : "GPU error";
-        const stackText = typeof err?.stack === "string" ? err.stack : undefined;
+        const msgText = formatOneLineUtf8(err?.message, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "GPU error";
+        const stackText = typeof err?.stack === "string" ? truncateUtf8(err.stack, DEFAULT_ERROR_BYTE_LIMITS.maxStackBytes) : undefined;
         if (data.fatal) {
           info.status = { state: "failed", error: msgText };
           setReadyFlag(shared.status, role, false);
@@ -2938,7 +2952,7 @@ export class WorkerCoordinator {
       }
       case "log": {
         const prefix = `[${info.role}]`;
-        const msgText = formatOneLineUtf8(evt.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Worker log";
+        const msgText = formatOneLineUtf8(evt.message, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Worker log";
         switch (evt.level) {
           case "trace":
             console.debug(prefix, msgText);
@@ -2994,7 +3008,7 @@ export class WorkerCoordinator {
         this.reset("tripleFault");
         return;
       case "panic":
-        info.status = { state: "failed", error: formatOneLineUtf8(evt.message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || "Panic" };
+        info.status = { state: "failed", error: formatOneLineUtf8(evt.message, DEFAULT_ERROR_BYTE_LIMITS.maxMessageBytes) || "Panic" };
         setReadyFlag(shared.status, info.role, false);
         this.recordFatal({ kind: "ipc_panic", role: info.role, message: evt.message, atMs: nowMs() });
         this.scheduleFullRestart("ipc_panic");

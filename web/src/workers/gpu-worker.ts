@@ -48,7 +48,7 @@ import {
 } from "../ipc/gpu-protocol";
 
 import { linearizeSrgbRgba8InPlace } from "../utils/srgb";
-import { formatOneLineUtf8, truncateUtf8 } from "../text";
+import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from "../text";
 import { serializeErrorForProtocol } from "../errors/serialize";
 
 const MAX_UI_ERROR_NAME_BYTES = 128;
@@ -57,8 +57,7 @@ const MAX_UI_ERROR_STACK_BYTES = 8 * 1024;
 const MAX_GPU_ERROR_SCAN_BYTES = 2048;
 
 function formatUiErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  return formatOneLineUtf8(raw, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+  return formatOneLineError(err, MAX_UI_ERROR_MESSAGE_BYTES);
 }
 
 function serializeUiErrorDetails(err: unknown): unknown {
@@ -76,11 +75,26 @@ function serializeUiErrorCause(cause: unknown): unknown {
   if (cause instanceof Error) return serializeUiErrorDetails(cause);
   if (!cause || typeof cause !== "object") return undefined;
   const rec = cause as Record<string, unknown>;
-  const messageRaw = rec["message"];
+  let messageRaw: unknown;
+  try {
+    messageRaw = rec["message"];
+  } catch {
+    return undefined;
+  }
   if (typeof messageRaw !== "string") return undefined;
-  const nameRaw = rec["name"];
+  let nameRaw: unknown;
+  try {
+    nameRaw = rec["name"];
+  } catch {
+    nameRaw = undefined;
+  }
   const name = typeof nameRaw === "string" ? nameRaw : "Error";
-  const stackRaw = rec["stack"];
+  let stackRaw: unknown;
+  try {
+    stackRaw = rec["stack"];
+  } catch {
+    stackRaw = undefined;
+  }
   const stack = typeof stackRaw === "string" ? stackRaw : undefined;
   const message = formatOneLineUtf8(messageRaw, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
   const safeName = formatOneLineUtf8(name, MAX_UI_ERROR_NAME_BYTES) || "Error";
@@ -2105,7 +2119,7 @@ function normalizeGpuEvent(raw: unknown): GpuRuntimeErrorEvent | null {
       backend_kind: defaultBackend,
       severity: "error",
       category: "Unknown",
-      message: String(parsed),
+      message: formatOneLineError(parsed, MAX_UI_ERROR_MESSAGE_BYTES, "gpu event"),
     };
   }
 
@@ -2117,7 +2131,10 @@ function normalizeGpuEvent(raw: unknown): GpuRuntimeErrorEvent | null {
   const backend_kind = typeof backendVal === "string" ? backendVal : defaultBackend;
 
   const messageVal = obj.message ?? obj.msg ?? obj.error ?? obj.text;
-  const message = typeof messageVal === "string" ? messageVal : String(messageVal ?? "gpu event");
+  const message =
+    typeof messageVal === "string"
+      ? (formatOneLineUtf8(messageVal, MAX_UI_ERROR_MESSAGE_BYTES) || "gpu event")
+      : formatOneLineError(messageVal ?? "gpu event", MAX_UI_ERROR_MESSAGE_BYTES, "gpu event");
 
   const categoryVal = obj.category ?? obj.cat;
   const category = typeof categoryVal === "string" ? categoryVal : "Unknown";
@@ -3890,7 +3907,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
       syncCursorToPresenter();
 
       if (backend !== firstBackend && firstError) {
-        const reason = firstError instanceof Error ? firstError.message : String(firstError);
+        const reason = formatOneLineError(firstError, MAX_UI_ERROR_MESSAGE_BYTES);
         presenterFallback = {
           from: firstBackend,
           to: backend,

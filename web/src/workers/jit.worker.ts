@@ -17,6 +17,7 @@ import {
 } from "../runtime/protocol";
 import { initJitWasmForContext, type JitWasmApi, type Tier1BlockCompilation } from "../runtime/jit_wasm_loader";
 import { fnv1a32Hex } from "../utils/fnv1a";
+import { formatOneLineError } from "../text";
 import {
   type JitCompileRequest,
   type JitTier1CompileRequest,
@@ -50,6 +51,17 @@ const WASM_EMPTY_MODULE_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x
 const TIER1_DEFAULT_MAX_BYTES = 1024;
 const TIER1_DECODE_WINDOW_SLACK_BYTES = 15;
 const TIER1_MAX_COMPILER_CODE_BYTES = 1024 * 1024;
+
+const MAX_JIT_ERROR_MESSAGE_BYTES = 512;
+const MAX_JIT_ERROR_SCAN_BYTES = 2048;
+
+function formatJitErrorForScan(err: unknown): string {
+  return formatOneLineError(err, MAX_JIT_ERROR_SCAN_BYTES, "");
+}
+
+function formatJitErrorMessage(err: unknown): string {
+  return formatOneLineError(err, MAX_JIT_ERROR_MESSAGE_BYTES);
+}
 
 function detectDynamicWasmCompilation(): boolean {
   if (typeof WebAssembly === "undefined" || typeof WebAssembly.Module !== "function") {
@@ -113,7 +125,7 @@ function isCspBlockedError(err: unknown): boolean {
   if (err instanceof DOMException) {
     if (err.name === "SecurityError") return true;
   }
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = formatJitErrorForScan(err);
   return /wasm-unsafe-eval|content security policy|csp/i.test(msg);
 }
 
@@ -121,13 +133,21 @@ function isDataCloneError(err: unknown): boolean {
   const domException = (globalThis as unknown as { DOMException?: unknown }).DOMException;
   if (typeof domException === "function") {
     const DomException = domException as unknown as { new (...args: unknown[]): unknown };
-    if (err instanceof DomException && (err as { name?: unknown }).name === "DataCloneError") return true;
+    try {
+      if (err instanceof DomException && (err as { name?: unknown }).name === "DataCloneError") return true;
+    } catch {
+      // ignore
+    }
   }
   if (err && typeof err === "object") {
-    const name = (err as { name?: unknown }).name;
-    if (name === "DataCloneError") return true;
+    try {
+      const name = (err as { name?: unknown }).name;
+      if (name === "DataCloneError") return true;
+    } catch {
+      // ignore
+    }
   }
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatJitErrorForScan(err);
   return /DataCloneError|could not be cloned/i.test(message);
 }
 
@@ -225,7 +245,7 @@ function isTier1CompileError(err: unknown): boolean {
   // Newer aero-jit-wasm builds prefix their error messages with `compile_tier1_block:`. Use that
   // to distinguish genuine compilation failures from ABI mismatches (wrong arg types/count) when
   // running against older wasm-pack outputs.
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatJitErrorForScan(err);
   return message.trimStart().startsWith("compile_tier1_block:");
 }
 
@@ -234,7 +254,7 @@ function isTier1AbiMismatchError(err: unknown): boolean {
   // wrong arg count, etc). Use a best-effort heuristic so we don't accidentally swallow real
   // compiler/runtime errors by retrying with legacy call signatures.
   if (err instanceof TypeError) return true;
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatJitErrorForScan(err);
   return /bigint|cannot convert|argument|parameter|is not a function/i.test(message);
 }
 
@@ -478,7 +498,7 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
       postJitResponse({ type: "jit:compiled", id: req.id, module, durationMs, cached: true });
     } catch (err) {
       const durationMs = (inflight.endMs ?? performance.now()) - inflight.startMs;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatJitErrorMessage(err);
       const code = isCspBlockedError(err) ? "csp_blocked" : "compile_failed";
       if (code === "csp_blocked") {
         currentPlatformFeatures.jit_dynamic_wasm = false;
@@ -522,7 +542,7 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
   } catch (err) {
     const durationMs = (inflightEntry.endMs ?? performance.now()) - inflightEntry.startMs;
     maybeWritePerfSample(durationMs);
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatJitErrorMessage(err);
     const code = isCspBlockedError(err) ? "csp_blocked" : "compile_failed";
     if (code === "csp_blocked") {
       currentPlatformFeatures.jit_dynamic_wasm = false;
@@ -576,7 +596,7 @@ async function handleTier1Compile(req: JitTier1CompileRequest): Promise<void> {
     api = await loadJitWasmApi();
   } catch (err) {
     const durationMs = performance.now() - startMs;
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatJitErrorMessage(err);
     const code = isCspBlockedError(err) ? "csp_blocked" : "compile_failed";
     if (code === "csp_blocked") {
       currentPlatformFeatures.jit_dynamic_wasm = false;
@@ -626,7 +646,7 @@ async function handleTier1Compile(req: JitTier1CompileRequest): Promise<void> {
     }
   } catch (err) {
     const durationMs = performance.now() - startMs;
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatJitErrorMessage(err);
     postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
     return;
   }
@@ -662,7 +682,7 @@ async function handleTier1Compile(req: JitTier1CompileRequest): Promise<void> {
     compilation = normalizeTier1Compilation(result, Math.min(maxBytes, fallbackCodeByteLen));
   } catch (err) {
     const durationMs = performance.now() - startMs;
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatJitErrorMessage(err);
     postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
     return;
   }
@@ -714,7 +734,7 @@ async function handleTier1Compile(req: JitTier1CompileRequest): Promise<void> {
     }
   } catch (err) {
     const durationMs = performance.now() - startMs;
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatJitErrorMessage(err);
     postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
   }
 }
@@ -724,7 +744,7 @@ function postJitResponse(msg: JitWorkerResponse): void {
     ctx.postMessage(msg);
   } catch (err) {
     // Most commonly: `DataCloneError` when `WebAssembly.Module` is not structured-cloneable.
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatJitErrorMessage(err);
     const fallback: JitWorkerResponse = {
       type: "jit:error",
       id: msg.id,
@@ -757,7 +777,7 @@ async function runLoop(): Promise<void> {
       await waitForCommandRingDataNonBlocking();
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatJitErrorMessage(err);
     pushEventBlocking({ kind: "panic", message });
     setReadyFlag(status, role, false);
     ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);

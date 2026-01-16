@@ -5,6 +5,7 @@ import { openRingByKind } from "../ipc/ipc";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { perf } from "../perf/perf";
+import { formatOneLineError } from "../text";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
@@ -2079,7 +2080,7 @@ async function startHdaCaptureSynthetic(msg: AudioHdaCaptureSyntheticStartMessag
       pcmBytes,
     } satisfies AudioHdaCaptureSyntheticReadyMessage);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     stopHdaPciDeviceHardwareIfToken(token);
     ctx.postMessage({ type: "audioHdaCaptureSynthetic.error", requestId, message } satisfies AudioHdaCaptureSyntheticErrorMessage);
   }
@@ -2389,7 +2390,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   if ((msg as Partial<AudioOutputHdaDemoStartMessage>).type === "audioOutputHdaDemo.start") {
     void startHdaDemo(msg as AudioOutputHdaDemoStartMessage).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       console.error(err);
       ctx.postMessage({ type: "audioOutputHdaDemo.error", message } satisfies AudioOutputHdaDemoErrorMessage);
       stopHdaDemo();
@@ -2404,7 +2405,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   if ((msg as Partial<AudioOutputVirtioSndDemoStartMessage>).type === "audioOutputVirtioSndDemo.start") {
     void startVirtioSndDemo(msg as AudioOutputVirtioSndDemoStartMessage).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       console.error(err);
       ctx.postMessage({ type: "audioOutputVirtioSndDemo.error", message } satisfies AudioOutputVirtioSndDemoErrorMessage);
       stopVirtioSndDemo();
@@ -2432,7 +2433,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     pendingHdaPciDeviceStart = null;
     void startHdaPciDevice(startMsg, token).catch((err) => {
       if (!isHdaPciDeviceTokenActive(token)) return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatOneLineError(err, 512);
       console.error(err);
       // If the device was partially programmed before failing, ensure we don't leave
       // a running stream/CORB/RIRB behind in the long-lived worker runtime.
@@ -2749,7 +2750,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         pendingHdaPciDeviceStart = null;
         void startHdaPciDevice(pending.msg, pending.token).catch((err) => {
           if (!isHdaPciDeviceTokenActive(pending.token)) return;
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatOneLineError(err, 512);
           console.error(err);
           stopHdaPciDeviceHardwareIfToken(pending.token);
           ctx.postMessage({ type: "audioOutputHdaPciDevice.error", message } satisfies AudioOutputHdaPciDeviceErrorMessage);
@@ -2854,7 +2855,7 @@ async function initWasmInBackground(
       ctx.postMessage({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     // WASM init is best-effort: keep the CPU worker alive so non-WASM demos
     // (including AudioWorklet ring-buffer smoke tests) can run in environments
     // where the generated wasm-pack output is absent.
@@ -2870,7 +2871,7 @@ async function runLoop(): Promise<void> {
   try {
     await runLoopInner();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatOneLineError(err, 512);
     pushEventBlocking({ kind: "panic", message });
     setReadyFlag(status, role, false);
     ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
@@ -3381,7 +3382,7 @@ async function runDiskReadDemo(): Promise<void> {
     // eslint-disable-next-line no-console
     console.warn("[cpu] disk read demo failed:", err);
     if (perf.traceEnabled) {
-      perf.instant("diskReadDemoError", "t", { message: err instanceof Error ? err.message : String(err) });
+      perf.instant("diskReadDemoError", "t", { message: formatOneLineError(err, 512) });
     }
   }
 }

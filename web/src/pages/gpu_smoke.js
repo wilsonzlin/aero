@@ -1,4 +1,5 @@
 import { encodeLinearRgba8ToSrgbInPlace } from '../utils/srgb';
+import { formatOneLineError } from '../text';
 
 const TEST_WIDTH = 64;
 const TEST_HEIGHT = 64;
@@ -12,8 +13,15 @@ const EXPECTED_TEST_PATTERN_SHA256 =
   'a42e8433ee338fcf505b803b5a52a663478c7009ef85c7652206b4a06d3b76a8';
 
 function stringifyError(err) {
-  if (err instanceof Error) return `${err.name}: ${err.message}`;
-  return String(err);
+  const msg = formatOneLineError(err, 512);
+  let name = '';
+  try {
+    name = err && typeof err === 'object' && typeof err.name === 'string' ? err.name : '';
+  } catch {
+    name = '';
+  }
+  if (name && msg && !msg.toLowerCase().startsWith(name.toLowerCase())) return `${name}: ${msg}`;
+  return msg;
 }
 
 function createRpc(worker) {

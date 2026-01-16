@@ -1,4 +1,5 @@
 import type { WasmApi } from "./wasm_loader";
+import { formatOneLineError, formatOneLineUtf8 } from "../text";
 
 export class WasmMemoryWiringError extends Error {
   constructor(message: string) {
@@ -12,8 +13,18 @@ function hex32(value: number): string {
 }
 
 function describeError(err: unknown): string {
-  if (err instanceof Error) return `${err.name}: ${err.message}`;
-  return String(err);
+  const message = formatOneLineError(err, 512);
+  let rawName: string | undefined;
+  if (err && typeof err === "object") {
+    try {
+      const n = (err as { name?: unknown }).name;
+      if (typeof n === "string") rawName = n;
+    } catch {
+      // ignore getters throwing
+    }
+  }
+  const name = rawName ? (formatOneLineUtf8(rawName, 128) || "Error") : "Error";
+  return name && message ? `${name}: ${message}` : (message || name || "Error");
 }
 
 function describeMemory(memory: WebAssembly.Memory): string {
@@ -115,7 +126,7 @@ export function assertWasmMemoryWiring(opts: {
       const delta = (hashStringFNV1a32(context) % spreadWords) * 4;
       linearOffset = base >= delta ? base - delta : base;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = formatOneLineError(err, 512);
       throw err instanceof WasmMemoryWiringError
         ? new WasmMemoryWiringError(`[${context}] ${msg}`)
         : new WasmMemoryWiringError(

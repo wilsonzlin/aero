@@ -16,6 +16,7 @@ import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
 import { assertWasmMemoryWiring, WasmMemoryWiringError } from "../runtime/wasm_memory_probe";
+import { serializeErrorForWorker } from "../errors/serialize";
 import {
   layoutFromHeader,
   SHARED_FRAMEBUFFER_HEADER_U32_LEN,
@@ -78,6 +79,10 @@ import { AeroGpuPciDevice } from "../io/devices/aerogpu";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { EhciPciDevice, type EhciControllerBridgeLike } from "../io/devices/ehci";
 import { XhciPciDevice } from "../io/devices/xhci";
+
+function formatWorkerErrorMessage(err: unknown): string {
+  return serializeErrorForWorker(err).message;
+}
 import {
   VirtioInputPciFunction,
   hidConsumerUsageToLinuxKeyCode,
@@ -1283,7 +1288,7 @@ class UhciRuntimeWebUsbBridge {
         this.#scheduleReset();
         return;
       }
-      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#lastError = formatWorkerErrorMessage(err);
       this.#onStateChange?.();
       return;
     }
@@ -1306,7 +1311,7 @@ class UhciRuntimeWebUsbBridge {
         this.#scheduleApply();
         return;
       }
-      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#lastError = formatWorkerErrorMessage(err);
       this.#onStateChange?.();
     }
   }
@@ -1334,7 +1339,7 @@ class UhciRuntimeWebUsbBridge {
   }
 
   #isRecursiveBorrowError(err: unknown): boolean {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatWorkerErrorMessage(err);
     return message.includes("recursive use of an object detected") || message.includes("UHCI runtime is busy");
   }
 
@@ -1393,14 +1398,14 @@ class UhciRuntimeWebUsbBridge {
         // Surface a more user-friendly status message so callers (and tests) can distinguish
         // "still retrying" from "never attempted".
         if (this.#lastError === null) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatWorkerErrorMessage(err);
           this.#lastError = `UHCI runtime is busy; retrying WebUSB hotplug. (${message})`;
           this.#onStateChange?.();
         }
         setTimeout(() => this.#scheduleApply(), 0);
         return;
       }
-      this.#lastError = err instanceof Error ? err.message : String(err);
+      this.#lastError = formatWorkerErrorMessage(err);
       this.#onStateChange?.();
     }
   }
@@ -1411,8 +1416,7 @@ let webUsbGuestLastError: string | null = null;
 let lastWebUsbGuestSnapshot: UsbGuestWebUsbSnapshot | null = null;
 
 function formatWebUsbGuestError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return formatWorkerErrorMessage(err);
 }
 
 function emitWebUsbGuestStatus(): void {
@@ -2804,7 +2808,7 @@ function drainHidInputRing(): void {
       bytes += payloadLen;
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatWorkerErrorMessage(err);
     detachHidRings(`HID proxy rings disabled: ${message}`);
   }
 }
@@ -4077,7 +4081,7 @@ function runHdaMicCaptureTest(requestId: number): void {
       [pcm.buffer],
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatWorkerErrorMessage(err);
     ctx.postMessage({ type: "hda.micCaptureTest.result", requestId, ok: false, error: message } satisfies HdaMicCaptureTestResultMessage);
   } finally {
     if (mgr && restorePciCommand !== null && restorePciAddrReg !== null) {
@@ -4254,7 +4258,7 @@ function queueDiskIo(op: () => Promise<void>): void {
     })
     .then(op)
     .catch((err) => {
-      console.error(`[io.worker] disk I/O failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[io.worker] disk I/O failed: ${formatWorkerErrorMessage(err)}`);
     });
 }
 
@@ -4265,7 +4269,7 @@ function queueDiskIoResult(op: () => Promise<AeroIpcIoDiskResult>): Promise<Aero
     })
     .then(op)
     .catch((err) => {
-      console.error(`[io.worker] disk I/O failed: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[io.worker] disk I/O failed: ${formatWorkerErrorMessage(err)}`);
       return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
     });
 
@@ -4694,7 +4698,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           }
         }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatWorkerErrorMessage(err);
           if (err instanceof WasmMemoryWiringError) {
             console.error(`[io.worker] ${message}`);
             // Emit a log entry in addition to the fatal panic so callers inspecting the
@@ -5309,7 +5313,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const res: HdaCodecDebugStateResultMessage = { type: "hda.codecDebugStateResult", requestId, ok: true, state };
         ctx.postMessage(res);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatWorkerErrorMessage(err);
         const res: HdaCodecDebugStateResultMessage = { type: "hda.codecDebugStateResult", requestId, ok: false, error: message };
         ctx.postMessage(res);
       }
@@ -5364,7 +5368,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const res: HdaSnapshotStateResultMessage = { type: "hda.snapshotStateResult", requestId, ok: true, bytes: copy };
         ctx.postMessage(res);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatWorkerErrorMessage(err);
         const res: HdaSnapshotStateResultMessage = { type: "hda.snapshotStateResult", requestId, ok: false, error: message };
         ctx.postMessage(res);
       }
@@ -5393,7 +5397,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const res: HdaTickStatsResultMessage = { type: "hda.tickStatsResult", requestId, ok: true, stats };
         ctx.postMessage(res);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatWorkerErrorMessage(err);
         const res: HdaTickStatsResultMessage = { type: "hda.tickStatsResult", requestId, ok: false, error: message };
         ctx.postMessage(res);
       }
@@ -5435,7 +5439,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const res: VirtioSndSnapshotStateResultMessage = { type: "virtioSnd.snapshotStateResult", requestId, ok: true, bytes: copy };
         ctx.postMessage(res);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatWorkerErrorMessage(err);
         const res: VirtioSndSnapshotStateResultMessage = {
           type: "virtioSnd.snapshotStateResult",
           requestId,
@@ -5630,7 +5634,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       try {
         hidGuest.attach(msg);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatWorkerErrorMessage(err);
         capture.message ??= message;
       } finally {
         hidAttachResultCapture = null;
@@ -6016,7 +6020,7 @@ function startIoIpcServer(): void {
             );
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = formatWorkerErrorMessage(err);
           detachHidRings(`HID proxy rings disabled: ${message}`);
         }
       }
@@ -7216,7 +7220,7 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
 
 function fatal(err: unknown): void {
   ioServerAbort?.abort();
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatWorkerErrorMessage(err);
   pushEventBlocking({ kind: "panic", message });
   try {
     setReadyFlag(status, role, false);

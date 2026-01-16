@@ -25,6 +25,7 @@ import {
   CursorStateIndex,
   wrapCursorState,
 } from "../ipc/cursor_state";
+import { formatOneLineError } from "../text";
 
 export const WORKER_ROLES = ["cpu", "gpu", "io", "jit", "net"] as const;
 export type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -623,7 +624,7 @@ export function allocateSharedMemorySegments(options?: {
     // shared-memory contract across workers.
     guestMemory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatOneLineError(err, 512);
     throw new Error(
       `Failed to allocate shared WebAssembly.Memory for guest RAM (${guestRamMiB} MiB). Try a smaller size. Error: ${msg}`,
     );
@@ -660,7 +661,7 @@ export function allocateSharedMemorySegments(options?: {
     try {
       vram = new SharedArrayBuffer(desiredVramBytes);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = formatOneLineError(err, 512);
       throw new Error(
         `Failed to allocate shared VRAM aperture (${vramMiB} MiB at paddr=0x${VRAM_BASE_PADDR.toString(16)}). Try a smaller size. Error: ${msg}`,
       );
@@ -899,7 +900,7 @@ export function checkSharedMemorySupport(): { ok: boolean; reason?: string } {
       return { ok: false, reason: "Shared WebAssembly.Memory is unsupported in this browser configuration." };
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = formatOneLineError(err, 512);
     return { ok: false, reason: `Shared WebAssembly.Memory is unavailable: ${msg}` };
   }
 

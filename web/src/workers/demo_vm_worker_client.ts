@@ -8,6 +8,7 @@ import {
   type DemoVmWorkerSerialStatsResult,
   type DemoVmWorkerStepResult,
 } from "./demo_vm_worker_protocol";
+import { formatOneLineError } from "../text";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -52,7 +53,7 @@ export class DemoVmWorkerClient {
     });
 
     this.#worker.addEventListener("error", (event: ErrorEvent) => {
-      const err = new Error(event.message);
+      const err = new Error(formatOneLineError(event.message, 512, "DemoVm worker error"));
       this.#destroy(err);
       this.#onFatalError?.(err);
     });
@@ -170,7 +171,7 @@ export class DemoVmWorkerClient {
       } catch (err) {
         this.#pending.delete(id);
         clear();
-        reject(err instanceof Error ? err : new Error(String(err)));
+        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }

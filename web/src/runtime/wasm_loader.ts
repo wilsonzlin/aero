@@ -1,5 +1,6 @@
 import type { UsbHostAction, UsbHostCompletion } from "../usb/webusb_backend";
 import { lookupPrecompiledWasmModuleVariant } from "./wasm_precompiled_registry";
+import { formatOneLineError } from "../text";
 
 export type WasmVariant = "threaded" | "single";
 
@@ -2586,7 +2587,7 @@ function detectThreadSupport(): ThreadSupport {
         // eslint-disable-next-line no-new
         new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
     } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatOneLineError(err, 512);
         return { supported: false, reason: `Shared WebAssembly.Memory is not supported: ${message}` };
     }
 
@@ -2977,7 +2978,7 @@ async function initWasmBindgenModule(
             await doInit(module);
             return;
         } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             warnOnce(
                 `wasm:init:${variant}:module`,
                 `[wasm] ${variant} init with precompiled module failed; falling back to default loader. Error: ${message}`,
@@ -3107,7 +3108,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
                     wasmMemory: loaded.memory,
                 };
             } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
+                const message = formatOneLineError(err, 512);
                 const loaded = await loadSingle({ ...options, module: undefined });
                 return {
                     api: loaded.api,
@@ -3176,7 +3177,7 @@ export async function initWasm(options: WasmInitOptions = {}): Promise<WasmInitR
                 wasmMemory: loaded.memory,
             };
         } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = formatOneLineError(err, 512);
             const loaded = await loadSingle(options);
             return {
                 api: loaded.api,
