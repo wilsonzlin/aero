@@ -2,6 +2,15 @@ import {
   L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
   L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
   L2_TUNNEL_DATA_CHANNEL_LABEL,
+  L2_TUNNEL_ERROR_CODE_AUTH_INVALID,
+  L2_TUNNEL_ERROR_CODE_AUTH_REQUIRED,
+  L2_TUNNEL_ERROR_CODE_BACKPRESSURE,
+  L2_TUNNEL_ERROR_CODE_ORIGIN_DENIED,
+  L2_TUNNEL_ERROR_CODE_ORIGIN_MISSING,
+  L2_TUNNEL_ERROR_CODE_PROTOCOL_ERROR,
+  L2_TUNNEL_ERROR_CODE_QUOTA_BYTES,
+  L2_TUNNEL_ERROR_CODE_QUOTA_CONNECTIONS,
+  L2_TUNNEL_ERROR_CODE_QUOTA_FPS,
   L2_TUNNEL_TYPE_ERROR,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
@@ -46,8 +55,6 @@ export function createL2TunnelDataChannel(pc: RTCPeerConnection): RTCDataChannel
   assertL2TunnelDataChannelSemantics(channel);
   return channel;
 }
-
-const textDecoder = new TextDecoder();
 
 export type L2TunnelEvent =
   | { type: "open" }
@@ -197,15 +204,38 @@ function validateNonNegativeInt(name: string, value: number): void {
   }
 }
 
-function decodePeerErrorPayload(payload: Uint8Array): { code?: number; message: string } {
-  const structured = decodeStructuredErrorPayload(payload);
-  if (structured) return structured;
+function decodePeerErrorCode(payload: Uint8Array): number | undefined {
+  return decodeStructuredErrorPayload(payload)?.code;
+}
 
-  // Unstructured form: treat the entire payload as UTF-8 (best-effort).
-  try {
-    return { message: textDecoder.decode(payload) };
-  } catch {
-    return { message: `l2 tunnel error (${payload.byteLength} bytes)` };
+function formatPeerErrorMessage(code: number | undefined, payloadByteLength: number): string {
+  if (code === undefined) {
+    // Unstructured error payloads are untrusted; do not decode or reflect bytes.
+    return `l2 tunnel error (unstructured payload, ${payloadByteLength} bytes)`;
+  }
+
+  // Structured codes are stable; do not reflect peer-provided message strings.
+  switch (code) {
+    case L2_TUNNEL_ERROR_CODE_PROTOCOL_ERROR:
+      return `l2 tunnel error (${code}): protocol error`;
+    case L2_TUNNEL_ERROR_CODE_AUTH_REQUIRED:
+      return `l2 tunnel error (${code}): authentication required`;
+    case L2_TUNNEL_ERROR_CODE_AUTH_INVALID:
+      return `l2 tunnel error (${code}): invalid authentication token`;
+    case L2_TUNNEL_ERROR_CODE_ORIGIN_MISSING:
+      return `l2 tunnel error (${code}): missing Origin`;
+    case L2_TUNNEL_ERROR_CODE_ORIGIN_DENIED:
+      return `l2 tunnel error (${code}): Origin denied`;
+    case L2_TUNNEL_ERROR_CODE_QUOTA_BYTES:
+      return `l2 tunnel error (${code}): quota exceeded (bytes)`;
+    case L2_TUNNEL_ERROR_CODE_QUOTA_FPS:
+      return `l2 tunnel error (${code}): quota exceeded (fps)`;
+    case L2_TUNNEL_ERROR_CODE_QUOTA_CONNECTIONS:
+      return `l2 tunnel error (${code}): quota exceeded (connections)`;
+    case L2_TUNNEL_ERROR_CODE_BACKPRESSURE:
+      return `l2 tunnel error (${code}): backpressure`;
+    default:
+      return `l2 tunnel error (${code})`;
   }
 }
 
@@ -386,9 +416,8 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
 
     if (msg.type === L2_TUNNEL_TYPE_ERROR) {
-      const decoded = decodePeerErrorPayload(msg.payload);
-      const prefix = decoded.code === undefined ? "l2 tunnel error" : `l2 tunnel error (${decoded.code})`;
-      this.onTransportError(new Error(`${prefix}: ${decoded.message}`));
+      const code = decodePeerErrorCode(msg.payload);
+      this.onTransportError(new Error(formatPeerErrorMessage(code, msg.payload.byteLength)));
       return;
     }
 
@@ -616,7 +645,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
       if (!WEBSOCKET_SUBPROTOCOL_TOKEN_RE.test(proto)) {
         throw new RangeError(
           `token contains characters not valid for Sec-WebSocket-Protocol; ` +
-            `use tokenTransport="query" or a header-safe token (got ${JSON.stringify(this.token)})`,
+            `use tokenTransport="query" or a header-safe token (len=${this.token.length})`,
         );
       }
     }

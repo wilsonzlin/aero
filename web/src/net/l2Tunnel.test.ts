@@ -212,7 +212,8 @@ describe("net/l2Tunnel", () => {
       expect(errEv?.error).toBeInstanceOf(Error);
       const message = (errEv?.error as Error | undefined)?.message ?? "";
       expect(message).toContain("1234");
-      expect(message).toContain(msg);
+      // Peer-provided error messages are untrusted; do not reflect them in UI-visible errors.
+      expect(message).not.toContain(msg);
     } finally {
       client.close();
     }
