@@ -2,6 +2,7 @@ import { WebSocketL2TunnelClient, type L2TunnelClientOptions, type L2TunnelSink 
 import { connectL2Relay } from "./l2RelaySignalingClient";
 import type { RelaySignalingMode } from "./webrtcRelaySignalingClient";
 import { readTextResponseWithLimit } from "../storage/response_json";
+import { formatOneLineError } from "../text";
 
 export type L2TunnelTransportMode = "ws" | "webrtc";
 
@@ -184,7 +185,8 @@ async function bootstrapSession(gatewayBaseUrl: string): Promise<string> {
     label: "gateway session response",
   });
   if (!res.ok) {
-    throw new Error(`failed to bootstrap gateway session (${res.status}): ${text}`);
+    // Do not reflect response bodies in client-visible errors.
+    throw new Error(`failed to bootstrap gateway session (${res.status})`);
   }
   return text;
 }
@@ -377,7 +379,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
     initialSession = parseGatewaySessionResponse(sessionText);
   } catch (err) {
     if (mode === "webrtc") {
-      throw new Error(`invalid gateway session response JSON: ${(err as Error).message}`);
+      throw new Error("invalid gateway session response JSON");
     }
   }
 
@@ -460,7 +462,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       try {
         session = parseGatewaySessionResponse(nextSessionText);
       } catch (err) {
-        emitErrorThrottled(new Error(`invalid gateway session response JSON: ${(err as Error).message}`));
+        emitErrorThrottled(new Error(formatOneLineError(err, 256, "invalid gateway session response JSON")));
         scheduleReconnect();
         return;
       }
