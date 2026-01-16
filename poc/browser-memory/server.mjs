@@ -21,6 +21,66 @@ const MIME = new Map([
   [".svg", "image/svg+xml"],
 ]);
 
+const UTF8 = Object.freeze({ encoding: "utf-8" });
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder(UTF8.encoding);
+
+function formatOneLineUtf8(input, maxBytes) {
+  if (!Number.isInteger(maxBytes) || maxBytes < 0) return "";
+  if (maxBytes === 0) return "";
+
+  const buf = new Uint8Array(maxBytes);
+  let written = 0;
+  let pendingSpace = false;
+  for (const ch of String(input ?? "")) {
+    const code = ch.codePointAt(0) ?? 0;
+    const forbidden = code <= 0x1f || code === 0x7f || code === 0x85 || code === 0x2028 || code === 0x2029;
+    if (forbidden || /\s/u.test(ch)) {
+      pendingSpace = written > 0;
+      continue;
+    }
+
+    if (pendingSpace) {
+      const spaceRes = textEncoder.encodeInto(" ", buf.subarray(written));
+      if (spaceRes.written === 0) break;
+      written += spaceRes.written;
+      pendingSpace = false;
+      if (written >= maxBytes) break;
+    }
+
+    const res = textEncoder.encodeInto(ch, buf.subarray(written));
+    if (res.written === 0) break;
+    written += res.written;
+    if (written >= maxBytes) break;
+  }
+  return written === 0 ? "" : textDecoder.decode(buf.subarray(0, written));
+}
+
+function formatErrorForResponse(err) {
+  let message = "";
+  if (err && typeof err === "object") {
+    try {
+      const m = err.message;
+      if (typeof m === "string") message = m;
+    } catch {
+      message = "";
+    }
+  } else if (typeof err === "string") {
+    message = err;
+  } else if (
+    typeof err === "number" ||
+    typeof err === "boolean" ||
+    typeof err === "bigint" ||
+    typeof err === "symbol" ||
+    typeof err === "undefined"
+  ) {
+    message = String(err);
+  } else if (err === null) {
+    message = "null";
+  }
+  return formatOneLineUtf8(message || "Error", 512) || "Error";
+}
+
 function send(res, statusCode, body, contentType = "text/plain; charset=utf-8") {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", contentType);
@@ -83,7 +143,7 @@ const server = http.createServer((req, res) => {
   res.setHeader("Content-Type", MIME.get(ext) ?? "application/octet-stream");
 
   const stream = fs.createReadStream(filePath);
-  stream.on("error", (err) => send(res, 500, `Server error: ${String(err)}`));
+  stream.on("error", (err) => send(res, 500, `Server error: ${formatErrorForResponse(err)}`));
   stream.pipe(res);
 });
 
