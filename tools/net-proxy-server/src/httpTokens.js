@@ -25,10 +25,16 @@ export function isTchar(code) {
 }
 
 export function isValidHttpTokenPart(input, start, end) {
+  if (typeof input !== "string") return false;
   if (end <= start) return false;
   for (let i = start; i < end; i += 1) {
     if (!isTchar(input.charCodeAt(i))) return false;
   }
   return true;
+}
+
+export function isValidHttpToken(token) {
+  if (typeof token !== "string" || token.length === 0) return false;
+  return isValidHttpTokenPart(token, 0, token.length);
 }
 
