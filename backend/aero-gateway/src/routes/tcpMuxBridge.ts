@@ -402,7 +402,15 @@ export class WebSocketTcpMuxBridge {
       return;
     }
 
-    const ok = stream.socket.write(frame.payload);
+    let ok = false;
+    try {
+      ok = stream.socket.write(frame.payload);
+    } catch {
+      // Avoid reflecting raw error details.
+      this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+      this.destroyStream(stream.id);
+      return;
+    }
     if (!ok) {
       stream.writePaused = true;
     }
@@ -428,7 +436,13 @@ export class WebSocketTcpMuxBridge {
 
     if ((flags & TcpMuxCloseFlags.FIN) !== 0) {
       stream.clientFin = true;
-      stream.socket.end();
+      try {
+        stream.socket.end();
+      } catch {
+        // Avoid reflecting raw error details.
+        this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+        this.destroyStream(stream.id);
+      }
     }
   }
 
@@ -450,7 +464,15 @@ export class WebSocketTcpMuxBridge {
     while (stream.pendingWrites.length > 0) {
       const chunk = stream.pendingWrites.shift()!;
       stream.pendingWriteBytes -= chunk.length;
-      const ok = stream.socket.write(chunk);
+      let ok = false;
+      try {
+        ok = stream.socket.write(chunk);
+      } catch {
+        // Avoid reflecting raw error details.
+        this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+        this.destroyStream(stream.id);
+        return;
+      }
       if (!ok) {
         stream.writePaused = true;
         return;
@@ -465,7 +487,11 @@ export class WebSocketTcpMuxBridge {
     if (stream.connectTimer) clearTimeout(stream.connectTimer);
     stream.releaseSessionSlot?.();
     stream.socket.removeAllListeners();
-    stream.socket.destroy();
+    try {
+      stream.socket.destroy();
+    } catch {
+      // ignore
+    }
   }
 
   private sendStreamError(streamId: number, code: TcpMuxErrorCode, message: string): void {
@@ -479,7 +505,13 @@ export class WebSocketTcpMuxBridge {
   private sendWsFrame(opcode: number, payload: Buffer): void {
     if (this.closed) return;
     const frame = encodeWsFrame(opcode, payload);
-    const ok = this.wsSocket.write(frame);
+    let ok = false;
+    try {
+      ok = this.wsSocket.write(frame);
+    } catch {
+      this.close();
+      return;
+    }
     if (!ok) {
       this.pauseAllTcpReads();
     }
@@ -511,7 +543,11 @@ export class WebSocketTcpMuxBridge {
       this.destroyStream(id);
     }
 
-    this.wsSocket.destroy();
+    try {
+      this.wsSocket.destroy();
+    } catch {
+      // ignore
+    }
   }
 }
 

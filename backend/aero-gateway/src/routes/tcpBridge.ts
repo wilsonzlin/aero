@@ -49,11 +49,19 @@ export class WebSocketTcpBridge {
     if (opcode === 0x1) {
       // Text frames are permitted by WebSocket, but Aero's TCP tunnel is binary.
       // Still forward the raw UTF-8 bytes to avoid surprising behaviour.
-      this.tcpSocket.write(payload);
+      try {
+        this.tcpSocket.write(payload);
+      } catch {
+        this.close();
+      }
       return;
     }
     if (opcode === 0x2) {
-      this.tcpSocket.write(payload);
+      try {
+        this.tcpSocket.write(payload);
+      } catch {
+        this.close();
+      }
       return;
     }
     this.closeWithProtocolError();
@@ -62,7 +70,11 @@ export class WebSocketTcpBridge {
   private sendFrame(opcode: number, payload: Buffer): void {
     if (this.closed) return;
     const frame = encodeWsFrame(opcode, payload);
-    this.wsSocket.write(frame);
+    try {
+      this.wsSocket.write(frame);
+    } catch {
+      this.close();
+    }
   }
 
   private closeWithProtocolError(): void {
@@ -81,8 +93,16 @@ export class WebSocketTcpBridge {
     if (this.closed) return;
     this.closed = true;
 
-    this.wsSocket.destroy();
-    this.tcpSocket.destroy();
+    try {
+      this.wsSocket.destroy();
+    } catch {
+      // ignore
+    }
+    try {
+      this.tcpSocket.destroy();
+    } catch {
+      // ignore
+    }
   }
 }
 
