@@ -11,14 +11,27 @@ function basename(p) {
   return p.split("/").pop() ?? p;
 }
 
+async function collectTestFiles(dir) {
+  const out = [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...(await collectTestFiles(fullPath)));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith(".test.js") && !entry.name.endsWith(".test.ts")) continue;
+    out.push(fullPath);
+  }
+  return out;
+}
+
 test("module boundaries: repo-root tests must not import TS sources from CJS workspaces", async () => {
   const testsDir = __dirname;
-  const entries = await readdir(testsDir, { withFileTypes: true });
-  const files = entries
-    .filter((e) => e.isFile())
-    .map((e) => e.name)
-    .filter((name) => name.endsWith(".test.js") || name.endsWith(".test.ts"))
-    .filter((name) => name !== basename(__filename))
+  const files = (await collectTestFiles(testsDir))
+    .filter((p) => basename(p) !== basename(__filename))
+    .map((p) => path.relative(testsDir, p))
     .sort();
 
   // Keep these as concatenated strings so this test doesn't trip itself.
