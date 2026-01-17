@@ -1,6 +1,7 @@
 import { WebSocketTcpMuxProxyClient, type TcpMuxProxyOptions } from "./tcpMuxProxy.ts";
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
+import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type TcpProxyEvent =
   | { type: "connected"; connectionId: number }
@@ -80,14 +81,16 @@ export class WebSocketTcpProxyClient {
     } catch {
       // Best-effort tracing: never interfere with proxy traffic.
     }
-    ws.send(data);
+    if (!wsSendSafe(ws, data)) {
+      wsCloseSafe(ws);
+    }
   }
 
   close(connectionId: number): void {
     const ws = this.sockets.get(connectionId);
     if (!ws) return;
     this.sockets.delete(connectionId);
-    ws.close();
+    wsCloseSafe(ws);
   }
 }
 

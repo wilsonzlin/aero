@@ -1,6 +1,7 @@
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../shared/udpRelayProtocol";
 import type { NetTracer } from "./net_tracer";
 import { buildWebSocketUrl } from "./wsUrl.ts";
+import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type UdpProxyEvent = {
   srcIp: string;
@@ -211,11 +212,7 @@ export class WebSocketUdpProxyClient {
 
       const timer = setTimeout(() => {
         if (this.ws === ws) {
-          try {
-            ws.close();
-          } catch {
-            // Ignore.
-          }
+          wsCloseSafe(ws);
           this.ws = null;
           this.ready = false;
           this.pending = [];
@@ -230,7 +227,10 @@ export class WebSocketUdpProxyClient {
         // wait for the relay's {"type":"ready"} acknowledgment before sending
         // any datagrams.
         if (credential && authMode === "first_message") {
-          ws.send(JSON.stringify({ type: "auth", token: credential, apiKey: credential }));
+          if (!wsSendSafe(ws, JSON.stringify({ type: "auth", token: credential, apiKey: credential }))) {
+            settle(new Error("udp relay websocket send failed"));
+            this.close();
+          }
         }
       };
 
@@ -246,8 +246,7 @@ export class WebSocketUdpProxyClient {
                 const queued = this.pending;
                 this.pending = [];
                 for (const pkt of queued) {
-                  if (ws.readyState !== WebSocket.OPEN) break;
-                  ws.send(pkt);
+                  if (!wsSendSafe(ws, pkt)) break;
                 }
               }
               settle();
@@ -349,7 +348,10 @@ export class WebSocketUdpProxyClient {
             // Best-effort tracing: never interfere with proxy traffic.
           }
         }
-        this.ws.send(pkt);
+        if (!wsSendSafe(this.ws, pkt)) {
+          this.close();
+          return;
+        }
         return;
       }
 
@@ -374,7 +376,7 @@ export class WebSocketUdpProxyClient {
   }
 
   close(): void {
-    this.ws?.close();
+    if (this.ws) wsCloseSafe(this.ws);
     this.ws = null;
     this.ready = false;
     this.pending = [];
@@ -456,7 +458,11 @@ export class WebRtcUdpProxyClient {
     if (this.channel.readyState !== "open") return;
     try {
       const pkt = encodeDatagram(srcPort, dstIp, dstPort, payload);
-      this.channel.send(pkt);
+      try {
+        this.channel.send(pkt);
+      } catch {
+        return;
+      }
 
       // NetTracer's UDP pseudo-header currently only supports IPv4.
       // Skip tracing IPv6 datagrams until the format is extended.

@@ -7,6 +7,7 @@ import {
   type SignalMessage,
 } from "../shared/udpRelaySignaling";
 import { readJsonResponseWithLimit, readTextResponseWithLimit } from "../storage/response_json";
+import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type RelaySignalingMode = "ws-trickle" | "http-offer" | "legacy-offer";
 
@@ -432,13 +433,17 @@ async function openWebSocket(url: string, protocol?: string): Promise<WebSocket>
 }
 
 function sendSignal(ws: WebSocket, msg: SignalMessage | (SignalMessage & { apiKey?: string })): void {
-  ws.send(JSON.stringify(msg));
+  if (!wsSendSafe(ws, JSON.stringify(msg))) {
+    wsCloseSafe(ws);
+  }
 }
 
 function sendAuth(ws: WebSocket, authToken: string): void {
   // Forward/compat: different relay builds may accept either {token} or {apiKey}
   // depending on auth mode. Supplying both allows the client to remain agnostic.
-  ws.send(JSON.stringify({ type: "auth", token: authToken, apiKey: authToken }));
+  if (!wsSendSafe(ws, JSON.stringify({ type: "auth", token: authToken, apiKey: authToken }))) {
+    wsCloseSafe(ws);
+  }
 }
 
 async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string, authToken?: string): Promise<void> {
@@ -759,12 +764,18 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
 
     const fullOffer = pc.localDescription;
     if (!fullOffer?.sdp) throw new Error("missing offer SDP after ICE gathering");
-    ws.send(
-      JSON.stringify({
-        version: UDP_RELAY_SIGNALING_VERSION,
-        offer: { type: "offer", sdp: fullOffer.sdp } satisfies SessionDescription,
-      }),
-    );
+    if (
+      !wsSendSafe(
+        ws,
+        JSON.stringify({
+          version: UDP_RELAY_SIGNALING_VERSION,
+          offer: { type: "offer", sdp: fullOffer.sdp } satisfies SessionDescription,
+        }),
+      )
+    ) {
+      wsCloseSafe(ws);
+      throw new Error("signaling websocket send failed");
+    }
     offerSent = true;
 
     await answerPromise;

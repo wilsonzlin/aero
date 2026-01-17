@@ -23,6 +23,7 @@ import {
   encodePing,
   encodePong,
 } from "../shared/l2TunnelProtocol";
+import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export { L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_DATA_CHANNEL_LABEL };
 
@@ -740,11 +741,16 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
   }
 
   protected transportSend(data: Uint8Array): void {
-    this.ws?.send(data);
+    const ws = this.ws;
+    if (!ws) return;
+    if (!wsSendSafe(ws, data)) {
+      this.onTransportError(new Error("l2 tunnel websocket send failed"));
+      this.close();
+    }
   }
 
   protected closeTransport(): void {
-    this.ws?.close();
+    if (this.ws) wsCloseSafe(this.ws);
     this.ws = null;
   }
 }
@@ -813,7 +819,12 @@ export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
     // backed views to APIs that may not accept them).
     const view: Uint8Array<ArrayBuffer> =
       data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
-    this.channel.send(view);
+    try {
+      this.channel.send(view);
+    } catch (err) {
+      this.onTransportError(err);
+      this.close();
+    }
   }
 
   protected closeTransport(): void {

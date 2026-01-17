@@ -7,6 +7,7 @@
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
 import { formatOneLineError, formatOneLineUtf8 } from "../text.ts";
+import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
@@ -427,7 +428,7 @@ export class WebSocketTcpMuxProxyClient {
           code: 0,
           message: `tcp-mux subprotocol not negotiated (wanted ${TCP_MUX_SUBPROTOCOL}, got ${this.ws.protocol || "none"})`,
         });
-        this.ws.close(1002);
+        wsCloseSafe(this.ws, 1002);
         return;
       }
       this.scheduleFlush(0);
@@ -539,7 +540,7 @@ export class WebSocketTcpMuxProxyClient {
   }
 
   shutdown(): Promise<void> {
-    this.ws.close();
+    wsCloseSafe(this.ws);
     return this.closed;
   }
 
@@ -586,16 +587,10 @@ export class WebSocketTcpMuxProxyClient {
       const entry = this.queued[this.queuedHead]!;
       this.queuedHead += 1;
       this.queuedBytes -= entry.frame.byteLength;
-      try {
-        this.ws.send(entry.frame);
-      } catch (err) {
+      if (!wsSendSafe(this.ws, entry.frame)) {
         this.onError?.(0, { code: 0, message: "WebSocket send failed" });
         // Trigger `onWsClose`, which tears down stream state.
-        try {
-          this.ws.close();
-        } catch {
-          // ignore
-        }
+        wsCloseSafe(this.ws);
         return;
       }
     }
@@ -615,7 +610,7 @@ export class WebSocketTcpMuxProxyClient {
   private onWsMessage(evt: MessageEvent): void {
     if (!(evt.data instanceof ArrayBuffer)) {
       this.onError?.(0, { code: 0, message: "tcp-mux received non-binary WebSocket message" });
-      this.ws.close(1003);
+      wsCloseSafe(this.ws, 1003);
       return;
     }
 
@@ -624,7 +619,7 @@ export class WebSocketTcpMuxProxyClient {
       frames = this.parser.push(new Uint8Array(evt.data));
     } catch (err) {
       this.onError?.(0, { code: 0, message: "tcp-mux protocol error" });
-      this.ws.close(1002);
+      wsCloseSafe(this.ws, 1002);
       return;
     }
 

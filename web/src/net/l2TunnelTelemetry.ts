@@ -41,7 +41,7 @@ export class L2TunnelTelemetry {
       return;
     }
     if (ev.type === "close") {
-      const suffix = ev.code === undefined ? "" : ` (code=${ev.code}${ev.reason ? ` reason=${ev.reason}` : ""})`;
+      const suffix = ev.code === undefined ? "" : ` (code=${ev.code})`;
       this.setConnectionState("closed", { detail: suffix, level: "warn" });
       return;
     }
