@@ -105,16 +105,42 @@ const ws = new WebSocket(wsUrl.toString(), TCP_MUX_SUBPROTOCOL, {
 });
 ws.binaryType = "arraybuffer";
 
+function wsSendSafe(data) {
+  if (ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function wsCloseSafe() {
+  try {
+    ws.close();
+  } catch {
+    // ignore
+  }
+}
+
 ws.on("open", () => {
   const streamId = 1;
-  ws.send(encodeFrame(MsgType.OPEN, streamId, encodeOpenPayload({ host: targetHost, port: targetPort })));
+  if (!wsSendSafe(encodeFrame(MsgType.OPEN, streamId, encodeOpenPayload({ host: targetHost, port: targetPort })))) {
+    wsCloseSafe();
+    return;
+  }
   const request = `GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\n\r\n`;
-  ws.send(encodeFrame(MsgType.DATA, streamId, Buffer.from(request, "utf8")));
+  if (!wsSendSafe(encodeFrame(MsgType.DATA, streamId, Buffer.from(request, "utf8")))) {
+    wsCloseSafe();
+    return;
+  }
 
   // Closing is optional here because we set "Connection: close". We still send
   // a FIN after a short delay to demonstrate half-close propagation.
   setTimeout(() => {
-    ws.send(encodeFrame(MsgType.CLOSE, streamId, Buffer.from([CloseFlags.FIN])));
+    if (!wsSendSafe(encodeFrame(MsgType.CLOSE, streamId, Buffer.from([CloseFlags.FIN])))) {
+      wsCloseSafe();
+    }
   }, 1000);
 });
 
@@ -150,7 +176,9 @@ ws.on("message", (data) => {
       console.log(`[stream ${streamId}] CLOSE ${parts.length ? parts.join("|") : `flags=0x${flags.toString(16)}`}`);
     } else if (msgType === MsgType.PING) {
       // Reply with PONG (same payload) per protocol.
-      ws.send(encodeFrame(MsgType.PONG, streamId, payload));
+      if (!wsSendSafe(encodeFrame(MsgType.PONG, streamId, payload))) {
+        wsCloseSafe();
+      }
     } else if (msgType === MsgType.PONG) {
       console.log(`[stream ${streamId}] PONG len=${length}`);
     } else {

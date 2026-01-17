@@ -9,6 +9,27 @@ import autocannon from 'autocannon';
 import dnsPacket from 'dns-packet';
 import WebSocket from 'ws';
 
+function wsCloseSafe(ws) {
+  try {
+    ws.close();
+  } catch {
+    // ignore
+  }
+}
+
+function socketWriteSafe(socket, data) {
+  try {
+    return socket.write(data);
+  } catch {
+    try {
+      socket.destroy();
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+}
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -219,7 +240,7 @@ async function startGateway({ dnsUpstreamHost, dnsUpstreamPort } = {}) {
 async function startEchoServer({ host = '127.0.0.1' } = {}) {
   const server = net.createServer((socket) => {
     socket.on('data', (data) => {
-      socket.write(data);
+      socketWriteSafe(socket, data);
     });
   });
 
@@ -313,7 +334,11 @@ function createWsByteReader(ws) {
 async function wsSend(ws, buf) {
   if (ws.readyState !== ws.OPEN) throw new Error('WebSocket not open');
   await new Promise((resolve, reject) => {
-    ws.send(buf, { binary: true }, (err) => (err ? reject(err) : resolve()));
+    try {
+      ws.send(buf, { binary: true }, (err) => (err ? reject(err) : resolve()));
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
@@ -343,7 +368,7 @@ async function benchTcpRttMs({ gatewayPort, targetHost, targetPort, payloadBytes
     samples.push(await roundTripOnce());
   }
 
-  ws.close();
+  wsCloseSafe(ws);
   await once(ws, 'close');
   reader.dispose();
 
@@ -392,7 +417,7 @@ async function benchTcpThroughputMiBps({
     throw new Error(`Unexpected throughput ACK: ${ack.toString('utf8')}`);
   }
 
-  ws.close();
+  wsCloseSafe(ws);
   await once(ws, 'close');
   reader.dispose();
 
