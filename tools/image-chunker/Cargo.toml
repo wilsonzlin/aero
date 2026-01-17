@@ -18,7 +18,7 @@ clap = { version = "4", features = ["derive"] }
 fastrand = "2"
 hex = "0.4"
 indicatif = "0.17"
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
