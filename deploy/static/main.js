@@ -8,6 +8,14 @@ document.querySelector("#sab").className = sab ? "ok" : "bad";
 
 document.querySelector("#origin").textContent = location.origin;
 
+function wsCloseSafe(ws) {
+  try {
+    ws.close();
+  } catch {
+    // ignore
+  }
+}
+
 // This smoke page is often served from the same reverse-proxy base path as the
 // gateway (e.g. https://example.com/aero/). Avoid hard-coded absolute paths like
 // `/session` which would drop the base path prefix.
@@ -135,14 +143,14 @@ try {
     const timeout = setTimeout(() => {
       wsEl.textContent = "timeout";
       wsEl.className = "bad";
-      ws.close();
+      wsCloseSafe(ws);
     }, 5000);
 
     ws.onopen = () => {
       clearTimeout(timeout);
       wsEl.textContent = "ok";
       wsEl.className = "ok";
-      ws.close();
+      wsCloseSafe(ws);
     };
 
     ws.onerror = () => {
@@ -200,14 +208,14 @@ try {
   const timeout = setTimeout(() => {
     wsEl.textContent = `timeout${noSessionSuffix}`;
     wsEl.className = "bad";
-    ws.close();
+    wsCloseSafe(ws);
   }, 5000);
 
   ws.onopen = () => {
     clearTimeout(timeout);
     wsEl.textContent = `ok${noSessionSuffix}`;
     wsEl.className = "ok";
-    ws.close();
+    wsCloseSafe(ws);
   };
 
   ws.onerror = () => {
