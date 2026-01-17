@@ -315,7 +315,17 @@ async function startProxyServer({
         // This prototype is intentionally strict: ignore out-of-order segments.
         if (tcp.seq !== conn.nextClientSeq) return;
         conn.nextClientSeq = (conn.nextClientSeq + tcp.payload.length) >>> 0;
-        conn.socket.write(tcp.payload);
+        try {
+          conn.socket.write(tcp.payload);
+        } catch {
+          try {
+            conn.socket.destroy();
+          } catch {
+            // ignore
+          }
+          tcpConns.delete(key);
+          return;
+        }
 
         // ACK the data immediately.
         sendTcpSegment(conn, { flags: TCP_FLAGS.ACK });
@@ -326,7 +336,13 @@ async function startProxyServer({
     });
 
     ws.on("close", () => {
-      for (const conn of tcpConns.values()) conn.socket.destroy();
+      for (const conn of tcpConns.values()) {
+        try {
+          conn.socket.destroy();
+        } catch {
+          // ignore
+        }
+      }
       tcpConns.clear();
     });
   });

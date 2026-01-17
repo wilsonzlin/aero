@@ -7,7 +7,17 @@ import { runNetworkingProbe } from "../prototype/nt-arch-rfc/client.js";
 
 async function startTcpEchoServer() {
   const server = net.createServer((socket) => {
-    socket.on("data", (data) => socket.write(data));
+    socket.on("data", (data) => {
+      try {
+        socket.write(data);
+      } catch {
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+      }
+    });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
