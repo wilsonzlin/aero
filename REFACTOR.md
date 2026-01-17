@@ -664,6 +664,23 @@ Approach:
 Outcomes:
 - Contract suite will fail if scanner-level detection regresses for `\u{...}` escape bypass shapes.
 
+### Phase 58: Close-race crash hardening sweep (done)
+Goal: prevent process crashes from synchronous throws in network send/close paths (WebSocket, streams, and `net.Socket`) under close races.
+
+Approach:
+- **Browser WebSocket**:
+  - Centralize safe wrappers in `web/src/net/wsSafe.ts` (`wsSendSafe`, `wsCloseSafe`).
+  - Use these helpers across the web networking clients so `WebSocket.send()` / `WebSocket.close()` cannot throw and abort the worker/UI.
+- **WebRTC DataChannel**:
+  - Treat `RTCDataChannel.send()` as a potentially-throwing operation; guard it and surface errors via the existing tunnel/proxy error channels.
+- **Node WebSocket + sockets**:
+  - Wrap `ws.send(...)`, `socket.write(...)`, `socket.end(...)`, and `socket.destroy()` in `try/catch` where close races can occur.
+  - On sync send/write failure, prefer deterministic teardown (`destroy`) and stable, byte-bounded logging rather than reflecting raw error details to clients.
+
+Outcomes:
+- Network relay/upgrade paths and supporting scripts are resilient to close-race sync throws across Node and browser runtimes.
+- The contract suite and targeted package test suites were used to validate refactor slices as they landed.
+
 Some coding guidelines:
 
 ## General Principles
