@@ -29,9 +29,16 @@ function encodeCompareRef(ref) {
   return encodeURIComponent(ref).replaceAll("%2F", "/");
 }
 
+function truthyEnv(name) {
+  const raw = (process.env[name] || "").trim();
+  if (!raw) return false;
+  return !["0", "false", "FALSE", "no", "NO", "off", "OFF"].includes(raw);
+}
+
 function main() {
   const base = (process.env.AERO_PR_BASE || "main").trim() || "main";
   const remote = (process.env.AERO_PR_REMOTE || "origin").trim() || "origin";
+  const includeActionsUrl = truthyEnv("AERO_PR_INCLUDE_ACTIONS_URL");
 
   let branch = "";
   try {
@@ -72,8 +79,13 @@ function main() {
     return;
   }
 
-  const url = `https://github.com/${gh.owner}/${gh.repo}/compare/${encodeCompareRef(base)}...${encodeCompareRef(compareBranch)}?expand=1`;
-  process.stdout.write(`${url}\n`);
+  const compareUrl = `https://github.com/${gh.owner}/${gh.repo}/compare/${encodeCompareRef(base)}...${encodeCompareRef(compareBranch)}?expand=1`;
+  process.stdout.write(`${compareUrl}\n`);
+
+  if (includeActionsUrl) {
+    const actionsUrl = `https://github.com/${gh.owner}/${gh.repo}/actions?query=branch%3A${encodeCompareRef(compareBranch)}`;
+    process.stdout.write(`${actionsUrl}\n`);
+  }
 }
 
 main();

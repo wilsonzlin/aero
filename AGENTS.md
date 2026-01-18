@@ -109,6 +109,8 @@ Pull requests (when GitHub CLI `gh` is unavailable):
   - Example (this repo): `https://github.com/wilsonzlin/aero/compare/main...refactor/hardening-guardrails?expand=1`
 - Shortcut (prints the compare URL for your current branch):
   - `bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs`
+- Optional: also print the GitHub Actions URL for the branch:
+  - `AERO_PR_INCLUDE_ACTIONS_URL=1 bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs`
 
 Or use `timeout -k` directly (always include `-k` for SIGKILL fallback!):
 
