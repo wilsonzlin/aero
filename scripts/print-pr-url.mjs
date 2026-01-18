@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 import { execFileSync } from "node:child_process";
 import process from "node:process";
 
