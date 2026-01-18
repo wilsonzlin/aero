@@ -110,7 +110,7 @@ Pull requests (when GitHub CLI `gh` is unavailable):
 - Shortcut (prints the compare URL for your current branch):
   - `bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs`
 - Optional: also print the GitHub Actions URL for the branch:
-  - `AERO_PR_INCLUDE_ACTIONS_URL=1 bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs`
+  - `bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs --actions`
 - npm shortcuts (same behavior, without safe-run):
   - `npm run pr:url`
   - `npm run pr:links`

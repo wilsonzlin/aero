@@ -5,6 +5,22 @@ function git(args) {
   return execFileSync("git", args, { encoding: "utf8" }).trim();
 }
 
+function usage() {
+  return `Usage: node scripts/print-pr-url.mjs [--actions]
+
+Prints a GitHub compare URL for the current branch (suitable for opening a PR in the web UI).
+
+Options:
+  --actions   Also print the GitHub Actions URL for the same branch.
+
+Environment overrides:
+  AERO_PR_BASE=<ref>        Base branch/ref (default: main)
+  AERO_PR_REMOTE=<name>     Git remote name (default: origin)
+  AERO_PR_BRANCH=<ref>      Branch/ref to use instead of the current branch
+  AERO_PR_INCLUDE_ACTIONS_URL=1  (legacy) same as --actions
+`;
+}
+
 function parseGitHubOrigin(url) {
   const u = url.trim();
 
@@ -36,9 +52,26 @@ function truthyEnv(name) {
 }
 
 function main() {
+  const args = process.argv.slice(2);
+  let includeActionsUrl = truthyEnv("AERO_PR_INCLUDE_ACTIONS_URL");
+  for (const arg of args) {
+    if (arg === "--actions" || arg === "--include-actions-url") {
+      includeActionsUrl = true;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      process.stdout.write(usage());
+      return;
+    }
+    console.error(`error: unknown argument: ${arg}`);
+    console.error("");
+    process.stderr.write(usage());
+    process.exitCode = 1;
+    return;
+  }
+
   const base = (process.env.AERO_PR_BASE || "main").trim() || "main";
   const remote = (process.env.AERO_PR_REMOTE || "origin").trim() || "origin";
-  const includeActionsUrl = truthyEnv("AERO_PR_INCLUDE_ACTIONS_URL");
 
   let branch = "";
   try {

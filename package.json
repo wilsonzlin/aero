@@ -22,7 +22,7 @@
   "scripts": {
     "check:node": "node scripts/check-node-version.mjs",
     "pr:url": "node scripts/print-pr-url.mjs",
-    "pr:links": "AERO_PR_INCLUDE_ACTIONS_URL=1 node scripts/print-pr-url.mjs",
+    "pr:links": "node scripts/print-pr-url.mjs --actions",
     "predev": "npm run check:node",
     "prebuild": "npm run check:node",
     "dev": "vite --config vite.harness.config.ts",
