@@ -960,6 +960,7 @@ if [[ $# -lt 1 ]]; then
     echo "  AERO_NODE_TEST_MEM_LIMIT=256G  Fallback memory limit for WASM-heavy Node test runners when AERO_MEM_LIMIT is unset (helps under RLIMIT_AS; applies to node --test, npm/vitest, wasm-pack --node)" >&2
     echo "  AERO_PLAYWRIGHT_MEM_LIMIT=256G  Fallback memory limit for Playwright/browser E2E runs when AERO_MEM_LIMIT is unset (browsers reserve huge virtual memory; too-low RLIMIT_AS can crash Chromium or break WebAssembly.Memory)" >&2
     echo "  AERO_PLAYWRIGHT_TIMEOUT=1800  Fallback timeout for Playwright/browser E2E runs when AERO_TIMEOUT is unset (cold WASM builds can exceed 10 minutes)" >&2
+    echo "  AERO_CHECK_NODE_QUIET=1  Suppress non-fatal Node version mismatch notes from scripts/check-node-version.mjs (safe-run auto-sets this to 1 on Node *major* mismatch vs .nvmrc unless explicitly set)" >&2
     echo "  AERO_ISOLATE_CARGO_HOME=1|<path>  Isolate Cargo state to ./.cargo-home (or a custom dir) to avoid registry lock contention on shared hosts" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
