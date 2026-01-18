@@ -1,6 +1,7 @@
 import * as dgram from "node:dgram";
 
 import { headerHasMimeType } from "../contentType.js";
+import { unrefBestEffort } from "../unrefSafe.js";
 
 export type DnsUpstream =
   | { kind: "udp"; host: string; port: number; label: string }
@@ -78,34 +79,47 @@ export async function queryUdpUpstream(
   upstream: Extract<DnsUpstream, { kind: "udp" }>,
   query: Buffer,
   timeoutMs: number,
+  opts: Readonly<{ createSocket?: typeof dgram.createSocket }> = {},
 ): Promise<Buffer> {
-  const socket = dgram.createSocket(upstream.host.includes(":") ? "udp6" : "udp4");
+  const createSocket = opts.createSocket ?? dgram.createSocket;
+  const socket = createSocket(upstream.host.includes(":") ? "udp6" : "udp4");
 
   return await new Promise<Buffer>((resolve, reject) => {
+    let settled = false;
+    const finish = (result: { ok: true; value: Buffer } | { ok: false; err: unknown }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket.close();
+      } catch {
+        // ignore
+      }
+      if (result.ok) resolve(result.value);
+      else reject(result.err);
+    };
+
     const timer = setTimeout(() => {
-      socket.close();
-      reject(new Error(`UDP upstream timeout after ${timeoutMs}ms`));
+      finish({ ok: false, err: new Error(`UDP upstream timeout after ${timeoutMs}ms`) });
     }, timeoutMs);
-    timer.unref?.();
+    unrefBestEffort(timer);
 
     socket.once("error", (err) => {
-      clearTimeout(timer);
-      socket.close();
-      reject(err);
+      finish({ ok: false, err });
     });
 
     socket.once("message", (msg) => {
-      clearTimeout(timer);
-      socket.close();
-      resolve(Buffer.from(msg));
+      finish({ ok: true, value: Buffer.from(msg) });
     });
 
-    socket.send(query, upstream.port, upstream.host, (err) => {
-      if (!err) return;
-      clearTimeout(timer);
-      socket.close();
-      reject(err);
-    });
+    try {
+      socket.send(query, upstream.port, upstream.host, (err) => {
+        if (!err) return;
+        finish({ ok: false, err });
+      });
+    } catch (err) {
+      finish({ ok: false, err });
+    }
   });
 }
 
@@ -116,7 +130,7 @@ export async function queryDohUpstream(
 ): Promise<Buffer> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
+  unrefBestEffort(timer);
 
   try {
     const response = await fetch(upstream.url, {

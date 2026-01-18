@@ -20,10 +20,8 @@ class SpyTcpSocket extends PassThrough {
 }
 
 test("WebSocketTcpBridge pauses TCP reads when wsSocket is backpressured (and resumes on drain)", async () => {
-  /** @type {Buffer[]} */
-  const wsWrites = [];
-  /** @type {Array<() => void>} */
-  const writeCbs = [];
+  const wsWrites: Buffer[] = [];
+  const writeCbs: Array<() => void> = [];
 
   const wsSocket = new Duplex({
     readableHighWaterMark: 16,
@@ -57,7 +55,7 @@ test("WebSocketTcpBridge pauses TCP reads when wsSocket is backpressured (and re
   );
 
   const cb = writeCbs.shift();
-  assert.equal(typeof cb, "function");
+  if (!cb) throw new Error("expected wsSocket.write callback");
   cb();
   await new Promise((r) => setImmediate(r));
 

@@ -4,6 +4,7 @@ import { UsbBroker } from "./usb_broker";
 import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "./webusb_passthrough_runtime";
 import type { UsbHostAction, UsbHostCompletion, UsbRingAttachMessage } from "./usb_proxy_protocol";
 import { createUsbProxyRingBuffer, USB_PROXY_RING_CTRL_BYTES, UsbProxyRing } from "./usb_proxy_ring";
+import { unrefBestEffort } from "../unrefSafe";
 
 type Listener = (ev: MessageEvent<unknown>) => void;
 
@@ -88,7 +89,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<T>((_resolve, reject) => {
     timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
   try {
     return await Promise.race([promise, timeout]);

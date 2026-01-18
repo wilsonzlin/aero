@@ -18,6 +18,7 @@ import {
 import { initJitWasmForContext, type JitWasmApi, type Tier1BlockCompilation } from "../runtime/jit_wasm_loader";
 import { fnv1a32Hex } from "../utils/fnv1a";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 import {
   type JitCompileRequest,
   type JitTier1CompileRequest,
@@ -342,7 +343,7 @@ function maybeStartPendingJitFlushTimer(): void {
       stopPendingJitFlushTimer();
     }
   }, PENDING_JIT_FLUSH_INTERVAL_MS) as unknown as number;
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   pendingJitFlushTimer = timer;
 }
 

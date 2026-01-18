@@ -9,6 +9,7 @@ import { formatOneLineError } from "../text";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
+import { unrefBestEffort } from "../unrefSafe";
 import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../ipc/gpu-protocol";
 import {
   layoutFromHeader,
@@ -666,7 +667,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
     }
     maybePostHdaDemoStats();
   }, 20);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   hdaDemoTimer = timer as unknown as number;
 
   ctx.postMessage({ type: "audioOutputHdaDemo.ready" } satisfies AudioOutputHdaDemoReadyMessage);
@@ -778,7 +779,7 @@ async function startVirtioSndDemo(msg: AudioOutputVirtioSndDemoStartMessage): Pr
     }
     maybePostVirtioSndDemoStats();
   }, 20);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   virtioSndDemoTimer = timer as unknown as number;
 
   ctx.postMessage({ type: "audioOutputVirtioSndDemo.ready" } satisfies AudioOutputVirtioSndDemoReadyMessage);
@@ -1783,7 +1784,7 @@ let snapshotPaused = false;
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
 }
 

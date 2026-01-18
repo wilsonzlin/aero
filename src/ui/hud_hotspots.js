@@ -10,6 +10,8 @@
  * }} options
  * @returns {HTMLElement}
  */
+import { unrefBestEffort } from '../unref_safe.js';
+
 export function createHotspotsPanel(options) {
   const { perf, topN = 10, refreshMs = 500 } = options;
 
@@ -60,7 +62,7 @@ export function createHotspotsPanel(options) {
 
   render();
   const timer = setInterval(render, refreshMs);
-  timer.unref?.();
+  unrefBestEffort(timer);
   // Allow callers to stop updates by removing the element.
   root.addEventListener(
     'DOMNodeRemoved',

@@ -145,7 +145,7 @@ Common options:
 ### Comparing results in CI
 
 ```bash
-node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gpu_benchmarks.ts \
   --baseline baseline.json \
   --candidate gpu_bench.json \
   --out-dir gpu-perf-results/compare \
@@ -159,7 +159,7 @@ metric regresses by more than the configured threshold (exit code 2 indicates ex
 You can also override thresholds directly (useful for local debugging or when tuning CI):
 
 ```bash
-node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gpu_benchmarks.ts \
   --baseline baseline.json \
   --current gpu_bench.json \
   --outDir gpu-perf-results/compare \
@@ -172,7 +172,7 @@ Or via environment variables:
 ```bash
 GPU_PERF_REGRESSION_THRESHOLD_PCT=15 \
 GPU_PERF_EXTREME_CV_THRESHOLD=0.5 \
-  node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gpu_benchmarks.ts \
     --baseline baseline.json \
     --candidate gpu_bench.json \
     --out-dir gpu-perf-results/compare
@@ -261,7 +261,7 @@ npm -w backend/aero-gateway run bench
 ### Comparing two runs (PR smoke style)
 
 ```bash
-node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gateway_benchmarks.ts \
   --baseline baseline.json \
   --candidate candidate.json \
   --out-dir gateway-perf-results/compare \
@@ -277,7 +277,7 @@ Optional environment overrides:
 ```bash
 GATEWAY_PERF_REGRESSION_THRESHOLD_PCT=15 \
 GATEWAY_PERF_EXTREME_CV_THRESHOLD=0.5 \
-  node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gateway_benchmarks.ts \
     --baseline baseline.json \
     --candidate candidate.json \
     --out-dir gateway-perf-results/compare
@@ -305,14 +305,14 @@ As a last resort, scenarios can fall back to screenshot stability detection (has
 List scenarios:
 
 ```bash
-node --experimental-strip-types bench/runner.ts --list
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts --list
 ```
 
 Run a scenario:
 
 ```bash
-node --experimental-strip-types bench/runner.ts guest_cpu
-node --experimental-strip-types bench/runner.ts noop
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts guest_cpu
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts noop
 ```
 
 Common scenario IDs:
@@ -337,7 +337,7 @@ Artifacts written to the output directory:
 Run locally:
 
 ```bash
-node --experimental-strip-types bench/runner.ts guest_cpu
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts guest_cpu
 ```
 
 ### Disk images (local-only)
@@ -348,10 +348,10 @@ Provide it via flag or env var:
 
 ```bash
 # Flag
-node --experimental-strip-types bench/runner.ts system_boot --disk-image /path/to/win7.img
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts system_boot --disk-image /path/to/win7.img
 
 # Env var
-AERO_DISK_IMAGE_PATH=/path/to/win7.img node --experimental-strip-types bench/runner.ts system_boot
+AERO_DISK_IMAGE_PATH=/path/to/win7.img node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts system_boot
 ```
 
 CI should only select scenarios that do not require proprietary images (or will see a clean `skipped` report).

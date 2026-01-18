@@ -1,7 +1,7 @@
 import type http from "node:http";
 
 import { isOriginAllowed } from "../middleware/originGuard.js";
-import { tryGetProp, tryGetStringProp } from "../../../../src/safe_props.js";
+import { tryGetProp, tryGetStringProp } from "./safeProps.js";
 import {
   classifyTargetHost,
   parseHostnamePattern,

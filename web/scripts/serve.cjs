@@ -6,6 +6,7 @@ const path = require('path');
 // modules in the browser. Transpile `.ts`/`.tsx` on the fly using esbuild.
 const esbuild = require('esbuild');
 const { formatOneLineError, formatOneLineUtf8 } = require('../../scripts/_shared/text_one_line.cjs');
+const { tryWriteResponse } = require('../../src/http_response_safe.cjs');
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -15,46 +16,13 @@ function safeTextBody(message) {
   return formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || 'Error';
 }
 
-function destroySafe(res) {
-  try {
-    res.destroy();
-  } catch {
-    // ignore
-  }
-}
-
-function writeHeadSafe(res, statusCode, headers) {
-  try {
-    res.writeHead(statusCode, headers);
-    return true;
-  } catch {
-    destroySafe(res);
-    return false;
-  }
-}
-
-function endSafe(res, body) {
-  try {
-    res.end(body);
-    return true;
-  } catch {
-    destroySafe(res);
-    return false;
-  }
-}
-
 function sendText(res, statusCode, message) {
   const body = safeTextBody(message);
-  if (
-    !writeHeadSafe(res, statusCode, {
+  tryWriteResponse(res, statusCode, {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store',
       'Content-Length': String(Buffer.byteLength(body)),
-    })
-  ) {
-    return;
-  }
-  endSafe(res, body);
+    }, body);
 }
 
 function parseArgs(argv) {
@@ -221,28 +189,28 @@ const server = http.createServer((req, res) => {
 
     if (absPath.endsWith('.ts') || absPath.endsWith('.tsx')) {
       const code = await transpileTs(absPath);
-      if (
-        !writeHeadSafe(res, 200, {
+      tryWriteResponse(
+        res,
+        200,
+        {
           ...commonHeaders,
           'Content-Type': 'text/javascript; charset=utf-8',
-        })
-      ) {
-        return;
-      }
-      endSafe(res, code);
+        },
+        code,
+      );
       return;
     }
 
     const data = await fs.promises.readFile(absPath);
-    if (
-      !writeHeadSafe(res, 200, {
+    tryWriteResponse(
+      res,
+      200,
+      {
         ...commonHeaders,
         'Content-Type': contentTypeFor(absPath),
-      })
-    ) {
-      return;
-    }
-    endSafe(res, data);
+      },
+      data,
+    );
   })().catch((err) => {
     // Avoid echoing internal error details back to the client.
     // eslint-disable-next-line no-console

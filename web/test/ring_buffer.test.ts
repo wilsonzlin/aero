@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { once } from "node:events";
 
 import { SharedRingBuffer } from "../src/io/ipc/ring_buffer.ts";
+import { WORKER_EXEC_ARGV } from "./_helpers/worker_exec_argv.ts";
 
 test("SharedRingBuffer: wraparound + full/empty behavior", () => {
   const ring = SharedRingBuffer.create({ capacity: 4, stride: 1 });
@@ -34,7 +35,7 @@ test("SharedRingBuffer: Atomics.wait/notify popBlockingInto()", async () => {
   const worker = new Worker(new URL("./workers/ring_pop_worker.ts", import.meta.url), {
     type: "module",
     workerData: { ring: ring.sab },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   try {

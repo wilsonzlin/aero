@@ -74,7 +74,6 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
           cleanup();
           reject(new Error(`Timed out waiting for io.worker ${kind}(${requestId}) after ${timeoutMs}ms.`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
 
         const onMessage = (ev: MessageEvent<unknown>) => {
           const data = ev.data as { kind?: unknown; requestId?: unknown; ok?: unknown; error?: unknown };
@@ -149,7 +148,6 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
         cleanup();
         reject(new Error("Timed out waiting for io.worker import marker"));
       }, 20_000);
-      (timer as unknown as { unref?: () => void }).unref?.();
     });
 
     // io.worker waits for an initial boot disk selection message before reporting READY.

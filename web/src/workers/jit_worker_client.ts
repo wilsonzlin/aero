@@ -8,6 +8,7 @@ import {
   type JitImportsHint,
 } from "./jit_protocol";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type Tier1CompileResult =
   | { module: WebAssembly.Module; entryRip: number | bigint; codeByteLen: number; exitToInterpreter: boolean }
@@ -79,7 +80,7 @@ export class JitWorkerClient {
         this.#pending.delete(id);
         reject(new Error("Timed out waiting for JIT worker response."));
       }, timeoutMs);
-      (timeoutId as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timeoutId);
 
       this.#pending.set(id, { resolve, reject, timeoutId });
 
@@ -129,7 +130,7 @@ export class JitWorkerClient {
         this.#pending.delete(id);
         reject(new Error("Timed out waiting for JIT worker response."));
       }, timeoutMs);
-      (timeoutId as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timeoutId);
 
       this.#pending.set(id, {
         resolve: (value) => {

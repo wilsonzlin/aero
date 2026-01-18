@@ -2,7 +2,7 @@
  * Compatibility wrapper for storage perf comparisons.
  *
  * Canonical compare implementation:
- *   node --experimental-strip-types bench/compare.ts ...
+ *   node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/compare.ts ...
  *
  * This wrapper keeps older invocations working (e.g. `--current`, `--outDir`,
  * `--thresholdPct`, `--json`) while delegating to `bench/compare.ts` so:
@@ -15,8 +15,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import { formatOneLineError, truncateUtf8 } from "../src/text.js";
+
+const REGISTER_TS_STRIP_LOADER_URL = new URL("./register-ts-strip-loader.mjs", import.meta.url);
+const BENCH_COMPARE_PATH = fileURLToPath(new URL("../bench/compare.ts", import.meta.url));
 
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -38,7 +42,7 @@ function parseArgs(argv: string[]): Record<string, string> {
 function usage(exitCode: number): never {
   const msg = `
 Usage:
-  node --experimental-strip-types scripts/compare_storage_benchmarks.ts --baseline <storage_bench.json> --current <storage_bench.json>
+  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_storage_benchmarks.ts --baseline <storage_bench.json> --current <storage_bench.json>
 
 This is a compatibility wrapper around \`bench/compare.ts\`.
 
@@ -193,7 +197,9 @@ async function main() {
 
   const childArgs = [
     "--experimental-strip-types",
-    "bench/compare.ts",
+    "--import",
+    REGISTER_TS_STRIP_LOADER_URL.href,
+    BENCH_COMPARE_PATH,
     "--baseline",
     baselinePath,
     "--candidate",

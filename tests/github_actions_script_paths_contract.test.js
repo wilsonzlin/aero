@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { listCompositeActionYmlRelPaths } from "./_helpers/github_actions_contract_helpers.js";
+import { extractRunScripts } from "./_helpers/yaml_run_scripts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,44 +12,6 @@ const repoRoot = path.resolve(__dirname, "..");
 
 async function readText(relPath) {
   return await fs.readFile(path.join(repoRoot, relPath), "utf8");
-}
-
-function leadingSpaces(line) {
-  let n = 0;
-  while (n < line.length && line.charCodeAt(n) === 32) n++;
-  return n;
-}
-
-function extractRunScripts(yamlText) {
-  const scripts = [];
-  const lines = yamlText.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trimStart();
-    if (!trimmed.startsWith("run:")) continue;
-
-    const baseIndent = leadingSpaces(line);
-    const after = trimmed.slice("run:".length).trimStart();
-    if (after.startsWith("|") || after.startsWith(">")) {
-      const blockIndentMin = baseIndent + 1;
-      const block = [];
-      for (let j = i + 1; j < lines.length; j++) {
-        const next = lines[j];
-        if (!next.trim()) {
-          block.push("");
-          continue;
-        }
-        if (leadingSpaces(next) < blockIndentMin) break;
-        block.push(next.slice(blockIndentMin));
-        i = j;
-      }
-      scripts.push(block.join("\n"));
-      continue;
-    }
-
-    scripts.push(after);
-  }
-  return scripts;
 }
 
 function extractNodeMjsInvocations(script) {

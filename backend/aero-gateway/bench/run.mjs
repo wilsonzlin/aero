@@ -154,7 +154,11 @@ async function startUdpDnsServer({ host = '127.0.0.1', answerIp = '127.0.0.1', t
           : [],
     });
 
-    socket.send(response, rinfo.port, rinfo.address);
+    try {
+      socket.send(response, rinfo.port, rinfo.address);
+    } catch {
+      // ignore
+    }
   });
 
   await new Promise((resolve, reject) => {
@@ -259,9 +263,11 @@ async function startSinkServer({ host = '127.0.0.1' } = {}) {
   const server = net.createServer((socket) => {
     let expected = null;
     let seen = 0;
+    let done = false;
     let headerBuf = Buffer.alloc(0);
 
     socket.on('data', (chunk) => {
+      if (done) return;
       if (expected === null) {
         headerBuf = Buffer.concat([headerBuf, chunk]);
         if (headerBuf.length < 8) return;
@@ -276,8 +282,17 @@ async function startSinkServer({ host = '127.0.0.1' } = {}) {
 
       seen += chunk.length;
       if (seen >= expected) {
-        socket.write(Buffer.from('OK'));
-        socket.end();
+        done = true;
+        if (!socketWriteSafe(socket, Buffer.from('OK'))) return;
+        try {
+          socket.end();
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
       }
     });
   });

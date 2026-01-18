@@ -1,4 +1,5 @@
 import { LogHistogram, msToUs, usToMs } from './stats';
+import { unrefBestEffort } from '../unrefSafe';
 
 export type ResponsivenessHudSnapshot = {
   capToInjectP50Ms?: number;
@@ -413,7 +414,7 @@ export class ResponsivenessTracker {
       recordMs(this.eventLoopLag, lag);
       this.expectedEventLoopTickMs = expected + interval;
     }, interval);
-    (this.eventLoopLagTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.eventLoopLagTimer);
   }
 
   private stopEventLoopLag(): void {

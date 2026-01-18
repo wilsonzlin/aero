@@ -1,5 +1,6 @@
 import { LogHistogram, RunningStats, msToUs, usToMs } from '../perf/stats';
 import { formatOneLineError } from '../text';
+import { callMethodBestEffort } from '../safeMethod';
 
 export type WebGpuBenchOptions = {
   frames?: number;
@@ -496,19 +497,8 @@ export async function runWebGpuBench(options: WebGpuBenchOptions = {}): Promise<
     computeDstBuf?.destroy();
     queryReadBuffer?.destroy();
     queryResolveBuffer?.destroy();
-    (querySet as unknown as { destroy?: () => void } | null)?.destroy?.();
-    try {
-      const removeEventListener = (device as unknown as { removeEventListener?: unknown }).removeEventListener;
-      if (typeof removeEventListener === "function") {
-        (removeEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
-          device,
-          "uncapturederror",
-          uncapturedErrorHandler,
-        );
-      }
-    } catch {
-      // Ignore.
-    }
+    callMethodBestEffort(querySet, 'destroy');
+    callMethodBestEffort(device, "removeEventListener", "uncapturederror", uncapturedErrorHandler);
     try {
       const anyDevice = device as unknown as { onuncapturederror?: unknown };
       if (anyDevice.onuncapturederror === uncapturedErrorHandler) {

@@ -1,10 +1,11 @@
 import type http from "node:http";
+import { unrefBestEffort } from "./unrefSafe";
 
 export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let handle: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
     handle = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-    handle.unref();
+    unrefBestEffort(handle);
   });
   try {
     return await Promise.race([promise, timeout]);

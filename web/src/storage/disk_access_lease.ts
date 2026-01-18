@@ -10,6 +10,7 @@
  */
 
 import { readJsonResponseWithLimit } from "./response_json";
+import { unrefBestEffort } from "../unrefSafe";
 export interface DiskAccessLease {
   /**
    * Ephemeral URL to fetch bytes from. For signed-URL auth, this includes the signature
@@ -105,7 +106,7 @@ export class DiskAccessLeaseRefresher {
         this.timerId = null;
         this.schedule();
       }, MAX_TIMEOUT_MS);
-      (this.timerId as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(this.timerId);
       return;
     }
 
@@ -113,7 +114,7 @@ export class DiskAccessLeaseRefresher {
       this.timerId = null;
       void this.runRefresh();
     }, delayMs);
-    (this.timerId as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.timerId);
   }
 
   private async runRefresh(): Promise<void> {
@@ -127,7 +128,7 @@ export class DiskAccessLeaseRefresher {
         this.timerId = null;
         void this.runRefresh();
       }, LEASE_REFRESH_FAILURE_RETRY_MS);
-      (this.timerId as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(this.timerId);
       return;
     }
 

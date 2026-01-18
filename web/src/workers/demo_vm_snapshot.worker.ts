@@ -2,6 +2,7 @@
 
 import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
 import { serializeErrorForProtocol } from "../errors/serialize";
+import { unrefBestEffort } from "../unrefSafe";
 import type {
   DemoVmWorkerInitResult,
   DemoVmWorkerMessage,
@@ -95,7 +96,7 @@ function startStepLoop(): void {
       stopStepLoop();
     }
   }, TICK_MS);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   stepTimer = timer;
 }
 

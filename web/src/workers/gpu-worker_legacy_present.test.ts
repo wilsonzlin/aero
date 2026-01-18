@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { unrefBestEffort } from "../unrefSafe";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import {
   FRAME_DIRTY,
@@ -24,6 +25,9 @@ import {
   SHARED_FRAMEBUFFER_MAGIC,
   SHARED_FRAMEBUFFER_VERSION,
 } from "../ipc/shared-layout";
+import { WORKER_THREADS_WEBWORKER_EXEC_ARGV } from "./test_utils/worker_exec_argv";
+
+const GPU_WORKER_EXEC_ARGV = WORKER_THREADS_WEBWORKER_EXEC_ARGV;
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -35,7 +39,7 @@ async function waitForWorkerMessage(
       cleanup();
       reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
     }, timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
 
     const onMessage = (msg: unknown) => {
       // Surface runtime worker errors eagerly.
@@ -137,11 +141,9 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
   it("presents from sharedFramebuffer via a mock presenter module (vgaFramebuffer aliases sharedFramebuffer)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -268,11 +270,9 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
   it("counts dropped presents when the presenter module returns false", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -436,11 +436,9 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
   it("does not hang if scanout/cursor seqlock busy bit is stuck", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {

@@ -4,6 +4,7 @@ import net from "node:net";
 import ipaddr from "ipaddr.js";
 import { splitCommaSeparatedList } from "./csv";
 import { formatOneLineError, formatOneLineUtf8 } from "./text";
+import { unrefBestEffort } from "./unrefSafe";
 
 export interface ResolvedTarget {
   requestedHost: string;
@@ -193,7 +194,7 @@ async function lookupAll(hostname: string, timeoutMs: number): Promise<LookupAdd
     handle = setTimeout(() => {
       reject(new Error(`DNS lookup timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-    handle.unref();
+    unrefBestEffort(handle);
   });
 
   try {

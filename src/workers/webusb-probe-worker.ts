@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { serializeWebUsbProbeError } from './webusb_probe_error_utils';
+import { unrefBestEffort } from '../unref_safe.js';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -84,7 +85,7 @@ async function runRequestDeviceProbe(
           },
         });
       }, timeoutMs);
-      (timeoutHandle as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timeoutHandle);
     });
 
     const result = await Promise.race([settle, timeout]);

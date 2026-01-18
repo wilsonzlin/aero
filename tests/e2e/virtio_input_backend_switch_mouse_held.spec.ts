@@ -683,7 +683,6 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
           cleanup();
           reject(new Error("Timed out waiting for CPU worker import marker"));
         }, 20_000);
-        (timer as unknown as { unref?: () => void }).unref?.();
       });
 
       await new Promise<void>((resolve, reject) => {
@@ -734,7 +733,6 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
           cleanup();
           reject(new Error("Timed out waiting for io.worker import marker"));
         }, 20_000);
-        (timer as unknown as { unref?: () => void }).unref?.();
       });
 
       ioWorker.postMessage({

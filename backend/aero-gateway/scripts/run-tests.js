@@ -1,15 +1,29 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repoRoot = path.resolve(projectRoot, '..', '..');
-const tsStripLoader = pathToFileURL(path.join(repoRoot, 'scripts', 'register-ts-strip-loader.mjs')).href;
-const testSetup = pathToFileURL(path.join(projectRoot, 'scripts', 'test-setup.mjs')).href;
-const testRoot = process.argv[2]
-  ? path.resolve(projectRoot, process.argv[2])
+const projectRoot = fileURLToPath(new URL('..', import.meta.url));
+const tsStripLoader = new URL('../../../scripts/register-ts-strip-loader.mjs', import.meta.url).href;
+const testSetup = new URL('./test-setup.mjs', import.meta.url).href;
+
+const args = process.argv.slice(2);
+const first = args[0] ?? null;
+const firstIsPath = first !== null && first !== '' && !first.startsWith('-');
+
+// CLI contract:
+// - Optional first arg: a test root path (relative to package root).
+// - Remaining args: forwarded to `node --test` (e.g. `--test-name-pattern`, `--test-only`).
+//
+// This lets callers do:
+// - `npm test` (default test root)
+// - `npm run test:property` (custom test root)
+// - `npm test -- --test-name-pattern=...` (forwarded to node --test)
+// - `npm test -- test/property --test-name-pattern=...` (custom root + forwarded args)
+const testRoot = firstIsPath
+  ? path.resolve(projectRoot, first)
   : path.join(projectRoot, 'test');
+const nodeTestArgs = firstIsPath ? args.slice(1) : args;
 
 const testFilePattern = /\.test\.(c|m)?(j|t)s$/;
 
@@ -52,12 +66,14 @@ if (testFiles.length === 0) {
   process.stderr.write(`No test files found under ${path.relative(projectRoot, testRoot)}\n`);
   process.exitCode = 1;
 } else {
+  const stdioMode = process.env.AERO_TEST_STDIO ?? 'inherit';
+  const stdio = stdioMode === 'ignore' ? ['ignore', 'ignore', 'ignore'] : 'inherit';
   const child = spawn(
     process.execPath,
-    ['--experimental-strip-types', '--import', tsStripLoader, '--import', testSetup, '--test', ...testFiles],
+    ['--experimental-strip-types', '--import', tsStripLoader, '--import', testSetup, '--test', ...nodeTestArgs, ...testFiles],
     {
       cwd: projectRoot,
-      stdio: 'inherit',
+      stdio,
     },
   );
 

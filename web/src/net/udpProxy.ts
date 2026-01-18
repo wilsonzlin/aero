@@ -2,6 +2,7 @@ import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram
 import type { NetTracer } from "./net_tracer";
 import { dcSendSafe } from "./rtcSafe";
 import { buildWebSocketUrl } from "./wsUrl.ts";
+import { unrefBestEffort } from "../unrefSafe";
 import { wsCloseSafe, wsIsClosedSafe, wsIsOpenSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type UdpProxyEvent = {
@@ -224,7 +225,7 @@ export class WebSocketUdpProxyClient {
         }
         settle(new Error("udp relay websocket timed out"));
       }, timeoutMs);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
 
       ws.onopen = () => {
         if (this.ws !== ws) return;

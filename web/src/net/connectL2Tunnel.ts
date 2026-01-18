@@ -3,6 +3,7 @@ import { connectL2Relay } from "./l2RelaySignalingClient";
 import type { RelaySignalingMode } from "./webrtcRelaySignalingClient";
 import { readTextResponseWithLimit } from "../storage/response_json";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type L2TunnelTransportMode = "ws" | "webrtc";
 
@@ -283,7 +284,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       teardownTunnel();
       scheduleReconnect();
     }, idleTimeoutMs);
-    (idleTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(idleTimer);
   }
 
   function installTunnel(sendFrame: (frame: Uint8Array) => void, close: () => void): void {
@@ -338,7 +339,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
         emitErrorThrottled(err);
       }
     }, delayMs);
-    (reconnectTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(reconnectTimer);
   };
 
   const makeSink = (gen: number): L2TunnelSink => {

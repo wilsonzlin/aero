@@ -15,7 +15,9 @@ export function wsIsOpenSafe(ws: WebSocket | null | undefined): boolean {
   }
   try {
     const maybeReadyState = (ws as unknown as { readyState?: unknown }).readyState;
-    return typeof maybeReadyState === "number" ? maybeReadyState === OPEN : false;
+    // If we can't observe a numeric readyState, fail open: the send/close helpers still
+    // guard against sync throws, and production ws implementations should expose a number.
+    return typeof maybeReadyState === "number" ? maybeReadyState === OPEN : true;
   } catch {
     return false;
   }

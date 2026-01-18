@@ -1,6 +1,6 @@
 import type { Duplex } from "node:stream";
 
-import { rejectHttpUpgrade } from "../../../../src/http_upgrade_reject.js";
+import { rejectHttpUpgrade } from "./httpUpgradeReject.js";
 
 // Conservative cap to avoid spending unbounded CPU/memory on attacker-controlled request targets.
 // Many HTTP stacks enforce ~8KB request target limits; keep the gateway strict and predictable.

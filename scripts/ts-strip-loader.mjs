@@ -1,6 +1,12 @@
 // Minimal ESM loader used for running the TypeScript codebase with Node's
 // `--experimental-strip-types` flag (no third-party runtime like `tsx`).
 //
+// This loader is intended to be registered via:
+//
+//   node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs <entry>.ts
+//
+// (Node's legacy `--loader` flag is deprecated; prefer `--import` + `register()`.)
+//
 // The codebase is written using NodeNext-style `.js` import specifiers
 // (e.g. `import './server.js'` from `server.ts`) so that `tsc` emits valid JS.
 //

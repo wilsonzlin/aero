@@ -7,6 +7,7 @@ import {
   wrapRingBuffer as wrapAudioWorkletRingBuffer,
 } from "../audio/audio_worklet_ring";
 import { formatOneLineError, formatOneLineUtf8 } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 
 // The audio worklet processor is loaded at runtime via `AudioWorklet.addModule()`.
 //
@@ -937,7 +938,7 @@ export function startAudioPerfSampling(
 
   sample();
   const intervalId = globalThis.setInterval(sample, intervalMs);
-  (intervalId as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(intervalId);
   let stopped = false;
   return () => {
     if (stopped) return;

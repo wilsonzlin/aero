@@ -1,5 +1,6 @@
 import type { WebUsbBackendOptions } from "./webusb_backend";
 import type { UsbBrokerPortLike } from "./webusb_passthrough_runtime";
+import { unrefBestEffort } from "../unrefSafe";
 
 /**
  * Create a dedicated {@link MessagePort} attached to the main-thread {@link UsbBroker}.
@@ -30,8 +31,8 @@ export function createUsbBrokerSubport<TParent extends UsbBrokerPortLike>(
 
     try {
       // Node/Vitest may keep MessagePorts alive; unref so unit tests don't hang.
-      (channel.port1 as unknown as { unref?: () => void }).unref?.();
-      (channel.port2 as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(channel.port1);
+      unrefBestEffort(channel.port2);
     } catch {
       // ignore
     }

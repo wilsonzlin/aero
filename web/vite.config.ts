@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import type http from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
@@ -9,6 +10,7 @@ import {
   crossOriginIsolationHeaders,
   cspHeaders,
 } from "../scripts/security_headers.mjs";
+import { destroyBestEffort } from "../src/socket_safe.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -107,23 +109,32 @@ function aeroBuildInfoPlugin(): Plugin {
       });
     },
     configureServer(server) {
-      server.middlewares.use((req, res, next) => {
+      server.middlewares.use((req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => {
         const pathname = req.url?.split("?", 1)[0];
         if (pathname !== "/aero.version.json") return next();
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "application/json; charset=utf-8");
-        res.end(jsonBody);
+        try {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.end(jsonBody);
+        } catch {
+          destroyBestEffort(res);
+        }
       });
     },
   };
 }
 function wasmMimeTypePlugin(): Plugin {
   const installWasmMiddleware = (middlewares: { use: (...args: any[]) => any }) => {
-    middlewares.use((req: { url?: string }, res: { setHeader: (name: string, value: string) => void }, next: () => void) => {
+    middlewares.use((req: http.IncomingMessage, res: http.ServerResponse, next: () => void) => {
       // `instantiateStreaming` requires the correct MIME type.
       const pathname = req.url?.split("?", 1)[0];
       if (pathname?.endsWith(".wasm")) {
-        res.setHeader("Content-Type", "application/wasm");
+        try {
+          res.setHeader("Content-Type", "application/wasm");
+        } catch {
+          destroyBestEffort(res);
+          return;
+        }
       }
       next();
     });
@@ -177,19 +188,19 @@ function persistentCacheShimPlugin(): Plugin {
   const installShimMiddleware = (middlewares: { use: (...args: any[]) => any }) => {
     middlewares.use(
       (
-        req: { url?: string },
-        res: {
-          statusCode?: number;
-          setHeader: (name: string, value: string) => void;
-          end: (body?: string) => void;
-        },
+        req: http.IncomingMessage,
+        res: http.ServerResponse,
         next: () => void,
       ) => {
         const pathname = req.url?.split("?", 1)[0];
         if (pathname !== "/js/persistent_cache_shim.js") return next();
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "text/javascript; charset=utf-8");
-        res.end(source);
+        try {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+          res.end(source);
+        } catch {
+          destroyBestEffort(res);
+        }
       },
     );
   };

@@ -7,6 +7,7 @@ import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 
 import { handleTcpProxyUpgrade } from "../src/routes/tcpProxy.js";
+import { unrefBestEffort } from "../../../src/unref_safe.js";
 
 async function listen(server: http.Server | net.Server, host?: string): Promise<number> {
   server.listen(0, host);
@@ -76,7 +77,7 @@ function nextMessage(ws: WebSocket): Promise<ArrayBuffer> {
 function nextClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket close")), timeoutMs);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
     ws.addEventListener(
       "close",
       (event) => {

@@ -1,5 +1,6 @@
 import { openFileHandle, removeOpfsEntry } from "../platform/opfs.ts";
 import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
+import { unrefBestEffort } from "../unrefSafe";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { IdbRemoteChunkCache, IdbRemoteChunkCacheQuotaError } from "./idb_remote_chunk_cache";
 import { RemoteCacheManager, remoteChunkedDeliveryType, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
@@ -815,7 +816,7 @@ function parseUrlMaybe(url: string): URL | null {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
 }
 
@@ -924,7 +925,7 @@ class RemoteChunkCache implements ChunkCache {
         // best-effort
       });
     }, DEBOUNCE_MS);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     this.metaFlushTimer = timer;
   }
 

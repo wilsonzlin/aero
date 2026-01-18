@@ -1,5 +1,6 @@
 import type { UsbHostCompletion } from "./usb_passthrough_types";
 import { UsbProxyRing } from "./usb_proxy_ring";
+import { unrefBestEffort } from "../unrefSafe";
 
 type CompletionHandler = (completion: UsbHostCompletion) => void;
 type ErrorHandler = (err: unknown) => void;
@@ -108,7 +109,7 @@ function ensureTimer(entry: DispatcherEntry): void {
   if (entry.broken) return;
   if (entry.timer) return;
   entry.timer = setInterval(() => drain(entry), entry.drainIntervalMs);
-  (entry.timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(entry.timer);
 }
 
 function maybeStopTimer(entry: DispatcherEntry): void {

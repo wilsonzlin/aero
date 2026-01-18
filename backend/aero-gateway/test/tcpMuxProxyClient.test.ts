@@ -18,9 +18,10 @@ import {
   TcpMuxFrameParser,
   TcpMuxMsgType,
   WebSocketTcpMuxProxyClient,
-} from "../../../web/src/net/tcpMuxProxy.js";
+} from "../../../web/src/net/tcpMuxProxy.ts";
 
-import { WebSocketTcpProxyMuxClient, type TcpProxyEvent } from "../../../web/src/net/tcpProxy.js";
+import { WebSocketTcpProxyMuxClient, type TcpProxyEvent } from "../../../web/src/net/tcpProxy.ts";
+import { unrefBestEffort } from "../../../src/unref_safe.js";
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
   const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
@@ -52,7 +53,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
     timer = setTimeout(() => reject(new Error(message)), timeoutMs);
     // Avoid keeping the process open just for the timer in case the promise
     // settles quickly.
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
   try {
     return await Promise.race([promise, timeout]);

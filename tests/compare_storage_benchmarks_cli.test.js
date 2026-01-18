@@ -4,6 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const TS_STRIP_LOADER_URL = new URL("../scripts/register-ts-strip-loader.mjs", import.meta.url);
+const COMPARE_STORAGE_SCRIPT_PATH = fileURLToPath(new URL("../scripts/compare_storage_benchmarks.ts", import.meta.url));
 
 function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -15,12 +20,12 @@ function runCompare(args, opts = {}) {
     [
       "--experimental-strip-types",
       "--import",
-      "./scripts/register-ts-strip-loader.mjs",
-      "scripts/compare_storage_benchmarks.ts",
+      TS_STRIP_LOADER_URL.href,
+      COMPARE_STORAGE_SCRIPT_PATH,
       ...args,
     ],
     {
-      cwd: path.resolve("."),
+      cwd: REPO_ROOT,
       env: { ...process.env, ...(opts.env ?? {}) },
       encoding: "utf8",
     },
@@ -266,9 +271,9 @@ test("compare_storage_benchmarks CLI exits 2 (unstable) when a required metric i
 test("compare_storage_benchmarks CLI supports --help", () => {
   const res = spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "--import", "./scripts/register-ts-strip-loader.mjs", "scripts/compare_storage_benchmarks.ts", "--help"],
+    ["--experimental-strip-types", "--import", TS_STRIP_LOADER_URL.href, COMPARE_STORAGE_SCRIPT_PATH, "--help"],
     {
-      cwd: path.resolve("."),
+      cwd: REPO_ROOT,
       encoding: "utf8",
     },
   );

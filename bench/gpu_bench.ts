@@ -3,7 +3,7 @@
  *
  * This file provides:
  * - `runGpuBenchmarksInPage(page, opts)` for Playwright tests/CI
- * - a small CLI (`node --experimental-strip-types bench/gpu_bench.ts`) for
+ * - a small CLI (`node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/gpu_bench.ts`) for
  *   local execution which writes a JSON report to stdout or a file.
  */
 
@@ -17,6 +17,8 @@ import { fileURLToPath } from "node:url";
 import { transform } from "esbuild";
 import { RunningStats } from "../packages/aero-stats/src/running-stats.js";
 import { formatOneLineError, truncateUtf8 } from "../src/text.js";
+import { destroyBestEffort } from "../src/socket_safe.js";
+import { tryWriteResponse } from "../src/http_response_safe.js";
 
 const execFile = promisify(execFileCb);
 
@@ -442,16 +444,21 @@ async function startBenchServer(viewport) {
 `;
 
   const server = http.createServer((req, res) => {
-    res.statusCode = 200;
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    res.end(html);
+    tryWriteResponse(
+      res,
+      200,
+      {
+        "content-type": "text/html; charset=utf-8",
+      },
+      html,
+    );
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 
   const addr = server.address();
   if (!addr || typeof addr === "string") {
-    server.close();
+    destroyBestEffort(server);
     throw new Error("Failed to bind benchmark server");
   }
   const url = `http://127.0.0.1:${addr.port}/`;

@@ -65,6 +65,7 @@ if (!current) {
 
 const versionCmp = compareVersions(current, expected);
 const allowUnsupported = envFlag("AERO_ALLOW_UNSUPPORTED_NODE");
+const quiet = envFlag("AERO_CHECK_NODE_QUIET");
 // Some commands (notably `cargo xtask test-all` when running wasm-pack tests) require the same Node
 // *major* as CI to avoid toolchain flakiness/hangs in unsupported Node releases.
 const enforceMajor = envFlag("AERO_ENFORCE_NODE_MAJOR");
@@ -132,19 +133,17 @@ if (tooOld) {
     process.exit(1);
   }
 } else if (current.raw !== expected.raw) {
-  if (current.major !== expected.major) {
-    console.warn("note: Node.js major version differs from CI baseline.");
-  } else {
-    console.warn("note: Node.js version differs from CI baseline.");
-  }
-  console.warn(`- Detected: v${current.raw}`);
-  console.warn(`- CI uses:  v${expected.raw} (from .nvmrc)`);
-  console.warn(`- Recommended: ${recommendedRange}`);
+  if (quiet) process.exit(0);
+
   if (current.major !== expected.major) {
     console.warn(
-      `- This repo is CI-tested on Node ${expected.major}.x; newer majors may work but aren't covered.`,
+      `note: Node.js major version differs from CI baseline (detected v${current.raw}, CI v${expected.raw}).`,
     );
+  } else {
+    console.warn(`note: Node.js version differs from CI baseline (detected v${current.raw}, CI v${expected.raw}).`);
   }
+  console.warn(`- Recommended: ${recommendedRange}`);
+  if (current.major !== expected.major) console.warn(`- CI-tested: Node ${expected.major}.x`);
   console.warn("If you see odd toolchain issues, align your local version:");
   console.warn("  nvm install && nvm use");
 }

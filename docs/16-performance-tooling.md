@@ -349,7 +349,7 @@ npm run bench:gpu -- --scenarios vga_text_scroll,vbe_lfb_blit --iterations 7 --h
 Compare two GPU bench reports (baseline vs candidate) and emit a Markdown report (plus machine-readable JSON):
 
 ```bash
-node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gpu_benchmarks.ts \
   --baseline gpu_bench_base.json \
   --candidate gpu_bench_head.json \
   --out-dir gpu_bench_compare \
@@ -400,7 +400,7 @@ npm -w backend/aero-gateway run build
 node backend/aero-gateway/bench/run.mjs --mode smoke --json gateway-perf-results/base/raw.json
 node backend/aero-gateway/bench/run.mjs --mode smoke --json gateway-perf-results/head/raw.json
 
-node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gateway_benchmarks.ts \
   --baseline gateway-perf-results/base/raw.json \
   --candidate gateway-perf-results/head/raw.json \
   --out-dir gateway-perf-results/compare \

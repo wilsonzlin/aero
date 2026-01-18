@@ -66,7 +66,7 @@ jobs:
       - name: Run GPU perf (nightly)
         run: |
           set -euo pipefail
-          node --experimental-strip-types bench/gpu_bench.ts \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/gpu_bench.ts \
             --scenarios vga_text_scroll,vbe_lfb_blit,webgpu_triangle_batch,d3d9_state_churn \
             --scenario-params perf-results/gpu/scenario_params.json \
             --swiftshader true \
@@ -76,7 +76,7 @@ jobs:
       - name: Run storage perf (nightly)
         run: |
           set -euo pipefail
-          node --experimental-strip-types bench/runner.ts storage_io \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts storage_io \
             --out-dir perf-results/storage_io
 
       - name: Validate perf export (storage_io, if present)

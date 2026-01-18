@@ -118,7 +118,6 @@ test(
         cleanup();
         reject(new Error("Timed out waiting for io.worker import marker"));
       }, 20_000);
-      (timer as unknown as { unref?: () => void }).unref?.();
     });
 
     let ioWorkerError: string | null = null;
@@ -157,7 +156,6 @@ test(
           cleanup();
           reject(new Error(`Timed out waiting for io.worker message after ${timeoutMs}ms.`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
 
         const onMessage = (ev: MessageEvent<unknown>) => {
           if (ioWorkerError) {

@@ -22,7 +22,7 @@ export function dcBufferedAmountSafe(dc: RTCDataChannel | null | undefined): num
   if (!dc) return 0;
   try {
     const value = (dc as unknown as { bufferedAmount?: unknown }).bufferedAmount;
-    return Number.isFinite(value) ? (value as number) : 0;
+    return Number.isFinite(value) && (value as number) >= 0 ? (value as number) : 0;
   } catch {
     return 0;
   }

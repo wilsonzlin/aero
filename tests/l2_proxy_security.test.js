@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 
 import { wsCloseSafe, wsSendSafe } from "../scripts/_shared/ws_safe.js";
+import { unrefBestEffort } from "../src/unref_safe.js";
 import { WebSocket } from "../tools/minimal_ws.js";
-import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX } from "../web/src/shared/l2TunnelProtocol.js";
+import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
@@ -13,7 +14,7 @@ const L2_PROXY_TEST_TIMEOUT_MS = 900_000;
 function sleep(ms) {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref();
+    unrefBestEffort(timeout);
   });
 }
 
@@ -49,7 +50,7 @@ async function connectOrReject(url, { protocols, ...opts } = {}) {
     const ws = new WebSocket(url, protos, opts);
 
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket outcome")), 2_000);
-    timeout.unref();
+    unrefBestEffort(timeout);
 
     let settled = false;
     const settle = (v) => {
@@ -86,7 +87,7 @@ async function waitForClose(ws, timeoutMs = 2_000) {
       const suffix = lastErr ? ` (last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)})` : "";
       reject(new Error(`timeout waiting for close${suffix}`));
     }, timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("close", (code, reason) => {
       clearTimeout(timeout);
       ws.off("error", onError);

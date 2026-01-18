@@ -12,6 +12,7 @@ import {
 import { PolicyError, resolveAndValidateTarget } from "./policy.js";
 import { formatOneLineError } from "./text.js";
 import { socketWritableLengthExceedsCap, socketWritableLengthOrOverflow } from "../../src/socket_writable_length.js";
+import { callMethodCaptureErrorBestEffort, destroyBestEffort } from "../../src/socket_safe.js";
 import { wsCloseSafe, wsIsOpenSafe } from "../../src/ws_safe.js";
 import { tryGetErrorCode } from "./errorCode.js";
 import { createWsSendQueue } from "../../src/ws_backpressure.js";
@@ -21,6 +22,10 @@ const WS_CLOSE_POLICY_VIOLATION = 1008;
 const WS_CLOSE_UNSUPPORTED_DATA = 1003;
 
 let nextSessionId = 1;
+
+function callMethodCaptureError(obj, key, ...args) {
+  return callMethodCaptureErrorBestEffort(obj, key, ...args);
+}
 
 export class TcpProxyManager {
   constructor({ config, logger, metrics }) {
@@ -98,11 +103,7 @@ class TcpProxySession {
       this.logger.info("ws_closed", { sessionId: this.sessionId, clientIp: this.clientIp });
       this.wsSendQueue.close();
       for (const conn of this.connections.values()) {
-        try {
-          conn.socket.destroy();
-        } catch {
-          // ignore
-        }
+        destroyBestEffort(conn.socket);
       }
       this.connections.clear();
     });
@@ -112,7 +113,19 @@ class TcpProxySession {
     if (!wsIsOpenSafe(this.ws)) return;
     for (const conn of this.connections.values()) {
       if (conn.pausedForWsBackpressure) continue;
-      conn.socket.pause();
+      const err = callMethodCaptureError(conn.socket, "pause");
+      if (err) {
+        conn.lastErrorMessage = "tcp error";
+        conn.closeReasonOverride = CloseReason.ERROR;
+        this.logger.warn("tcp_socket_pause_error", {
+          sessionId: this.sessionId,
+          connId: conn.connId,
+          clientIp: this.clientIp,
+          err: formatOneLineError(err, 512),
+        });
+        destroyBestEffort(conn.socket);
+        continue;
+      }
       conn.pausedForWsBackpressure = true;
     }
   }
@@ -121,7 +134,19 @@ class TcpProxySession {
     if (!wsIsOpenSafe(this.ws)) return;
     for (const conn of this.connections.values()) {
       if (!conn.pausedForWsBackpressure) continue;
-      conn.socket.resume();
+      const err = callMethodCaptureError(conn.socket, "resume");
+      if (err) {
+        conn.lastErrorMessage = "tcp error";
+        conn.closeReasonOverride = CloseReason.ERROR;
+        this.logger.warn("tcp_socket_resume_error", {
+          sessionId: this.sessionId,
+          connId: conn.connId,
+          clientIp: this.clientIp,
+          err: formatOneLineError(err, 512),
+        });
+        destroyBestEffort(conn.socket);
+        continue;
+      }
       conn.pausedForWsBackpressure = false;
     }
   }
@@ -216,11 +241,7 @@ class TcpProxySession {
       } catch (err) {
         this.metrics.increment("tcpRejectedTotal");
         this.#sendOpened(connId, OpenStatus.CONNECT, formatConnectErrorForClient(err));
-        try {
-          socket?.destroy();
-        } catch {
-          // ignore
-        }
+        destroyBestEffort(socket);
         return;
       }
 
@@ -228,7 +249,25 @@ class TcpProxySession {
       this.connections.set(connId, conn);
       if (this.wsSendQueue.isBackpressured()) {
         conn.pausedForWsBackpressure = true;
-        socket.pause();
+        const err = callMethodCaptureError(socket, "pause");
+        if (err) {
+          this.metrics.increment("tcpRejectedTotal");
+          conn.openResponseSent = true;
+          conn.lastErrorMessage = "tcp error";
+          conn.closeReasonOverride = CloseReason.ERROR;
+          this.logger.warn("tcp_socket_pause_error", {
+            sessionId: this.sessionId,
+            connId,
+            clientIp: this.clientIp,
+            err: formatOneLineError(err, 512),
+          });
+          if (wsIsOpenSafe(this.ws)) {
+            this.#sendOpened(connId, OpenStatus.CONNECT, "connect failed");
+          }
+          this.connections.delete(connId);
+          destroyBestEffort(socket);
+          return;
+        }
       }
       TcpProxySession._tcpTotal += 1;
       this.metrics.increment("tcpConnectionsTotal");
@@ -291,17 +330,17 @@ class TcpProxySession {
       if (wsIsOpenSafe(this.ws)) this.#sendClose(connId, CloseReason.PROTOCOL, "Unknown connId");
       return;
     }
-    try {
-      conn.socket.write(data);
-    } catch (err) {
+    const err = callMethodCaptureError(conn.socket, "write", data);
+    if (err) {
       conn.lastErrorMessage = "tcp error";
       conn.closeReasonOverride = CloseReason.ERROR;
-      this.logger.warn("tcp_socket_write_error", { sessionId: this.sessionId, connId, clientIp: this.clientIp, err: formatOneLineError(err, 512) });
-      try {
-        conn.socket.destroy();
-      } catch {
-        // ignore
-      }
+      this.logger.warn("tcp_socket_write_error", {
+        sessionId: this.sessionId,
+        connId,
+        clientIp: this.clientIp,
+        err: formatOneLineError(err, 512),
+      });
+      destroyBestEffort(conn.socket);
       return;
     }
 
@@ -317,28 +356,24 @@ class TcpProxySession {
         buffered,
         maxBuffered: this.config.maxTcpBufferedBytesPerConn,
       });
-      try {
-        conn.socket.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(conn.socket);
     }
   }
 
   #handleClientEnd(connId) {
     const conn = this.connections.get(connId);
     if (!conn) return;
-    try {
-      conn.socket.end();
-    } catch (err) {
+    const err = callMethodCaptureError(conn.socket, "end");
+    if (err) {
       conn.lastErrorMessage = "tcp error";
       conn.closeReasonOverride = CloseReason.ERROR;
-      this.logger.warn("tcp_socket_end_error", { sessionId: this.sessionId, connId, clientIp: this.clientIp, err: formatOneLineError(err, 512) });
-      try {
-        conn.socket.destroy();
-      } catch {
-        // ignore
-      }
+      this.logger.warn("tcp_socket_end_error", {
+        sessionId: this.sessionId,
+        connId,
+        clientIp: this.clientIp,
+        err: formatOneLineError(err, 512),
+      });
+      destroyBestEffort(conn.socket);
     }
   }
 
@@ -346,11 +381,7 @@ class TcpProxySession {
     const conn = this.connections.get(connId);
     if (!conn) return;
     conn.closeReasonOverride = CloseReason.NORMAL;
-    try {
-      conn.socket.destroy();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(conn.socket);
   }
 }
 

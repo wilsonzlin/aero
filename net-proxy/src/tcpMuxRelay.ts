@@ -1,14 +1,24 @@
 import net from "node:net";
 import { createWebSocketStream, type WebSocket } from "ws";
 
-import { socketWritableLengthOrOverflow } from "../../src/socket_writable_length.cjs";
-import { tryGetStringProp } from "../../src/safe_props.cjs";
+import { socketWritableLengthOrOverflow } from "./socketWritableLength";
+import { tryGetStringProp } from "./safeProps";
+import { unrefBestEffort } from "./unrefSafe";
 
 import type { ProxyConfig } from "./config";
 import type { ProxyServerMetrics } from "./metrics";
 import { formatError, log } from "./logger";
 import { resolveAndAuthorizeTarget } from "./security";
 import { normalizeTargetHostForPolicy } from "./targetQuery";
+import {
+  destroyBestEffort,
+  destroyWithErrorBestEffort,
+  endCaptureErrorBestEffort,
+  pauseBestEffort,
+  removeAllListenersBestEffort,
+  resumeBestEffort,
+  writeCaptureErrorBestEffort,
+} from "./socketSafe";
 import { wsCloseSafe, wsIsOpenSafe } from "./wsClose";
 import { formatOneLineUtf8 } from "./text";
 import { tryGetErrorCode } from "./errorCode";
@@ -95,7 +105,7 @@ export function handleTcpMuxRelay(
     if (pausedForWsBackpressure) return;
     pausedForWsBackpressure = true;
     for (const stream of streams.values()) {
-      stream.socket?.pause();
+      pauseBestEffort(stream.socket);
     }
   };
 
@@ -103,7 +113,7 @@ export function handleTcpMuxRelay(
     if (!pausedForWsBackpressure) return;
     pausedForWsBackpressure = false;
     for (const stream of streams.values()) {
-      stream.socket?.resume();
+      resumeBestEffort(stream.socket);
     }
   };
 
@@ -116,12 +126,8 @@ export function handleTcpMuxRelay(
     }
     if (stream.socket) {
       metrics.tcpMuxStreamsActiveDec();
-      stream.socket.removeAllListeners();
-      try {
-        stream.socket.destroy();
-      } catch {
-        // ignore
-      }
+      removeAllListenersBestEffort(stream.socket);
+      destroyBestEffort(stream.socket);
     }
   };
 
@@ -139,11 +145,7 @@ export function handleTcpMuxRelay(
     } else {
       // If the websocket is already closed or closing, ensure the stream wrapper
       // is torn down without relying on a close event.
-      try {
-        wsStream.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(wsStream);
     }
 
     log("info", "conn_close", {
@@ -162,16 +164,14 @@ export function handleTcpMuxRelay(
     if (closed) return;
     if (!wsIsOpenSafe(ws)) return;
     const frame = encodeTcpMuxFrame(msgType, streamId, payload);
-    let ok = false;
-    try {
-      ok = wsStream.write(frame);
-    } catch (err) {
+    const res = writeCaptureErrorBestEffort(wsStream, frame);
+    if (res.err) {
       closeAll("ws_stream_write_error", 1011, "WebSocket stream error");
       metrics.incConnectionError("error");
-      log("error", "connect_error", { connId, proto: "tcp-mux", clientAddress, err: formatError(err) });
+      log("error", "connect_error", { connId, proto: "tcp-mux", clientAddress, err: formatError(res.err) });
       return;
     }
-    if (!ok) {
+    if (!res.ok) {
       pauseAllTcpReads();
     }
   };
@@ -219,12 +219,10 @@ export function handleTcpMuxRelay(
     while (stream.pendingWrites.length > 0) {
       const chunk = stream.pendingWrites.shift()!;
       stream.pendingWriteBytes -= chunk.length;
-      let ok = false;
-      try {
-        ok = stream.socket.write(chunk);
-      } catch (err) {
+      const res = writeCaptureErrorBestEffort(stream.socket, chunk);
+      if (res.err) {
         metrics.incConnectionError("error");
-        sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
+        sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(res.err));
         destroyStream(stream.id);
         log("error", "connect_error", {
           connId,
@@ -233,12 +231,12 @@ export function handleTcpMuxRelay(
           host: stream.host,
           port: stream.port,
           clientAddress,
-          err: formatError(err)
+          err: formatError(res.err)
         });
         return;
       }
       if (!enforceTcpBackpressure(stream)) return;
-      if (!ok) {
+      if (!res.ok) {
         stream.writePaused = true;
         break;
       }
@@ -246,9 +244,8 @@ export function handleTcpMuxRelay(
 
     if (stream.clientFin && !stream.clientFinSent && stream.pendingWrites.length === 0) {
       stream.clientFinSent = true;
-      try {
-        stream.socket.end();
-      } catch (err) {
+      const err = endCaptureErrorBestEffort(stream.socket);
+      if (err) {
         metrics.incConnectionError("error");
         sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
         destroyStream(stream.id);
@@ -411,17 +408,13 @@ export function handleTcpMuxRelay(
 
       current.socket = tcpSocket;
       if (pausedForWsBackpressure) {
-        tcpSocket.pause();
+        pauseBestEffort(tcpSocket);
       }
 
       const connectTimer = setTimeout(() => {
-        try {
-          tcpSocket.destroy(new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
-        } catch {
-          // ignore
-        }
+        destroyWithErrorBestEffort(tcpSocket, new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
       }, config.connectTimeoutMs);
-      connectTimer.unref();
+      unrefBestEffort(connectTimer);
       current.connectTimer = connectTimer;
 
       tcpSocket.once("connect", () => {
@@ -498,12 +491,10 @@ export function handleTcpMuxRelay(
       return;
     }
 
-    let ok = false;
-    try {
-      ok = stream.socket.write(frame.payload);
-    } catch (err) {
+    const res = writeCaptureErrorBestEffort(stream.socket, frame.payload);
+    if (res.err) {
       metrics.incConnectionError("error");
-      sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
+      sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(res.err));
       destroyStream(stream.id);
       log("error", "connect_error", {
         connId,
@@ -512,12 +503,12 @@ export function handleTcpMuxRelay(
         host: stream.host,
         port: stream.port,
         clientAddress,
-        err: formatError(err)
+        err: formatError(res.err)
       });
       return;
     }
     if (!enforceTcpBackpressure(stream)) return;
-    if (!ok) {
+    if (!res.ok) {
       stream.writePaused = true;
     }
   };

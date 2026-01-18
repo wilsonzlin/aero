@@ -73,7 +73,7 @@ jobs:
         working-directory: head
         run: |
           set +e
-          node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gateway_benchmarks.ts \
             --baseline gateway-perf-results/base/raw.json \
             --candidate gateway-perf-results/head/raw.json \
             --out-dir gateway-perf-results/compare \

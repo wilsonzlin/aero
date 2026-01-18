@@ -55,7 +55,7 @@ export function wsBufferedAmountSafe(ws: WebSocket | null | undefined): number {
   if (!ws) return 0;
   try {
     const value = (ws as unknown as { bufferedAmount?: unknown }).bufferedAmount;
-    return Number.isFinite(value) ? (value as number) : 0;
+    return Number.isFinite(value) && (value as number) >= 0 ? (value as number) : 0;
   } catch {
     return 0;
   }

@@ -11,6 +11,15 @@ function nextImmediate() {
   return new Promise((r) => setImmediate(r));
 }
 
+async function waitUntil(predicate, { timeoutMs = 250, intervalMs = 5 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return true;
+    await wait(intervalMs);
+  }
+  return predicate();
+}
+
 test("ws_backpressure: pauses sources when backlog exceeds high watermark and resumes after drain", async () => {
   const events = [];
 
@@ -43,11 +52,28 @@ test("ws_backpressure: pauses sources when backlog exceeds high watermark and re
 
   // Simulate drain on the underlying ws implementation.
   ws.bufferedAmount = 0;
-  await wait(25);
+  const resumed = await waitUntil(() => events.includes("resume"), { timeoutMs: 250, intervalMs: 5 });
+  assert.equal(resumed, true);
 
   assert.equal(events.filter((e) => e === "resume").length, 1);
   assert.equal(q.isBackpressured(), false);
   q.close();
+});
+
+test("ws_backpressure: createWsSendQueue tolerates missing opts", async () => {
+  const q = createWsSendQueue();
+  assert.equal(typeof q.enqueue, "function");
+  assert.equal(typeof q.isBackpressured, "function");
+  assert.equal(typeof q.backlogBytes, "function");
+  assert.equal(typeof q.close, "function");
+
+  q.enqueue(Buffer.from("hello"));
+  await nextImmediate();
+  assert.equal(q.isBackpressured(), false);
+  assert.ok(q.backlogBytes() > 0);
+
+  q.close();
+  assert.equal(q.backlogBytes(), 0);
 });
 
 test("ws_backpressure: calls onSendError when ws.send throws", async () => {
@@ -73,7 +99,7 @@ test("ws_backpressure: calls onSendError when ws.send throws", async () => {
   });
 
   q.enqueue(Buffer.from("hi"));
-  await wait(1);
+  await nextImmediate();
 
   assert.equal(events.includes("send_error"), true);
   q.close();
@@ -103,6 +129,33 @@ test("ws_backpressure: does not throw if bufferedAmount getter throws", async ()
   await nextImmediate();
 
   assert.equal(events.includes("pause"), true);
+  q.close();
+});
+
+test("ws_backpressure: clamps negative bufferedAmount to 0", () => {
+  const ws = { bufferedAmount: -1, send() {}, terminate() {} };
+  const q = createWsSendQueue({ ws, highWatermarkBytes: 1, lowWatermarkBytes: 1 });
+  assert.equal(q.backlogBytes(), 0);
+  q.close();
+});
+
+test("ws_backpressure: does not treat primitive ws as open", async () => {
+  const events = [];
+  // @ts-expect-error - intentionally invalid.
+  const q = createWsSendQueue({
+    ws: 123,
+    highWatermarkBytes: 1,
+    lowWatermarkBytes: 1,
+    pollMs: 10,
+    onPauseSources: () => events.push("pause"),
+    onResumeSources: () => events.push("resume"),
+    onSendError: () => events.push("send_error"),
+  });
+
+  q.enqueue(Buffer.alloc(2));
+  await nextImmediate();
+  assert.equal(events.length, 0);
+  assert.equal(q.isBackpressured(), false);
   q.close();
 });
 

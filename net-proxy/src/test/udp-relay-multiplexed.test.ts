@@ -4,6 +4,7 @@ import dgram from "node:dgram";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../udpRelayProtocol";
+import { unrefBestEffort } from "../unrefSafe";
 
 async function startUdpEchoServer(type: "udp4" | "udp6", host: string): Promise<{ port: number; close: () => Promise<void> }> {
   const server = dgram.createSocket(type);
@@ -112,7 +113,7 @@ async function openWebSocket(url: string): Promise<WebSocket> {
   const ws = new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), 2_000);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("open", () => {
       clearTimeout(timeout);
       resolve();
@@ -128,7 +129,7 @@ async function openWebSocket(url: string): Promise<WebSocket> {
 async function waitForBinaryMessage(ws: WebSocket, timeoutMs = 2_000): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for message")), timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("message", (data, isBinary) => {
       clearTimeout(timeout);
       assert.equal(isBinary, true);
@@ -162,7 +163,7 @@ async function assertNoMessage(ws: WebSocket, timeoutMs = 250): Promise<void> {
       cleanup();
       resolve();
     }, timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
 
     ws.on("message", onMessage);
     ws.on("error", onError);
@@ -172,7 +173,7 @@ async function assertNoMessage(ws: WebSocket, timeoutMs = 250): Promise<void> {
 async function waitForClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for close")), timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("close", (code, reason) => {
       clearTimeout(timeout);
       resolve({ code, reason: reason.toString() });
@@ -298,7 +299,7 @@ test("udp multiplexed relay: drops packets from unexpected remote ports", async 
       server.received,
       new Promise<void>((_resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("timeout waiting for UDP server")), 1_000);
-        timeout.unref();
+        unrefBestEffort(timeout);
       })
     ]);
     await noMessagePromise;
@@ -424,6 +425,47 @@ test("udp multiplexed relay: closes with 1011 if UDP socket creation throws", as
 
     t.mock.method(dgram, "createSocket", () => {
       throw new Error("boom");
+    });
+
+    const frame = encodeUdpRelayV1Datagram({
+      guestPort: 12345,
+      remoteIpv4: [127, 0, 0, 1],
+      remotePort: 9,
+      payload: Buffer.from([1])
+    });
+
+    try {
+      ws.send(frame);
+    } catch {
+      // ignore close races
+    }
+
+    const closed = await waitForClose(ws);
+    assert.equal(closed.code, 1011);
+    ws = null;
+  } finally {
+    ws?.terminate();
+    await proxy.close();
+  }
+});
+
+test("udp multiplexed relay: closes with 1011 if UDP send throws synchronously", async (t) => {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+  let ws: WebSocket | null = null;
+
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/udp`);
+
+    const originalCreateSocket = dgram.createSocket.bind(dgram);
+    t.mock.method(dgram, "createSocket", (...args: unknown[]) => {
+      const socket = (originalCreateSocket as unknown as (...a: unknown[]) => dgram.Socket)(...args);
+      const socketForMock = socket as unknown as { send: (...a: unknown[]) => unknown };
+      t.mock.method(socketForMock, "send", () => {
+        throw new Error("boom");
+      });
+      return socket;
     });
 
     const frame = encodeUdpRelayV1Datagram({

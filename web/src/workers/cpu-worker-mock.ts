@@ -7,6 +7,7 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
 } from "../ipc/shared-layout";
 import { FRAME_DIRTY, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "../ipc/gpu-protocol";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type CpuWorkerMockInitMessage = {
   type: "init";
@@ -145,5 +146,5 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
     // Wake the GPU worker (which waits on FRAME_SEQ).
     Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 1);
   }, intervalMs);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
 };

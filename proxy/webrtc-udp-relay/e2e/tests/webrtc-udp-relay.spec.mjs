@@ -10,6 +10,8 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { unrefBestEffort } from "../../../../src/unref_safe.js";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -45,7 +47,7 @@ function mintHS256JWT({ sid, iat, exp, secret, extraClaims = {} }) {
 function sleep(ms) {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
   });
 }
 
@@ -270,7 +272,7 @@ async function startUdpServerWithDelayedRepeat(socketType, host, { delayMs, late
         // ignore
       }
     }, delayMs);
-    timer.unref?.();
+    unrefBestEffort(timer);
   });
 
   const { port } = socket.address();
@@ -357,7 +359,7 @@ async function spawnGoReadyServer({ name, pkg, env }) {
 
   const port = await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`${name} did not start`)), 10_000);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
     let buffer = "";
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString("utf8");

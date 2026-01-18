@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
+import { unrefBestEffort } from "../unrefSafe";
 import { openRingByKind } from "../ipc/ipc";
 import { encodeCommand } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
@@ -22,6 +23,7 @@ import {
 } from "../runtime/shared_layout";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+import { NET_WORKER_NODE_EXEC_ARGV as NET_WORKER_EXEC_ARGV } from "./test_utils/worker_exec_argv";
 
 function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false;
@@ -121,7 +123,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
       cleanup();
       reject(new Error(`timed out after ${effectiveTimeoutMs}ms waiting for worker message`));
     }, effectiveTimeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
 
     const onMessage = (msg: unknown) => {
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
@@ -211,11 +213,9 @@ describe("workers/net.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const token = "sekrit";
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -253,11 +253,9 @@ describe("workers/net.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const token = "sekrit";
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -294,11 +292,9 @@ describe("workers/net.worker (worker_threads)", () => {
   it("falls back to direct proxyUrl when POST /session is unavailable", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -342,11 +338,9 @@ describe("workers/net.worker (worker_threads)", () => {
   it("falls back to /l2 derived from base proxyUrl when POST /session is unavailable", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -395,11 +389,9 @@ describe("workers/net.worker (worker_threads)", () => {
   it("falls back to connecting directly when POST /session throws (network error)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -448,11 +440,9 @@ describe("workers/net.worker (worker_threads)", () => {
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     const commandRing = new RingBuffer(segments.control, ringRegionsForWorker("net").command.byteOffset);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -645,11 +635,9 @@ describe("workers/net.worker (worker_threads)", () => {
 
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     type SentFrame = { seq: number; payload: Uint8Array };
@@ -765,11 +753,9 @@ describe("workers/net.worker (worker_threads)", () => {
   it("falls back to connecting directly when POST /session fails", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -809,11 +795,9 @@ describe("workers/net.worker (worker_threads)", () => {
   it("falls back to connecting directly when POST /session returns invalid JSON", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -856,11 +840,9 @@ describe("workers/net.worker (worker_threads)", () => {
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1046,11 +1028,9 @@ describe("workers/net.worker (worker_threads)", () => {
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1151,11 +1131,9 @@ describe("workers/net.worker (worker_threads)", () => {
     // already polls in short slices and this test is less meaningful).
     if (typeof (Atomics as unknown as { waitAsync?: unknown }).waitAsync !== "function") return;
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: NET_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {

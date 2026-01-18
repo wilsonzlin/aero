@@ -25,6 +25,7 @@ import {
 } from "../shared/l2TunnelProtocol";
 import { dcBufferedAmountSafe, dcCloseSafe, dcIsOpenSafe, dcSendSafe } from "./rtcSafe";
 import { wsBufferedAmountSafe, wsCloseSafe, wsIsClosedSafe, wsIsOpenSafe, wsProtocolSafe, wsSendSafe } from "./wsSafe.ts";
+import { unrefBestEffort } from "../unrefSafe";
 
 export { L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_DATA_CHANNEL_LABEL };
 
@@ -503,7 +504,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }, DEFAULT_DRAIN_RETRY_MS);
     // In Node-based test runners (Vitest), referenced timers can keep the process alive after a
     // test finishes. Browsers return a numeric handle, so use a safe cast.
-    (this.drainRetryTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.drainRetryTimer);
   }
 
   private clearDrainRetryTimer(): void {
@@ -539,7 +540,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       this.keepaliveTimer = null;
       this.sendPing();
     }, delay);
-    (this.keepaliveTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.keepaliveTimer);
   }
 
   private sendPing(): void {

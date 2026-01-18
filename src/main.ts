@@ -6,6 +6,7 @@
 import './style.css';
 
 import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from './text.js';
+import { unrefBestEffort } from './unref_safe.js';
 
 import { installPerfHud } from '../web/src/perf/hud_entry';
 import { perf } from '../web/src/perf/perf';
@@ -441,7 +442,7 @@ async function runWebUsbProbeWorker(
       webUsbProbePending.delete(id);
       reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-    (timeoutHandle as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timeoutHandle);
 
     webUsbProbePending.set(id, { resolve, reject, timeoutHandle });
 
@@ -1035,7 +1036,7 @@ function renderAudioPanel(): HTMLElement {
   function sleepMs(ms: number): Promise<void> {
     return new Promise((resolve) => {
       const timer = window.setTimeout(resolve, ms);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
     });
   }
 
@@ -1165,7 +1166,7 @@ function renderAudioPanel(): HTMLElement {
         `underrunFrames: ${metrics.underrunCount}\n` +
         `overrunFrames: ${metrics.overrunCount}`;
     }, 20);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     toneTimer = timer as unknown as number;
   }
 
@@ -1379,7 +1380,7 @@ function renderAudioPanel(): HTMLElement {
           cleanup();
           reject(new Error(`Timed out waiting for HDA demo worker init (${timeoutMs}ms).`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
 
         const cleanup = () => {
           window.clearTimeout(timer);
@@ -1445,7 +1446,7 @@ function renderAudioPanel(): HTMLElement {
           `ring.writeFrameIndex: ${write}` +
           (demoLines.length ? `\n${demoLines.join("\n")}` : "");
       }, 50);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       toneTimer = timer as unknown as number;
     },
   });
@@ -1522,7 +1523,7 @@ function renderAudioPanel(): HTMLElement {
           cleanup();
           reject(new Error(`Timed out waiting for virtio-snd demo worker init (${timeoutMs}ms).`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
 
         const cleanup = () => {
           window.clearTimeout(timer);
@@ -1590,7 +1591,7 @@ function renderAudioPanel(): HTMLElement {
           `ring.writeFrameIndex: ${write}` +
           (demoLines.length ? `\n${demoLines.join("\n")}` : "");
       }, 50);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       toneTimer = timer as unknown as number;
     },
   });
@@ -1702,7 +1703,7 @@ function renderAudioPanel(): HTMLElement {
           cleanup();
           reject(new Error(`Timed out waiting for HDA PCI device init (${timeoutMs}ms).`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
         const cleanup = () => {
           window.clearTimeout(timer);
           cpu.removeEventListener("message", onMessage as EventListener);
@@ -1751,7 +1752,7 @@ function renderAudioPanel(): HTMLElement {
           `pci: ${formatLocaleInt(pciBus)}:${formatLocaleInt(pciDev)}.${formatLocaleInt(pciFn)}\n` +
           `bar0: 0x${formatHex(initInfo.bar0)}`;
       }, 50);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       hdaPciDeviceTimer = timer as unknown as number;
     },
   });
@@ -1888,7 +1889,7 @@ function renderAudioPanel(): HTMLElement {
             need -= written;
           }
         }, 25);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
         loopbackTimer = timer as unknown as number;
       }
 
@@ -2026,7 +2027,7 @@ function renderAudioPanel(): HTMLElement {
             cleanup();
             reject(new Error(`Timed out waiting for HDA capture setup (${timeoutMs}ms).`));
           }, timeoutMs);
-          (timer as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timer);
 
           const onMessage = (ev: MessageEvent) => {
             const data = ev.data as Partial<ReadyMsg | ErrorMsg> | null;
@@ -2220,7 +2221,7 @@ function renderInputBackendHudPanel(): HTMLElement {
   };
 
   const timer = window.setInterval(update, 200);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   update();
 
   return el("div", { class: "panel" }, el("h2", { text: "Input backend HUD" }), output);
@@ -2623,7 +2624,7 @@ function renderRemoteDiskPanel(): HTMLElement {
   }
 
   const statsTimer = window.setInterval(() => void refreshStats(), 250);
-  (statsTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(statsTimer);
 
   probeButton.onclick = async () => {
     output.textContent = '';
@@ -3042,7 +3043,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   const uiTickTimer = globalThis.setInterval(() => {
     window.__aeroUiTicks = (window.__aeroUiTicks ?? 0) + 1;
   }, 25);
-  (uiTickTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(uiTickTimer);
 
   const stateLine = el('div', { class: 'mono', id: 'vm-state', text: 'state=stopped' });
   const heartbeatLine = el('div', { class: 'mono', id: 'vm-heartbeat', text: 'heartbeat=0' });
@@ -3332,7 +3333,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   }) as HTMLButtonElement;
 
   const updateTimer = globalThis.setInterval(update, 250);
-  (updateTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(updateTimer);
 
   return el(
     'div',

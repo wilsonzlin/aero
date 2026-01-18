@@ -72,6 +72,8 @@ RLIMIT_AS limits **virtual address space**, not resident memory (RSS). Some runt
 - `WebAssembly.Instance(): Out of memory: Cannot allocate Wasm memory for new instance`
 - `WebAssembly.Memory(): could not allocate memory`
 
+Note: `scripts/safe-run.sh` will **auto-bump** its default address-space cap for **Node/WASM-heavy test entrypoints** (and Playwright) when `AERO_MEM_LIMIT` is unset. This is why you may see `Memory: 256G` in safe-run logs even though the general default is `12G`.
+
 If you hit this while running JS/TS tooling (for example `npm -w web run test:unit`), re-run with a larger address-space limit for that command (or disable it) while keeping the timeout:
 
 ```bash

@@ -5,6 +5,8 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { formatOneLineError, formatOneLineUtf8 } = require('../../../scripts/_shared/text_one_line.cjs');
+const { tryWriteResponse } = require('../../../src/http_response_safe.cjs');
+const { unrefBestEffort } = require('../../../src/unref_safe.cjs');
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -15,16 +17,16 @@ const PUBLIC_IMAGE_ID = 'win7';
 const PRIVATE_IMAGE_ID = 'secret';
 const PRIVATE_USER_ID = 'alice';
 
-function withCommonAppHeaders(res) {
+const SAB_HEADERS = {
   // Required for `window.crossOriginIsolated === true`.
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-}
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+};
 
 function sleep(ms) {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
   });
 }
 
@@ -324,23 +326,19 @@ function renderIndexHtml() {
 
 function sendText(res, statusCode, text) {
   const safeText = formatOneLineUtf8(text, MAX_ERROR_BODY_BYTES) || 'Error';
-  try {
-    res.statusCode = statusCode;
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.end(safeText);
-  } catch {
-    try {
-      res.destroy();
-    } catch {
-      // ignore
-    }
-  }
+  tryWriteResponse(
+    res,
+    statusCode,
+    {
+      ...SAB_HEADERS,
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+    safeText,
+  );
 }
 
 async function startAppServer() {
   const server = http.createServer((req, res) => {
-    withCommonAppHeaders(res);
-
     const rawUrl = req.url ?? '/';
     if (typeof rawUrl !== 'string') {
       sendText(res, 400, 'Bad Request');
@@ -366,17 +364,15 @@ async function startAppServer() {
 
     if (req.method === 'GET' && url.pathname === '/') {
       const html = renderIndexHtml();
-      try {
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(html);
-      } catch {
-        try {
-          res.destroy();
-        } catch {
-          // ignore
-        }
-      }
+      tryWriteResponse(
+        res,
+        200,
+        {
+          ...SAB_HEADERS,
+          'Content-Type': 'text/html; charset=utf-8',
+        },
+        html,
+      );
       return;
     }
 

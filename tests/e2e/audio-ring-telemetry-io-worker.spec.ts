@@ -100,7 +100,6 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
           cleanup();
           reject(new Error(`Timed out waiting for IO worker message after ${timeoutMs}ms.`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
 
         const onMessage = (ev: MessageEvent<unknown>) => {
           const data = ev.data;

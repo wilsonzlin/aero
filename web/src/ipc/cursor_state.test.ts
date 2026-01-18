@@ -21,6 +21,9 @@ import {
   wrapCursorState,
 } from "./cursor_state";
 import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci";
+import { makeNodeWorkerExecArgv } from "../test_utils/worker_threads_exec_argv";
+
+const WORKER_EXEC_ARGV = makeNodeWorkerExecArgv();
 
 describe("ipc/cursor_state", () => {
   it("publishCursorState + snapshotCursorState roundtrips values", () => {
@@ -306,7 +309,6 @@ describe("ipc/cursor_state", () => {
     const ctrlSab = new SharedArrayBuffer(4);
     const ctrl = new Int32Array(ctrlSab);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const cursorModuleUrl = new URL("./cursor_state.ts", import.meta.url).href;
 
     const worker = new Worker(
@@ -337,7 +339,7 @@ describe("ipc/cursor_state", () => {
         eval: true,
         type: "module",
         workerData: { cursorSab: sab, ctrlSab, cursorModuleUrl },
-        execArgv: ["--experimental-strip-types", "--import", registerUrl.href],
+        execArgv: WORKER_EXEC_ARGV,
       } as unknown as WorkerOptions,
     );
 

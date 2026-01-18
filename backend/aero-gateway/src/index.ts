@@ -1,5 +1,6 @@
-import { loadConfig } from './config.js';
-import { buildServer } from './server.js';
+import { loadConfig } from "./config.js";
+import { buildServer } from "./server.js";
+import { unrefBestEffort } from "./unrefSafe.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -15,7 +16,7 @@ async function main(): Promise<void> {
       app.log.error({ graceMs: config.SHUTDOWN_GRACE_MS }, 'Graceful shutdown timed out; forcing exit');
       process.exit(1);
     }, config.SHUTDOWN_GRACE_MS);
-    forceExitTimer.unref();
+    unrefBestEffort(forceExitTimer);
 
     try {
       // `fastify.close()` waits for the underlying HTTP server to close, which in turn
@@ -32,24 +33,24 @@ async function main(): Promise<void> {
     }
   }
 
-  process.once('SIGTERM', () => void shutdown('SIGTERM'));
-  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+  process.once("SIGINT", () => void shutdown("SIGINT"));
 
   await app.listen({ host: config.HOST, port: config.PORT });
   app.log.info(
     {
       host: config.HOST,
       port: config.PORT,
-      scheme: config.TLS_ENABLED ? 'https' : 'http',
+      scheme: config.TLS_ENABLED ? "https" : "http",
       trustProxy: config.TRUST_PROXY,
       allowedOrigins: config.ALLOWED_ORIGINS,
       crossOriginIsolation: config.CROSS_ORIGIN_ISOLATION,
     },
-    'aero-gateway listening',
+    "aero-gateway listening",
   );
 
   // Clean up on normal exit paths.
-  process.once('exit', () => {
+  process.once("exit", () => {
     if (forceExitTimer) clearTimeout(forceExitTimer);
   });
 }

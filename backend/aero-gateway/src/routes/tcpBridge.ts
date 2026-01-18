@@ -1,11 +1,12 @@
 import net from "node:net";
 import type { Duplex } from "node:stream";
 
-import { socketWritableLengthExceedsCap } from "../../../../src/socket_writable_length.js";
+import { socketWritableLengthExceedsCap } from "./socketWritableLength.js";
 
 import { encodeWsClosePayload, encodeWsFrame } from "./wsFrame.js";
 import { createGracefulDuplexCloser } from "./wsDuplexClose.js";
 import { WsMessageReceiver } from "./wsMessage.js";
+import { destroyBestEffort, pauseRequired, resumeRequired, writeCaptureErrorBestEffort } from "./socketSafe.js";
 
 export class WebSocketTcpBridge {
   private readonly wsSocket: Duplex;
@@ -61,22 +62,25 @@ export class WebSocketTcpBridge {
     if (this.closed) return;
     if (!this.pausedForWsBackpressure) return;
     this.pausedForWsBackpressure = false;
-    this.tcpSocket.resume();
+    if (!resumeRequired(this.tcpSocket)) {
+      this.destroyNow();
+    }
   }
 
   private pauseTcpForWsBackpressure(): void {
     if (this.closed) return;
     if (this.pausedForWsBackpressure) return;
     this.pausedForWsBackpressure = true;
-    this.tcpSocket.pause();
+    if (!pauseRequired(this.tcpSocket)) {
+      this.destroyNow();
+    }
   }
 
   private forwardPayload(opcode: number, payload: Buffer): void {
     // v1: raw TCP bytes forwarded via binary frames.
     if (opcode === 0x2) {
-      try {
-        this.tcpSocket.write(payload);
-      } catch {
+      const res = writeCaptureErrorBestEffort(this.tcpSocket, payload);
+      if (res.err) {
         this.destroyNow();
         return;
       }
@@ -89,14 +93,12 @@ export class WebSocketTcpBridge {
   private sendFrame(opcode: number, payload: Buffer): void {
     if (this.closed) return;
     const frame = encodeWsFrame(opcode, payload);
-    let ok = false;
-    try {
-      ok = this.wsSocket.write(frame);
-    } catch {
+    const res = writeCaptureErrorBestEffort(this.wsSocket, frame);
+    if (res.err) {
       this.destroyNow();
       return;
     }
-    if (!ok) {
+    if (!res.ok) {
       this.pauseTcpForWsBackpressure();
     }
   }
@@ -129,12 +131,7 @@ export class WebSocketTcpBridge {
   private closeGracefully(): void {
     if (this.closed) return;
     this.closed = true;
-
-    try {
-      this.tcpSocket.destroy();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(this.tcpSocket);
 
     // `WsMessageReceiver` writes the close response frame before invoking `onClose()`.
     // Avoid destroying the underlying socket until pending writes have a chance to flush.
@@ -146,11 +143,7 @@ export class WebSocketTcpBridge {
     this.closed = true;
 
     this.wsCloser.destroyNow();
-    try {
-      this.tcpSocket.destroy();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(this.tcpSocket);
   }
 }
 

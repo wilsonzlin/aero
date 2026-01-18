@@ -1,4 +1,5 @@
 import { formatOneLineError } from "../text";
+import { callMethodBestEffort, tryGetMethodBestEffort } from "../safeMethod";
 
 // WebGPU presenter responsible for the *final* step: showing the emulator framebuffer
 // on an HTML canvas with correct sRGB/linear handling and correct alpha mode.
@@ -226,7 +227,7 @@ export class WebGpuPresenter {
     const device = this.device;
     const handler = (ev: unknown) => {
       try {
-        (ev as { preventDefault?: () => void } | null | undefined)?.preventDefault?.();
+        callMethodBestEffort(ev, "preventDefault");
 
         const err = (ev as { error?: unknown } | null | undefined)?.error;
         const ctor = err && typeof err === "object" ? (err as { constructor?: unknown }).constructor : undefined;
@@ -263,18 +264,18 @@ export class WebGpuPresenter {
     this._uncapturedErrorDevice = device;
     this._onUncapturedError = handler;
 
-    try {
-      const addEventListener = (device as unknown as { addEventListener?: unknown }).addEventListener;
-      if (typeof addEventListener === "function") {
+    const addEventListener = tryGetMethodBestEffort(device, "addEventListener");
+    if (addEventListener) {
+      try {
         (addEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
           device,
           "uncapturederror",
           handler,
         );
         return;
+      } catch {
+        // Fall through.
       }
-    } catch {
-      // Fall through.
     }
 
     try {
@@ -288,17 +289,17 @@ export class WebGpuPresenter {
     const device = this._uncapturedErrorDevice;
     const handler = this._onUncapturedError;
     if (device && handler) {
-      try {
-        const removeEventListener = (device as unknown as { removeEventListener?: unknown }).removeEventListener;
-        if (typeof removeEventListener === "function") {
+      const removeEventListener = tryGetMethodBestEffort(device, "removeEventListener");
+      if (removeEventListener) {
+        try {
           (removeEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
             device,
             "uncapturederror",
             handler,
           );
+        } catch {
+          // Ignore.
         }
-      } catch {
-        // Ignore.
       }
       try {
         const anyDevice = device as unknown as { onuncapturederror?: unknown };
@@ -316,16 +317,8 @@ export class WebGpuPresenter {
 
   destroy() {
     this._uninstallUncapturedErrorHandler();
-    try {
-      (this.context as unknown as { unconfigure?: () => void }).unconfigure?.();
-    } catch {
-      // Ignore.
-    }
-    try {
-      this.device?.destroy?.();
-    } catch {
-      // Ignore.
-    }
+    callMethodBestEffort(this.context, "unconfigure");
+    callMethodBestEffort(this.device, "destroy");
   }
 
   /**
@@ -416,16 +409,8 @@ export class WebGpuPresenter {
       );
     } catch (err) {
       // Best-effort cleanup so tests / validation pages can retry without leaking GPU devices.
-      try {
-        (context as unknown as { unconfigure?: () => void } | null)?.unconfigure?.();
-      } catch {
-        // Ignore.
-      }
-      try {
-        (device as unknown as { destroy?: () => void } | null)?.destroy?.();
-      } catch {
-        // Ignore.
-      }
+      callMethodBestEffort(context, "unconfigure");
+      callMethodBestEffort(device, "destroy");
       throw err;
     }
   }

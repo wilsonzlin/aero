@@ -21,6 +21,7 @@ import {
 } from "../src/protocol/tcpMux.js";
 import { SessionConnectionTracker } from "../src/session.js";
 import { TEST_WS_HANDSHAKE_HEADERS } from "./testConfig.js";
+import { unrefBestEffort } from "../../../src/unref_safe.js";
 
 async function listen(server: http.Server | net.Server, host?: string): Promise<number> {
   server.listen(0, host);
@@ -192,10 +193,8 @@ describe("tcpMux route", () => {
     });
     const proxyPort = await listen(proxyServer, "127.0.0.1");
 
-    let ws: WebSocket | null = null;
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
     try {
-      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
-
       const header = Buffer.alloc(TCP_MUX_HEADER_BYTES);
       header.writeUInt8(TcpMuxMsgType.DATA, 0);
       header.writeUInt32BE(1, 1);
@@ -205,7 +204,7 @@ describe("tcpMux route", () => {
         const id = setTimeout(() => reject(new Error("expected close")), 2_000);
         // Avoid keeping the process open just for the timer in case the close
         // event arrives quickly.
-        (id as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(id);
         ws.addEventListener(
           "close",
           (event) => {
@@ -221,7 +220,7 @@ describe("tcpMux route", () => {
       const code = await closePromise;
       assert.equal(code, 1002);
     } finally {
-      if (ws) await closeWebSocket(ws);
+      await closeWebSocket(ws);
       await closeServer(proxyServer);
     }
   });
@@ -478,29 +477,41 @@ describe("tcpMux route", () => {
       const proxyPort = await listen(proxyServer, "127.0.0.1");
 
       ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+      if (!ws) throw new Error("expected WebSocket");
+      const wsOpen = ws;
 
       const parser = new TcpMuxFrameParser();
-      let seen: { code: number; message: string } | null = null;
+      type WsMessageEvent = { data: unknown };
+      const errorPromise = new Promise<{ code: number; message: string }>((resolve, reject) => {
+        const id = setTimeout(() => reject(new Error("expected ERROR frame")), 2_000);
+        unrefBestEffort(id);
 
-      ws.addEventListener("message", (event) => {
-        if (!(event.data instanceof ArrayBuffer)) return;
-        for (const frame of parser.push(Buffer.from(event.data))) {
-          if (frame.msgType !== TcpMuxMsgType.ERROR) continue;
-          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
-          seen = { code, message };
-        }
+        const onMessage = (event: WsMessageEvent) => {
+          if (!(event.data instanceof ArrayBuffer)) return;
+          for (const frame of parser.push(Buffer.from(event.data))) {
+            if (frame.msgType !== TcpMuxMsgType.ERROR) continue;
+            try {
+              const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+              clearTimeout(id);
+              wsOpen.removeEventListener("message", onMessage as any);
+              resolve({ code, message });
+            } catch (err) {
+              clearTimeout(id);
+              wsOpen.removeEventListener("message", onMessage as any);
+              reject(err);
+            }
+            return;
+          }
+        };
+
+        wsOpen.addEventListener("message", onMessage as any);
       });
 
       const streamId = 1;
-      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: 1 })));
-      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, Buffer.from("x".repeat(1024), "utf8")));
+      wsOpen.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: 1 })));
+      wsOpen.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, Buffer.from("x".repeat(1024), "utf8")));
 
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if (seen) break;
-        await new Promise((r) => setTimeout(r, 10));
-      }
-      assert.ok(seen, "expected ERROR frame");
+      const seen = await errorPromise;
       assert.equal(seen.code, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW);
       assert.equal(seen.message, "stream buffered too much data");
     } finally {

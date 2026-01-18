@@ -1,6 +1,7 @@
 import { normalizeCollections, type HidCollectionInfo, type NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
 import { computeInputReportPayloadByteLengths } from "../hid/hid_report_sizes";
 import type { WebHidPassthroughManager, WebHidPassthroughState } from "../platform/webhid_passthrough";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type WebHidPassthroughOutputReport = {
   reportType: "output" | "feature";
@@ -490,7 +491,7 @@ export class WebHidPassthroughRuntime {
     this.#pollTimer = setInterval(() => {
       this.pollOnce();
     }, this.#pollIntervalMs);
-    (this.#pollTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.#pollTimer);
   }
 
   private maybeStopPolling(): void {

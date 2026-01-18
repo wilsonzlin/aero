@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import {
   detectPlatformFeatures,
   explainMissingRequirements,
-} from "../web/src/platform/features.js";
-import { requestWebGpuDevice } from "../web/src/platform/webgpu.js";
-import { getOpfsRoot, OpfsUnavailableError } from "../web/src/platform/opfs.js";
+} from "../web/src/platform/features.ts";
+import { requestWebGpuDevice } from "../web/src/platform/webgpu.ts";
+import { getOpfsRoot, OpfsUnavailableError } from "../web/src/platform/opfs.ts";
 
 test("detectPlatformFeatures returns a stable boolean report shape", () => {
   const report = detectPlatformFeatures();

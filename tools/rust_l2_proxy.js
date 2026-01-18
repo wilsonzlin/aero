@@ -4,6 +4,7 @@ import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { unrefBestEffort } from "../src/unref_safe.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Keep enough stdout/stderr to surface useful errors without risking runaway logs in CI.
@@ -311,7 +312,11 @@ async function stopProcess(child) {
   try {
     child.kill("SIGINT");
   } catch {
-    child.kill();
+    try {
+      child.kill();
+    } catch {
+      // ignore
+    }
   }
 
   const exited = await Promise.race([once(child, "exit"), sleep(2_000, undefined, { ref: false }).then(() => null)]);
@@ -320,7 +325,11 @@ async function stopProcess(child) {
   try {
     child.kill("SIGKILL");
   } catch {
-    child.kill();
+    try {
+      child.kill();
+    } catch {
+      // ignore
+    }
   }
   await once(child, "exit");
 }
@@ -338,7 +347,7 @@ async function waitForListeningAddr(child) {
       cleanup();
       reject(new Error(`timeout waiting for aero-l2-proxy to bind\n\n${output}`));
     }, timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
 
     const onChunk = (chunk, bufGetter, bufSetter) => {
       const text = chunk.toString("utf8");
@@ -525,7 +534,7 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
         .then(() => settle(new Error(`${why}\n\n${stdout}${stderr}`)))
         .catch(() => settle(new Error(`${why}\n\n${stdout}${stderr}`)));
     }, timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
 
     const onError = (err) => {
       if (timingOut) return;

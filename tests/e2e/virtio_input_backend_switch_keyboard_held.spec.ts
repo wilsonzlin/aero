@@ -121,7 +121,6 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
         cleanup();
         reject(new Error("Timed out waiting for io.worker import marker"));
       }, 20_000);
-      (timer as unknown as { unref?: () => void }).unref?.();
     });
 
     let ioWorkerError: string | null = null;
@@ -576,7 +575,6 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
           pending.delete(reqId);
           reject(new Error(`Timed out waiting for CPU worker response to ${cmd} after ${timeoutMs}ms.`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
 
         const wrappedResolve = (value: unknown) => {
           clearTimeout(timer);

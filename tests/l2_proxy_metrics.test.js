@@ -2,22 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { wsCloseSafe, wsSendSafe } from "../scripts/_shared/ws_safe.js";
+import { unrefBestEffort } from "../src/unref_safe.js";
 import { WebSocket } from "../tools/minimal_ws.js";
-import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.js";
+import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
 function sleep(ms) {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref();
+    unrefBestEffort(timeout);
   });
 }
 
 async function fetchText(url, { timeoutMs }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  timeout.unref();
+  unrefBestEffort(timeout);
   try {
     const res = await fetch(url, { signal: controller.signal });
     return { res, text: await res.text() };
@@ -29,7 +30,7 @@ async function fetchText(url, { timeoutMs }) {
 async function fetchJson(url, { timeoutMs }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  timeout.unref();
+  unrefBestEffort(timeout);
   try {
     const res = await fetch(url, { signal: controller.signal });
     return { res, json: await res.json() };
@@ -58,7 +59,7 @@ async function waitForOpen(ws, timeoutMs = 2_000) {
       cleanup();
       reject(new Error("timeout waiting for websocket open"));
     }, timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
 
     let settled = false;
     const cleanup = () => {
@@ -118,7 +119,7 @@ async function waitForClose(ws, timeoutMs = 2_000) {
       const suffix = lastErr ? ` (last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)})` : "";
       reject(new Error(`timeout waiting for websocket close${suffix}`));
     }, timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
 
     let lastErr = null;
     let settled = false;

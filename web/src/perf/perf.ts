@@ -1,5 +1,6 @@
 import type { ChromeTraceExport, ChromeTraceEvent, TraceInstantScope } from "./trace";
 import { nowEpochUs, TraceRecorder } from "./trace";
+import { unrefBestEffort } from "../unrefSafe";
 
 type WorkerClient = {
   tid: number;
@@ -227,7 +228,7 @@ export class AeroPerf {
           timedOut: true,
         });
       }, timeoutMs);
-      (timeoutId as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timeoutId);
 
       this.pendingExportResponses.set(requestId, (value) => {
         if (settled) return;

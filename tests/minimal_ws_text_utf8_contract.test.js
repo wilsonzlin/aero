@@ -3,12 +3,13 @@ import test from "node:test";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
 
+import { unrefBestEffort } from "../src/unref_safe.js";
 import { WebSocketServer } from "../tools/minimal_ws.js";
 
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`timeout: ${label}`)), ms);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
     promise.then(
       (value) => {
         clearTimeout(timeout);

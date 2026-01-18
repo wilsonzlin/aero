@@ -88,6 +88,7 @@ import {
 import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from "../text";
 import { DEFAULT_ERROR_BYTE_LIMITS } from "../errors/serialize";
 import { isErrorInstance } from "../errors/errorProps";
+import { unrefBestEffort } from "../unrefSafe";
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 const MAX_PENDING_AEROGPU_SUBMISSIONS = 256;
 
@@ -1417,7 +1418,7 @@ export class WorkerCoordinator {
         this.pendingNetTraceStatusRequests.delete(requestId);
         reject(new Error(`Timed out waiting for net trace stats (requestId=${requestId})`));
       }, timeoutMs);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
 
       const pending: PendingNetTraceStatusRequest = {
         resolve,
@@ -1448,7 +1449,7 @@ export class WorkerCoordinator {
         this.pendingNetTraceRequests.delete(requestId);
         reject(new Error(`Timed out waiting for net trace capture (requestId=${requestId})`));
       }, timeoutMs);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
 
       const pending: PendingNetTraceRequest = {
         resolve,
@@ -1479,7 +1480,7 @@ export class WorkerCoordinator {
         this.pendingNetTraceRequests.delete(requestId);
         reject(new Error(`Timed out waiting for net trace capture (requestId=${requestId})`));
       }, timeoutMs);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
 
       const pending: PendingNetTraceRequest = {
         resolve,
@@ -2275,7 +2276,7 @@ export class WorkerCoordinator {
         console.error(err);
       }
     }, delayMs);
-    (fullRestartTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(fullRestartTimer);
     this.pendingFullRestartTimer = fullRestartTimer as unknown as number;
   }
 
@@ -2312,7 +2313,7 @@ export class WorkerCoordinator {
       this.sendConfigToWorker(role, this.configVersion, latestConfig);
       void this.postWorkerInitMessages({ runId, segments: this.shared.segments, perfChannel, roles: [role] });
     }, delayMs);
-    (workerRestartTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(workerRestartTimer);
     this.pendingWorkerRestartTimers[role] = workerRestartTimer as unknown as number;
   }
 

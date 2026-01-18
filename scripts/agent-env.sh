@@ -484,6 +484,13 @@ if command -v node >/dev/null 2>&1; then
       if [[ -z "${AERO_ALLOW_UNSUPPORTED_NODE:-}" ]]; then
         export AERO_ALLOW_UNSUPPORTED_NODE=1
       fi
+      # When we auto-enable the unsupported-node bypass, also silence the non-fatal
+      # "note: Node.js version differs from CI baseline" logs from `check:node` scripts.
+      # This keeps local `npm test` output readable in agent sandboxes while preserving
+      # CI enforcement (CI should not source this script).
+      if [[ -z "${AERO_CHECK_NODE_QUIET:-}" ]]; then
+        export AERO_CHECK_NODE_QUIET=1
+      fi
     fi
   fi
 fi

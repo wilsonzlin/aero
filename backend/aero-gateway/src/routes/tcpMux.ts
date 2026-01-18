@@ -4,13 +4,14 @@ import type { Duplex } from "node:stream";
 import {
   TCP_MUX_SUBPROTOCOL,
 } from "../protocol/tcpMux.js";
-import { tryGetStringProp } from "../../../../src/safe_props.js";
+import { tryGetStringProp } from "./safeProps.js";
 import { validateWsUpgradePolicy } from "./tcpPolicy.js";
 import { enforceUpgradeRequestUrlLimit, resolveUpgradeRequestUrl, respondUpgradeHttp } from "./upgradeHttp.js";
 import { writeWebSocketHandshake } from "./wsHandshake.js";
 import { sanitizeWebSocketHandshakeKey, validateWebSocketHandshakeRequest } from "./wsUpgradeRequest.js";
 import { hasWebSocketSubprotocol } from "./wsSubprotocol.js";
 import { WebSocketTcpMuxBridge, type TcpMuxBridgeOptions } from "./tcpMuxBridge.js";
+import { setNoDelayBestEffort } from "./socketSafe.js";
 
 function isSocketDestroyed(socket: Duplex): boolean {
   try {
@@ -87,9 +88,7 @@ export function handleTcpMuxUpgrade(
   // upgrade flow if the socket is already torn down.
   if (isSocketDestroyed(socket)) return;
 
-  if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
-    socket.setNoDelay(true);
-  }
+  setNoDelayBestEffort(socket, true);
 
   const bridge = new WebSocketTcpMuxBridge(socket, opts);
   bridge.start(head);

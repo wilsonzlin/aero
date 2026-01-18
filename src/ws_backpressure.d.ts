@@ -8,14 +8,14 @@ export type WsSendQueue = Readonly<{
 }>;
 
 export type WsSendQueueOptions = Readonly<{
-  ws: unknown;
-  highWatermarkBytes: number;
-  lowWatermarkBytes: number;
+  ws?: unknown;
+  highWatermarkBytes?: number;
+  lowWatermarkBytes?: number;
   pollMs?: number;
   onPauseSources?: () => void;
   onResumeSources?: () => void;
   onSendError?: (err: unknown) => void;
 }>;
 
-export function createWsSendQueue(opts: WsSendQueueOptions): WsSendQueue;
+export function createWsSendQueue(opts?: WsSendQueueOptions): WsSendQueue;
 

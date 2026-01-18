@@ -4,7 +4,8 @@ import type { Duplex } from "node:stream";
 
 import type { TcpTarget } from "../protocol/tcpTarget.js";
 import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
-import { tryGetStringProp } from "../../../../src/safe_props.js";
+import { tryGetStringProp } from "./safeProps.js";
+import { unrefBestEffort } from "./unrefSafe.js";
 import { validateTcpTargetPolicy, validateWsUpgradePolicy, type TcpProxyUpgradePolicy } from "./tcpPolicy.js";
 import { enforceUpgradeRequestUrlLimit, resolveUpgradeRequestUrl, respondUpgradeHttp } from "./upgradeHttp.js";
 import { writeWebSocketHandshake } from "./wsHandshake.js";
@@ -14,6 +15,13 @@ import { WebSocketTcpBridge } from "./tcpBridge.js";
 import type { TcpProxyEgressMetricSink } from "./tcpEgressMetrics.js";
 import { resolveTcpProxyTarget, TcpProxyTargetError } from "./tcpResolve.js";
 import { formatOneLineError } from "../util/text.js";
+import {
+  destroyBestEffort,
+  destroyWithErrorBestEffort,
+  setNoDelayBestEffort,
+  setNoDelayRequired,
+  setTimeoutRequired,
+} from "./socketSafe.js";
 
 const MAX_UPGRADE_ERROR_MESSAGE_BYTES = 512;
 
@@ -135,9 +143,7 @@ export function handleTcpProxyUpgrade(
       // upgrade flow if the socket is already torn down.
       if (isSocketDestroyed(socket)) return;
 
-      if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
-        socket.setNoDelay(true);
-      }
+      setNoDelayBestEffort(socket, true);
 
       const connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
       const idleTimeoutMs = opts.idleTimeoutMs ?? 300_000;
@@ -146,31 +152,22 @@ export function handleTcpProxyUpgrade(
       try {
         tcpSocket = createConnection({ host: resolved.ip, port: resolved.port });
       } catch {
-        try {
-          socket.destroy();
-        } catch {
-          // ignore
-        }
+        destroyBestEffort(socket);
         return;
       }
-      tcpSocket.setNoDelay(true);
-      tcpSocket.setTimeout(idleTimeoutMs);
+      if (!setNoDelayRequired(tcpSocket, true) || !setTimeoutRequired(tcpSocket, idleTimeoutMs)) {
+        destroyBestEffort(tcpSocket);
+        destroyBestEffort(socket);
+        return;
+      }
       tcpSocket.on("timeout", () => {
-        try {
-          tcpSocket.destroy(new Error("TCP idle timeout"));
-        } catch {
-          // ignore
-        }
+        destroyWithErrorBestEffort(tcpSocket, new Error("TCP idle timeout"));
       });
 
       const connectTimer = setTimeout(() => {
-        try {
-          tcpSocket.destroy(new Error("TCP connect timeout"));
-        } catch {
-          // ignore
-        }
+        destroyWithErrorBestEffort(tcpSocket, new Error("TCP connect timeout"));
       }, connectTimeoutMs);
-      connectTimer.unref?.();
+      unrefBestEffort(connectTimer);
       tcpSocket.once("connect", () => clearTimeout(connectTimer));
       tcpSocket.once("error", () => clearTimeout(connectTimer));
       tcpSocket.once("close", () => clearTimeout(connectTimer));
@@ -182,11 +179,7 @@ export function handleTcpProxyUpgrade(
       bridge.start(head);
     } catch {
       // Defensive: avoid unhandled rejections crashing the gateway on unexpected errors.
-      try {
-        socket.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(socket);
     }
   })();
 }

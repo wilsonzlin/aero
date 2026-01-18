@@ -4,9 +4,15 @@ import dgram from 'node:dgram';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import net from 'node:net';
+import { fileURLToPath } from 'node:url';
 
+import { unrefBestEffort } from '../../src/unref_safe.js';
 import { L2_TUNNEL_SUBPROTOCOL } from '../../web/src/shared/l2TunnelProtocol.ts';
 import { startRustL2Proxy } from '../../tools/rust_l2_proxy.js';
+
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const TS_STRIP_LOADER_URL = new URL('../../scripts/register-ts-strip-loader.mjs', import.meta.url);
+const GATEWAY_ENTRY_PATH = fileURLToPath(new URL('../../backend/aero-gateway/src/index.ts', import.meta.url));
 
 type UdpEchoServer = {
   port: number;
@@ -16,7 +22,7 @@ type UdpEchoServer = {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
   });
 }
 
@@ -123,13 +129,14 @@ async function startGateway(opts: {
   const proc = spawn(
     'node',
     [
-      '--import',
-      './scripts/register-ts-strip-loader.mjs',
       '--experimental-strip-types',
-      'backend/aero-gateway/src/index.ts',
+      '--import',
+      TS_STRIP_LOADER_URL.href,
+      GATEWAY_ENTRY_PATH,
     ],
     {
       stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         HOST: '127.0.0.1',

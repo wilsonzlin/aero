@@ -3,6 +3,7 @@ import { createCustomEvent } from "../custom_event.js";
 import { isInstanceOfSafe } from "../instanceof_safe.js";
 import { tryGetNumberProp, tryGetProp, tryGetStringProp } from "../safe_props.js";
 import { formatOneLineError } from "../text.js";
+import { unrefBestEffort } from "../unref_safe.js";
 
 const DEFAULT_CONFIG = Object.freeze({
   cpu: {
@@ -438,7 +439,7 @@ export class VmCoordinator extends EventTarget {
     this._watchdogTimer = setInterval(() => {
       this._checkWatchdog();
     }, intervalMs);
-    this._watchdogTimer.unref?.();
+    unrefBestEffort(this._watchdogTimer);
   }
 
   _checkWatchdog() {
@@ -497,7 +498,7 @@ export class VmCoordinator extends EventTarget {
           }
           entry.reject(new Error(message));
         }, timeoutMs);
-        timer.unref?.();
+        unrefBestEffort(timer);
       }
     });
   }

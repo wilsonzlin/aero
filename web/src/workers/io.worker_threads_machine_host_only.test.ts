@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
+import { unrefBestEffort } from "../unrefSafe";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
 import { createSharedMemoryViews, StatusIndex, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import { IO_WORKER_DISK_CLIENT_SPY_EXEC_ARGV as WORKER_EXEC_ARGV } from "./test_utils/worker_exec_argv";
 
 async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -16,7 +18,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
       cleanup();
       reject(new Error(`timed out after ${effectiveTimeoutMs}ms waiting for worker message`));
     }, effectiveTimeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
 
     const onMessage = (msg: unknown) => {
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
@@ -108,21 +110,9 @@ describe("workers/io.worker (worker_threads)", () => {
     });
     const views = createSharedMemoryViews(segments);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const webworkerShimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
-    const diskSpyShimUrl = new URL("./test_workers/io_worker_disk_client_spy_shim.ts", import.meta.url);
-
     const worker = new Worker(new URL("./io.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: [
-        "--experimental-strip-types",
-        "--import",
-        registerUrl.href,
-        "--import",
-        webworkerShimUrl.href,
-        "--import",
-        diskSpyShimUrl.href,
-      ],
+      execArgv: WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {

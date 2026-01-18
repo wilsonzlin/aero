@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { isValidHttpToken } from "./httpTokens.js";
+import { destroyBestEffort, writeCaptureErrorBestEffort } from "./socket_safe.js";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -34,14 +35,7 @@ export function encodeWebSocketHandshakeResponse(opts) {
 
 export function writeWebSocketHandshake(socket, opts) {
   const response = encodeWebSocketHandshakeResponse(opts);
-  try {
-    socket.write(response);
-  } catch {
-    try {
-      socket.destroy?.();
-    } catch {
-      // ignore
-    }
-  }
+  const res = writeCaptureErrorBestEffort(socket, response);
+  if (res.err) destroyBestEffort(socket);
 }
 

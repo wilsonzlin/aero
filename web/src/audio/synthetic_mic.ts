@@ -6,6 +6,7 @@ import {
   WRITE_POS_INDEX,
 } from "./mic_ring.js";
 import { AudioFrameClock, performanceNowNs } from "./audio_frame_clock";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type SyntheticMicSource = {
   ringBuffer: SharedArrayBuffer;
@@ -72,7 +73,7 @@ export function startSyntheticMic(options: SyntheticMicOptions = {}): SyntheticM
       remaining -= n;
     }
   }, tickMs);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
 
   return {
     ringBuffer: rb.sab,

@@ -1,5 +1,6 @@
 import type { AeroGlobalApi } from '../../../shared/aero_api.ts';
 import { AERO_PHASES, isAeroPhase, type AeroPhase, type AeroStatusSnapshot } from '../../../shared/aero_status.ts';
+import { unrefBestEffort } from '../unrefSafe';
 
 export interface AeroStatusApi {
   status: AeroStatusSnapshot;
@@ -100,7 +101,7 @@ export function initAeroStatusApi(initialPhase: AeroPhase = 'booting'): AeroStat
               reject(new Error(`Timed out waiting for aero event ${JSON.stringify(name)}`));
             }, timeoutMs);
       if (timeoutId !== undefined) {
-        (timeoutId as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timeoutId);
       }
     });
   }

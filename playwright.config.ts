@@ -47,10 +47,25 @@ function resolveFreePort(opts: {
     const start = ${opts.start};
     const attempts = ${maxAttempts};
 
+    function unrefBestEffort(handle) {
+      let unref;
+      try {
+        unref = handle && handle.unref;
+      } catch {
+        return;
+      }
+      if (typeof unref !== 'function') return;
+      try {
+        unref.call(handle);
+      } catch {
+        // ignore
+      }
+    }
+
     function canListen(port) {
       return new Promise((resolve) => {
         const server = net.createServer();
-        server.unref();
+        unrefBestEffort(server);
         server.once('error', () => resolve(false));
         server.listen(port, host, () => {
           server.close(() => resolve(true));

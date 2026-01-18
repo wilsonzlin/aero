@@ -59,7 +59,7 @@ Use this for:
 
 **If running many agents concurrently**, enforce **memory limits**. CPU and disk I/O contention are handled fine by the Linux scheduler, but memory exhaustion will OOM-kill the host.
 
-**The one rule:** Use `bash ./scripts/safe-run.sh <command>` for all non-trivial operations. It enforces both timeout (10 min default) and memory limit (12G default).
+**The one rule:** Use `bash ./scripts/safe-run.sh <command>` for all non-trivial operations. It enforces both timeout (10 min default) and memory limit (**12G default**; for Node/WASM-heavy tests and Playwright it **auto-bumps RLIMIT_AS** unless you explicitly set `AERO_MEM_LIMIT`).
 
 ```bash
 bash ./scripts/agent-env-setup.sh               # One-time: validate environment

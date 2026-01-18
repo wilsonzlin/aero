@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
+import { unrefBestEffort } from "../../src/unref_safe.js";
 import { wsCloseSafe, wsSendSafe } from "../../scripts/_shared/ws_safe.js";
 import WebSocket from "../../tools/minimal_ws.js";
 import {
@@ -11,7 +12,7 @@ import {
   L2_TUNNEL_SUBPROTOCOL,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
-} from "../../web/src/shared/l2TunnelProtocol.js";
+} from "../../web/src/shared/l2TunnelProtocol.ts";
 
 import {
   TCP_FLAGS,
@@ -65,7 +66,7 @@ class FrameQueue {
         if (idx !== -1) this.waiters.splice(idx, 1);
         reject(new Error(`Timed out waiting for frame after ${timeoutMs}ms`));
       }, timeoutMs);
-      timeout.unref?.();
+      unrefBestEffort(timeout);
       const waiter = {
         resolve: (frame) => {
           clearTimeout(timeout);

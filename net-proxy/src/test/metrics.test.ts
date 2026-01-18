@@ -5,6 +5,7 @@ import dgram from "node:dgram";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram } from "../udpRelayProtocol";
+import { unrefBestEffort } from "../unrefSafe";
 import {
   TCP_MUX_SUBPROTOCOL,
   TcpMuxFrameParser,
@@ -17,7 +18,7 @@ import {
 async function fetchText(url: string, timeoutMs = 2_000): Promise<{ status: number; contentType: string | null; body: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  timeout.unref();
+  unrefBestEffort(timeout);
   try {
     const res = await fetch(url, { signal: controller.signal });
     return { status: res.status, contentType: res.headers.get("content-type"), body: await res.text() };
@@ -29,7 +30,7 @@ async function fetchText(url: string, timeoutMs = 2_000): Promise<{ status: numb
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref();
+    unrefBestEffort(timeout);
   });
 }
 
@@ -98,7 +99,7 @@ async function openWebSocket(url: string, protocol?: string | string[]): Promise
   const ws = protocol ? new WebSocket(url, protocol) : new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), 2_000);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("open", () => {
       clearTimeout(timeout);
       resolve();
@@ -114,7 +115,7 @@ async function openWebSocket(url: string, protocol?: string | string[]): Promise
 async function waitForBinaryMessage(ws: WebSocket, timeoutMs = 2_000): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for message")), timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("message", (data, isBinary) => {
       clearTimeout(timeout);
       assert.equal(isBinary, true);
@@ -174,7 +175,7 @@ function createTcpMuxFrameWaiter(ws: WebSocket): FrameWaiter {
         if (i !== -1) waiters.splice(i, 1);
         reject(new Error("timeout waiting for frame"));
       }, timeoutMs);
-      timer.unref();
+      unrefBestEffort(timer);
 
       waiter = { predicate, resolve, reject, timer };
       waiters.push(waiter);
@@ -187,7 +188,7 @@ function createTcpMuxFrameWaiter(ws: WebSocket): FrameWaiter {
 async function waitForClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for close")), timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("close", (code, reason) => {
       clearTimeout(timeout);
       resolve({ code, reason: reason.toString() });

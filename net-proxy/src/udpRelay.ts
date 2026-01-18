@@ -1,11 +1,13 @@
 import dgram from "node:dgram";
 import ipaddr from "ipaddr.js";
 import { type WebSocket } from "ws";
+import { unrefBestEffort } from "./unrefSafe";
 
 import type { ProxyConfig } from "./config";
 import type { ProxyServerMetrics } from "./metrics";
 import { formatError, log } from "./logger";
 import { resolveAndAuthorizeTarget } from "./security";
+import { closeBestEffort } from "./socketSafe";
 import { wsCloseSafe, wsIsOpenSafe, wsSendSafe } from "./wsClose";
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "./udpRelayProtocol";
 import { stripIpv6ZoneIndex } from "./ipUtils";
@@ -38,11 +40,7 @@ export async function handleUdpRelay(
     metrics.incConnectionError("error");
     wsCloseSafe(ws, 1011, "UDP error");
     log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
-    try {
-      socket.close();
-    } catch {
-      // ignore
-    }
+    closeBestEffort(socket);
     return;
   }
 
@@ -56,11 +54,7 @@ export async function handleUdpRelay(
     if (closed) return;
     closed = true;
     metrics.connectionActiveDec("udp");
-    try {
-      socket.close();
-    } catch {
-      // ignore
-    }
+    closeBestEffort(socket);
 
     if (wsIsOpenSafe(ws)) {
       wsCloseSafe(ws, wsCode, wsReason);
@@ -81,11 +75,7 @@ export async function handleUdpRelay(
     if (closed) return;
     closed = true;
     metrics.connectionActiveDec("udp");
-    try {
-      socket.close();
-    } catch {
-      // ignore
-    }
+    closeBestEffort(socket);
 
     log("info", "conn_close", {
       connId,
@@ -251,11 +241,7 @@ export async function handleUdpRelayMultiplexed(
       metrics.udpBindingsActiveDec(bindingCount);
     }
     for (const binding of bindings.values()) {
-      try {
-        binding.socket.close();
-      } catch {
-        // ignore
-      }
+      closeBestEffort(binding.socket);
     }
     bindings.clear();
 
@@ -290,11 +276,7 @@ export async function handleUdpRelayMultiplexed(
       metrics.udpBindingsActiveDec(bindingCount);
     }
     for (const binding of bindings.values()) {
-      try {
-        binding.socket.close();
-      } catch {
-        // ignore
-      }
+      closeBestEffort(binding.socket);
     }
     bindings.clear();
 
@@ -325,14 +307,10 @@ export async function handleUdpRelayMultiplexed(
         if (now - binding.lastActiveMs <= config.udpRelayBindingIdleTimeoutMs) continue;
         bindings.delete(key);
         metrics.udpBindingsActiveDec();
-        try {
-          binding.socket.close();
-        } catch {
-          // ignore
-        }
+        closeBestEffort(binding.socket);
       }
     }, gcIntervalMs);
-    gcTimer.unref();
+    unrefBestEffort(gcTimer);
   }
 
   const getOrCreateBinding = (guestPort: number, addressFamily: 4 | 6): UdpRelayBinding | null => {
@@ -372,11 +350,7 @@ export async function handleUdpRelayMultiplexed(
       if (removed) {
         metrics.udpBindingsActiveDec();
       }
-      try {
-        socket.close();
-      } catch {
-        // ignore
-      }
+      closeBestEffort(socket);
     });
 
     socket.on("message", (msg, rinfo) => {
@@ -545,8 +519,18 @@ export async function handleUdpRelayMultiplexed(
       // Send the raw UDP payload to the decoded destination.
       try {
         binding.socket.send(payload, remotePort, remoteAddress);
-      } catch {
-        // ignore
+      } catch (err) {
+        metrics.incConnectionError("error");
+        log("error", "connect_error", {
+          connId,
+          proto: "udp",
+          mode: "multiplexed",
+          err: formatError(err),
+          remoteAddress,
+          remotePort,
+          guestPort
+        });
+        closeAll("udp_send_error", 1011, "UDP error");
       }
     })().catch((err) => {
       metrics.incConnectionError("error");

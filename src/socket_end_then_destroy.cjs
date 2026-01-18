@@ -1,8 +1,12 @@
-const stateBySocket = new WeakMap();
+const socketsBeingDestroyed = new WeakSet();
+
+const { callMethodBestEffort, destroyBestEffort, tryGetMethodBestEffort } = require("./socket_safe.cjs");
+const { unrefBestEffort } = require("./unref_safe.cjs");
 
 function endThenDestroyQuietly(socket, data, opts = {}) {
-  if (!socket || typeof socket.end !== "function") return;
-  if (stateBySocket.has(socket)) return;
+  const end = tryGetMethodBestEffort(socket, "end");
+  if (!end) return;
+  if (socketsBeingDestroyed.has(socket)) return;
 
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 2_000;
 
@@ -12,39 +16,23 @@ function endThenDestroyQuietly(socket, data, opts = {}) {
     if (cleanedUp) return;
     cleanedUp = true;
     if (timer) clearTimeout(timer);
-    try {
-      socket.off?.("close", cleanup);
-      socket.off?.("error", cleanup);
-    } catch {
-      // ignore
-    }
-    try {
-      socket.removeListener?.("close", cleanup);
-      socket.removeListener?.("error", cleanup);
-    } catch {
-      // ignore
-    }
+    callMethodBestEffort(socket, "off", "close", cleanup);
+    callMethodBestEffort(socket, "off", "error", cleanup);
+    callMethodBestEffort(socket, "removeListener", "close", cleanup);
+    callMethodBestEffort(socket, "removeListener", "error", cleanup);
   };
 
   // Mark this socket as being torn down before calling `end()` to avoid reentrancy, and attach
   // listeners before `end()` to avoid races where `close` fires synchronously.
-  stateBySocket.set(socket, true);
-  try {
-    socket.once?.("close", cleanup);
-    socket.once?.("error", cleanup);
-  } catch {
-    // ignore
-  }
+  socketsBeingDestroyed.add(socket);
+  callMethodBestEffort(socket, "once", "close", cleanup);
+  callMethodBestEffort(socket, "once", "error", cleanup);
 
   try {
-    socket.end(data);
+    end.call(socket, data);
   } catch {
     cleanup();
-    try {
-      socket.destroy?.();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(socket);
     return;
   }
 
@@ -52,14 +40,10 @@ function endThenDestroyQuietly(socket, data, opts = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
 
   timer = setTimeout(() => {
-    try {
-      socket.destroy?.();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(socket);
     cleanup();
   }, timeoutMs);
-  timer.unref?.();
+  unrefBestEffort(timer);
 }
 
 module.exports = { endThenDestroyQuietly };

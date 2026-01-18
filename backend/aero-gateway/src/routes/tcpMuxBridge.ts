@@ -2,7 +2,8 @@ import { lookup } from "node:dns/promises";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 
-import { socketWritableLengthOrOverflow } from "../../../../src/socket_writable_length.js";
+import { socketWritableLengthOrOverflow } from "./socketWritableLength.js";
+import { unrefBestEffort } from "./unrefSafe.js";
 
 import {
   decodeTcpMuxClosePayload,
@@ -30,6 +31,16 @@ import { isPublicIpAddress } from "../security/ipPolicy.js";
 import type { SessionConnectionTracker } from "../session.js";
 import { selectAllowedDnsAddress } from "./tcpDns.js";
 import type { TcpProxyEgressMetricSink } from "./tcpEgressMetrics.js";
+import {
+  destroyBestEffort,
+  endRequired,
+  pauseBestEffort,
+  removeAllListenersBestEffort,
+  resumeBestEffort,
+  setNoDelayRequired,
+  setTimeoutRequired,
+  writeCaptureErrorBestEffort,
+} from "./socketSafe.js";
 
 class TcpMuxIpPolicyDeniedError extends Error {
   override name = "TcpMuxIpPolicyDeniedError";
@@ -132,7 +143,7 @@ export class WebSocketTcpMuxBridge {
     if (!this.pausedForWsBackpressure) return;
     this.pausedForWsBackpressure = false;
     for (const stream of this.streams.values()) {
-      stream.socket.resume();
+      resumeBestEffort(stream.socket);
     }
   }
 
@@ -140,7 +151,7 @@ export class WebSocketTcpMuxBridge {
     if (this.pausedForWsBackpressure) return;
     this.pausedForWsBackpressure = true;
     for (const stream of this.streams.values()) {
-      stream.socket.pause();
+      pauseBestEffort(stream.socket);
     }
   }
 
@@ -322,9 +333,14 @@ export class WebSocketTcpMuxBridge {
         allowHalfOpen: true,
         lookup: dialLookup,
       });
-      socket.setNoDelay(true);
     } catch {
       releaseSessionSlot?.();
+      this.sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+      return;
+    }
+    if (!setNoDelayRequired(socket, true)) {
+      releaseSessionSlot?.();
+      destroyBestEffort(socket);
       this.sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
       return;
     }
@@ -342,13 +358,17 @@ export class WebSocketTcpMuxBridge {
     };
     this.streams.set(frame.streamId, stream);
     if (this.pausedForWsBackpressure) {
-      socket.pause();
+      pauseBestEffort(socket);
     }
 
     const connectTimeoutMs = this.opts.connectTimeoutMs ?? 10_000;
     const idleTimeoutMs = this.opts.idleTimeoutMs ?? 300_000;
 
-    socket.setTimeout(idleTimeoutMs);
+    if (!setTimeoutRequired(socket, idleTimeoutMs)) {
+      this.sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+      this.destroyStream(frame.streamId);
+      return;
+    }
     socket.on("timeout", () => {
       this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "TCP idle timeout");
       this.destroyStream(stream.id);
@@ -358,7 +378,7 @@ export class WebSocketTcpMuxBridge {
       this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "TCP connect timeout");
       this.destroyStream(stream.id);
     }, connectTimeoutMs);
-    connectTimer.unref?.();
+    unrefBestEffort(connectTimer);
     stream.connectTimer = connectTimer;
 
     socket.on("connect", () => {
@@ -423,16 +443,14 @@ export class WebSocketTcpMuxBridge {
       return;
     }
 
-    let ok = false;
-    try {
-      ok = stream.socket.write(frame.payload);
-    } catch {
+    const res = writeCaptureErrorBestEffort(stream.socket, frame.payload);
+    if (res.err) {
       // Avoid reflecting raw error details.
       this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
       this.destroyStream(stream.id);
       return;
     }
-    if (!ok) {
+    if (!res.ok) {
       stream.writePaused = true;
       return;
     }
@@ -459,9 +477,7 @@ export class WebSocketTcpMuxBridge {
 
     if ((flags & TcpMuxCloseFlags.FIN) !== 0) {
       stream.clientFin = true;
-      try {
-        stream.socket.end();
-      } catch {
+      if (!endRequired(stream.socket)) {
         // Avoid reflecting raw error details.
         this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
         this.destroyStream(stream.id);
@@ -504,16 +520,14 @@ export class WebSocketTcpMuxBridge {
     while (stream.pendingWrites.length > 0) {
       const chunk = stream.pendingWrites.shift()!;
       stream.pendingWriteBytes -= chunk.length;
-      let ok = false;
-      try {
-        ok = stream.socket.write(chunk);
-      } catch {
+      const res = writeCaptureErrorBestEffort(stream.socket, chunk);
+      if (res.err) {
         // Avoid reflecting raw error details.
         this.sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
         this.destroyStream(stream.id);
         return;
       }
-      if (!ok) {
+      if (!res.ok) {
         stream.writePaused = true;
         return;
       }
@@ -527,12 +541,8 @@ export class WebSocketTcpMuxBridge {
     this.streams.delete(streamId);
     if (stream.connectTimer) clearTimeout(stream.connectTimer);
     stream.releaseSessionSlot?.();
-    stream.socket.removeAllListeners();
-    try {
-      stream.socket.destroy();
-    } catch {
-      // ignore
-    }
+    removeAllListenersBestEffort(stream.socket);
+    destroyBestEffort(stream.socket);
   }
 
   private sendStreamError(streamId: number, code: TcpMuxErrorCode, message: string): void {
@@ -546,14 +556,12 @@ export class WebSocketTcpMuxBridge {
   private sendWsFrame(opcode: number, payload: Buffer): void {
     if (this.closed) return;
     const frame = encodeWsFrame(opcode, payload);
-    let ok = false;
-    try {
-      ok = this.wsSocket.write(frame);
-    } catch {
+    const res = writeCaptureErrorBestEffort(this.wsSocket, frame);
+    if (res.err) {
       this.destroyNow();
       return;
     }
-    if (!ok) {
+    if (!res.ok) {
       this.pauseAllTcpReads();
     }
   }

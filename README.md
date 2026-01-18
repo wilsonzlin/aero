@@ -497,19 +497,19 @@ await window.aero.perf.export();
 Run the `storage_io` scenario (writes results under `bench/results/`):
 
 ```bash
-node --experimental-strip-types bench/runner.ts storage_io
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts storage_io
 ```
 
 Skip the storage I/O scenario (useful for noisy CI environments):
 
 ```bash
-AERO_BENCH_SKIP_STORAGE_IO=1 node --experimental-strip-types bench/runner.ts storage_io
+AERO_BENCH_SKIP_STORAGE_IO=1 node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts storage_io
 ```
 
 Check default thresholds (informational by default; add `--enforce` for CI gating):
 
 ```bash
-node --experimental-strip-types bench/compare.ts --input bench/results/<run>/perf_export.json
+node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/compare.ts --input bench/results/<run>/perf_export.json
 ```
 
 ## Guest CPU instruction throughput microbench (PF-008)

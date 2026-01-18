@@ -1,6 +1,7 @@
 import { formatOneLineUtf8 } from "./text.js";
 import { encodeHttpTextResponse } from "./http_text_response.js";
 import { endThenDestroyQuietly } from "./socket_end_then_destroy.js";
+import { destroyBestEffort } from "./socket_safe.js";
 
 const MAX_UPGRADE_ERROR_MESSAGE_BYTES = 512;
 
@@ -50,10 +51,6 @@ export function rejectHttpUpgrade(socket, statusCode, message) {
       }),
     );
   } catch {
-    try {
-      socket?.destroy?.();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(socket);
   }
 }

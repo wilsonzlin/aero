@@ -28,7 +28,7 @@ import { formatOneLineError, truncateUtf8 } from "../src/text.js";
 function usage(exitCode: number) {
   const msg = `
 Usage:
-  node --experimental-strip-types scripts/compare_gpu_benchmarks.ts --baseline <gpu_bench.json> --candidate <gpu_bench.json> --out-dir <dir>
+  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gpu_benchmarks.ts --baseline <gpu_bench.json> --candidate <gpu_bench.json> --out-dir <dir>
 
 Options:
   --baseline <path>          Baseline GPU bench report (required)

@@ -9,6 +9,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { unrefBestEffort } from '../../src/unref_safe.js';
+
 type UdpEchoServer = {
   port: number;
   close: () => Promise<void>;
@@ -17,7 +19,7 @@ type UdpEchoServer = {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
   });
 }
 

@@ -18,6 +18,11 @@ import { Duplex } from "node:stream";
 import { isValidHttpToken } from "../src/httpTokens.js";
 import { formatOneLineUtf8 } from "../src/text.js";
 import { rejectHttpUpgrade } from "../src/http_upgrade_reject.js";
+import {
+  callMethodCaptureErrorBestEffort,
+  destroyBestEffort,
+  endBestEffort,
+} from "../src/socket_safe.js";
 import { wsCloseSafe, wsSendSafe } from "../src/ws_safe.js";
 import { encodeWebSocketHandshakeResponse } from "../src/ws_handshake_response.js";
 
@@ -30,12 +35,20 @@ const MAX_WS_KEY_LEN = 256;
 // RFC 6455 close reason is limited to 123 bytes (125 total payload bytes incl. 2-byte code).
 const MAX_WS_CLOSE_REASON_BYTES = 123;
 
-function destroyQuietly(socket) {
-  try {
-    socket.destroy();
-  } catch {
-    // ignore
+function callRequiredMethodCaptureError(obj, methodName, args) {
+  const err = callMethodCaptureErrorBestEffort(obj, methodName, ...args);
+  if (err instanceof Error && err.message === `Missing required method: ${methodName}`) {
+    return new TypeError(`${methodName} is not a function`);
   }
+  return err;
+}
+
+function writeCaptureError(obj, ...args) {
+  const err = callMethodCaptureErrorBestEffort(obj, "write", ...args);
+  if (err instanceof Error && err.message === "Missing required method: write") {
+    return new TypeError("write is not a function");
+  }
+  return err;
 }
 
 function checkedClientUrl(address) {
@@ -326,11 +339,7 @@ class BaseWebSocket extends EventEmitter {
       this.#finalizeClose(1006, Buffer.alloc(0));
       // WebSocket does not support half-close. Ensure the underlying TCP
       // connection fully closes so servers awaiting `server.close()` do not hang.
-      try {
-        socket.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(socket);
     });
     socket.on("close", () => {
       this.#finalizeClose(1006, Buffer.alloc(0));
@@ -356,7 +365,13 @@ class BaseWebSocket extends EventEmitter {
     if (typeof optionsOrCb === "function") cb = optionsOrCb;
 
     if (!this.#socket || this.#readyState !== BaseWebSocket.OPEN) {
-      cb?.(new Error("WebSocket is not open"));
+      if (typeof cb === "function") {
+        try {
+          cb(new Error("WebSocket is not open"));
+        } catch {
+          // ignore
+        }
+      }
       return;
     }
 
@@ -367,17 +382,38 @@ class BaseWebSocket extends EventEmitter {
       payload = toBuffer(data);
     } catch (err) {
       const e = err instanceof Error ? err : new Error("Failed to encode WebSocket payload");
-      cb?.(e);
+      if (typeof cb === "function") {
+        try {
+          cb(e);
+        } catch {
+          // ignore
+        }
+      }
       this.emit("error", e);
       return;
     }
     const mask = !this.#expectMasked; // client masks, server doesn't.
     const frame = encodeFrame(opcode, payload, { mask });
-    try {
-      this.#socket.write(frame, cb ? () => cb?.() : undefined);
-    } catch (err) {
-      cb?.(err);
-      this.emit("error", err);
+    const onWritten =
+      typeof cb === "function"
+        ? () => {
+            try {
+              cb();
+            } catch {
+              // ignore
+            }
+          }
+        : undefined;
+    const writeErr = writeCaptureError(this.#socket, frame, onWritten);
+    if (writeErr) {
+      if (typeof cb === "function") {
+        try {
+          cb(writeErr);
+        } catch {
+          // ignore
+        }
+      }
+      this.emit("error", writeErr);
     }
   }
 
@@ -390,30 +426,13 @@ class BaseWebSocket extends EventEmitter {
     const mask = !this.#expectMasked;
     const frame = encodeFrame(0x8, payload, { mask });
     this.#closeSent = true;
-    try {
-      this.#socket.write(frame, () => {
-        try {
-          this.#socket.end();
-        } catch {
-          // ignore
-        }
-      });
-    } catch {
-      try {
-        this.#socket.destroy();
-      } catch {
-        // ignore
-      }
-    }
+    const writeErr = writeCaptureError(this.#socket, frame, () => endBestEffort(this.#socket));
+    if (writeErr) destroyBestEffort(this.#socket);
   }
 
   terminate() {
     if (!this.#socket) return;
-    try {
-      this.#socket.destroy();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(this.#socket);
   }
 
   #emitMessage(opcode, payload) {
@@ -510,33 +529,25 @@ class BaseWebSocket extends EventEmitter {
           const mask = !this.#expectMasked;
           const response = encodeFrame(0x8, payload, { mask });
           this.#closeSent = true;
-          try {
-            this.#socket?.write(response, () => {
-              try {
-                this.#socket?.end();
-              } catch {
-                // ignore
-              }
-            });
-          } catch {
-            // ignore
+          if (this.#socket) {
+            const writeErr = writeCaptureError(this.#socket, response, () => endBestEffort(this.#socket));
+            if (writeErr) {
+              // ignore
+            }
           }
         }
         this.#finalizeClose(code, reason);
-        try {
-          this.#socket?.end();
-        } catch {
-          // ignore
-        }
+        endBestEffort(this.#socket);
         return;
       }
       case 0x9: {
         // Ping -> Pong
         const mask = !this.#expectMasked;
-        try {
-          this.#socket?.write(encodeFrame(0xA, payload, { mask }));
-        } catch {
-          // ignore
+        if (this.#socket) {
+          const writeErr = writeCaptureError(this.#socket, encodeFrame(0xA, payload, { mask }));
+          if (writeErr) {
+            // ignore
+          }
         }
         return;
       }
@@ -556,21 +567,8 @@ class BaseWebSocket extends EventEmitter {
     const payload = Buffer.alloc(2);
     payload.writeUInt16BE(code, 0);
     const mask = !this.#expectMasked;
-    try {
-      this.#socket.write(encodeFrame(0x8, payload, { mask }), () => {
-        try {
-          this.#socket?.destroy();
-        } catch {
-          // ignore
-        }
-      });
-    } catch {
-      try {
-        this.#socket.destroy();
-      } catch {
-        // ignore
-      }
-    }
+    const writeErr = writeCaptureError(this.#socket, encodeFrame(0x8, payload, { mask }), () => destroyBestEffort(this.#socket));
+    if (writeErr) destroyBestEffort(this.#socket);
     this.#finalizeClose(code, Buffer.alloc(0));
   }
 }
@@ -632,7 +630,8 @@ export class WebSocket extends BaseWebSocket {
       this.emit("error", err);
     });
 
-    req.end();
+    const endErr = callRequiredMethodCaptureError(req, "end", []);
+    if (endErr) queueMicrotask(() => this.emit("error", endErr));
   }
 }
 
@@ -659,8 +658,9 @@ export class WebSocketServer extends EventEmitter {
     }
 
     this.#server = http.createServer((req, res) => {
-      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-      res.end("not found\n");
+      const writeHeadErr = callRequiredMethodCaptureError(res, "writeHead", [404, { "content-type": "text/plain; charset=utf-8" }]);
+      const endErr = writeHeadErr ? writeHeadErr : callRequiredMethodCaptureError(res, "end", ["not found\n"]);
+      if (endErr) destroyBestEffort(res);
     });
     this.#internalServer = true;
     this.#attachToServer();
@@ -679,23 +679,23 @@ export class WebSocketServer extends EventEmitter {
           try {
             rawUrl = req.url ?? "/";
           } catch {
-            destroyQuietly(socket);
+            destroyBestEffort(socket);
             return;
           }
           if (typeof rawUrl !== "string" || rawUrl.length > MAX_UPGRADE_URL_LEN) {
-            destroyQuietly(socket);
+            destroyBestEffort(socket);
             return;
           }
           let url;
           try {
             url = new URL(rawUrl, "http://localhost");
           } catch {
-            destroyQuietly(socket);
+            destroyBestEffort(socket);
             return;
           }
           if (url.pathname !== this.#options.path) {
             // Match `ws` behavior: path mismatch aborts the handshake.
-            destroyQuietly(socket);
+            destroyBestEffort(socket);
             return;
           }
         }
@@ -705,11 +705,11 @@ export class WebSocketServer extends EventEmitter {
             this.emit("connection", ws, req);
           });
         } catch {
-          destroyQuietly(socket);
+          destroyBestEffort(socket);
           return;
         }
       } catch {
-        destroyQuietly(socket);
+        destroyBestEffort(socket);
       }
     };
 
@@ -754,9 +754,10 @@ export class WebSocketServer extends EventEmitter {
       }
 
       try {
-        socket.write(encodeWebSocketHandshakeResponse({ key, protocol: selected }));
+        const writeErr = writeCaptureError(socket, encodeWebSocketHandshakeResponse({ key, protocol: selected }));
+        if (writeErr) throw writeErr;
       } catch {
-        destroyQuietly(socket);
+        destroyBestEffort(socket);
         return;
       }
 
@@ -770,11 +771,7 @@ export class WebSocketServer extends EventEmitter {
 
       cb(ws, req);
     } catch (err) {
-      try {
-        socket.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(socket);
       this.emit("error", err);
     }
   }
@@ -794,11 +791,21 @@ export class WebSocketServer extends EventEmitter {
     }
 
     if (this.#internalServer && this.#server) {
-      this.#server.close(() => cb?.());
+      this.#server.close(() => {
+        try {
+          cb?.();
+        } catch {
+          // ignore
+        }
+      });
       return;
     }
 
-    cb?.();
+    try {
+      cb?.();
+    } catch {
+      // ignore
+    }
   }
 }
 

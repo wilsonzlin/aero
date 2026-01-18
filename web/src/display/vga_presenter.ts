@@ -11,6 +11,7 @@ import {
   type SharedFramebufferView,
 } from "./framebuffer_protocol";
 import { perf } from "../perf/perf";
+import { unrefBestEffort } from "../unrefSafe";
 import { encodeLinearRgba8ToSrgbInPlace } from "../utils/srgb";
 
 export type VgaScaleMode = "auto" | "pixelated" | "smooth";
@@ -189,14 +190,14 @@ export class VgaPresenter {
         const timer = setTimeout(() => {
           this.rafHandle = requestAnimationFrame(() => this.tick());
         }, delay);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
         this.timerHandle = timer;
       }
       return;
     }
 
     const timer = setTimeout(() => this.tick(), delay <= 0 ? 0 : Math.min(delay, intervalMs));
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     this.timerHandle = timer;
   }
 

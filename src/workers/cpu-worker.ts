@@ -6,6 +6,7 @@ import { JIT_BIGINT_ABI_WASM_BYTES, JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES } from 
 import { HIGH_RAM_START as HIGH_RAM_START_U53, LOW_RAM_END as LOW_RAM_END_U32 } from '../../web/src/arch/guest_phys.ts';
 import { initWasmForContext, type WasmApi } from '../../web/src/runtime/wasm_context';
 import { formatOneLineError } from '../text.js';
+import { unrefBestEffort } from '../unref_safe.js';
 
 declare global {
   // Tiered VM bus exit hooks installed by this worker for deterministic JIT smoke tests.
@@ -1825,7 +1826,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     // Yield so the JIT worker can run in parallel.
     await new Promise((r) => {
       const t = setTimeout(r, 0);
-      (t as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(t);
     });
   }
 
@@ -1878,7 +1879,7 @@ async function runTieredVm(iterations: number, threshold: number) {
 
         await new Promise((r) => {
           const t = setTimeout(r, 0);
-          (t as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(t);
         });
       }
 

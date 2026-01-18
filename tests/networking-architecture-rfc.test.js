@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import net from "node:net";
 import { EventEmitter } from "node:events";
 
+import { unrefBestEffort } from "../src/unref_safe.js";
+
 import { startProxyServer } from "../prototype/nt-arch-rfc/proxy-server.js";
 import { runNetworkingProbe } from "../prototype/nt-arch-rfc/client.js";
 import WebSocket from "../tools/minimal_ws.js";
@@ -106,7 +108,7 @@ async function expectTcpRstWhenBufferedBytesCapIsExceeded({ maxTcpBufferedBytesP
           if (idx !== -1) waiters.splice(idx, 1);
           reject(new Error("timeout"));
         }, timeoutMs);
-        timer.unref?.();
+        unrefBestEffort(timer);
         entry = { predicate, resolve, reject, timer };
         waiters.push(entry);
       });

@@ -724,9 +724,463 @@ Goal: prevent close-race synchronous throws in the `ws` fallback shim from crash
 Approach:
 - Wrap upgrade handshake `socket.write(...)` in best-effort `try/catch` and bail out on sync failure.
 - Ensure `end()` / `destroy()` calls made from inside `socket.write(..., cb)` callbacks are also best-effort (`try/catch`) so exceptions in completion handlers cannot abort the process.
+- Avoid relying on direct `socket.write/end/destroy` (and internal `res.writeHead/end/destroy`) method getter reads by fetching methods via `tryGetProp` before invoking (covers hostile/monkeypatched getter sync-throws).
 
 Outcomes:
-- `scripts/ws-shim.mjs` is resilient to close races during handshake and close-control-frame mirroring, matching the broader “no sync-throw on send/close” posture.
+- `scripts/ws-shim.mjs` is resilient to close races during handshake and close-control-frame mirroring, and does not crash on hostile method getters, matching the broader “no sync-throw on send/close” posture.
+
+### Phase 62: Long-tail boundary hygiene sweep (completed)
+Goal: keep shrinking the remaining “long tail” of Node-side boundary surfaces that can synchronously throw (HTTP response writes and socket sends) so non-core tooling can’t crash the process in edge cases (close races, poisoned globals, hostile getters/mocks).
+
+Approach:
+- Prefer small, local refactors that preserve behavior while making boundary writes best-effort:
+  - wrap `res.writeHead`/`res.setHeader`/`res.end` in `try/catch` with `res.destroy()` fallback
+  - wrap `socket.write`/`socket.end` similarly (or reuse existing safe helpers when appropriate)
+- Use fast, cheap validation:
+  - `npm run test:contracts` for cross-repo guardrails
+  - `node --check <file>` for standalone scripts that aren’t exercised by tests
+
+Progress:
+- Web + tooling HTTP servers:
+  - `web/demo/server.js`: hardened response/header writes with safe helpers + destroy fallback.
+  - `web/serve-smoke-test.mjs`: hardened response/header writes with safe helpers + destroy fallback.
+  - `web/vite.config.ts`: hardened dev/preview middlewares (`res.setHeader/res.end`) with destroy fallback.
+  - `bench/server.js`, `bench/gpu_bench.ts`: hardened response header/body writes against close-race sync throws.
+- Aero Gateway (Node):
+  - `backend/aero-gateway/src/routes/*`: guarded long-tail socket methods (`setNoDelay`, timeouts, `write/end/destroy`) in upgrade/bridge handlers.
+  - `backend/aero-gateway/bench/run.mjs`: hardened UDP `socket.send(...)` and TCP sink ACK `socket.write/end` paths against sync throws and repeated writes.
+  - `backend/aero-gateway/src/dns/upstream.ts`: hardened `queryUdpUpstream` against sync `send()` throws and added focused regression coverage.
+- Net proxy + related tools (Node):
+  - `net-proxy/src/*`: hardened upgrade/relay boundaries (hostile getters + send/close races) and tightened UDP send failure behavior (fatal close in multiplexed mode, with regression coverage).
+  - `tools/net-proxy-server/src/server.js`: guarded pause/resume and backpressure paths to avoid sync-throw crashes in less-traveled tooling.
+  - `tools/disk-streaming-browser-e2e/src/servers.js`, `tools/minimal_ws.js`, `scripts/ws-shim.mjs`, `scripts/ci/run_browser_perf.mjs`: hardened long-tail `res.*` / `req.end()` / socket init / `.unref()` boundaries while preserving behavior.
+- Shared teardown helper:
+  - `src/socket_end_then_destroy.{js,cjs}`: hardened against hostile/monkeypatched method getters (`end/destroy/once/off/removeListener/unref`) and extended contract coverage to lock in “never throw” behavior.
+- Shared timer helper:
+  - `src/unref_safe.js`: added `unrefBestEffort(...)` so we don’t rely on `timer.unref?.()` (which still reads the getter and can synchronously throw). Refactored `src/` call sites and added contract coverage.
+  - Follow-up: refactored additional Node-side packages (gateway/proxy/tools) to use `unrefBestEffort` for timers (connect timeouts, GC intervals, test timeouts) to keep the hostile-getter posture consistent outside `src/`.
+- Guardrails:
+  - `tests/unref_usage_contract.test.js`: prevents reintroducing direct `.unref()` calls in production sources (prefer `.unref?.()`).
+  - `tests/dgram_usage_contract.test.js`: restricts `dgram.createSocket(...)` usage to known modules.
+
+### Phase 63: Post-sweep type-safety polish (done)
+Goal: after the heavy boundary hardening sweeps, do small follow-up refactors that keep the new guards **type-safe** and avoid “`any` + repetition” patterns that can rot over time.
+
+Approach:
+- Prefer local helpers that reduce repeated try/catch boilerplate without changing behavior.
+- Keep middleware signatures accurate (`http.IncomingMessage` / `http.ServerResponse`) so future edits don’t reintroduce unsafe assumptions.
+- Validate with cheap checks (`npm -w <pkg> run typecheck`, `npm run test:contracts`).
+
+Progress:
+- `web/vite.config.ts`: replaced ad-hoc `(res as any).destroy?.()` fallbacks with a typed `destroyResponseQuietly` helper and typed middleware signatures.
+
+### Phase 64: Close long-tail helper drift gaps (done)
+Goal: where we deliberately keep multiple copies of “safe boundary” helpers (ESM vs CJS workspaces), ensure their high-risk behavior doesn’t silently drift.
+
+Approach:
+- Prefer **package-local tests** over cross-workspace imports (avoids ESM/CJS tooling friction).
+- Mirror the “high signal” contract expectations from repo-root `ws_safe` tests inside the CJS packages that carry their own implementations.
+
+Progress:
+- `net-proxy/src/wsClose.ts`: added missing unit coverage for `wsSendSafe` arity heuristics in `net-proxy`’s own test suite.
+- `net-proxy/src/wsClose.ts`: aligned `wsIsOpenSafe` “fail open when readyState is not observable” semantics with the canonical `src/ws_safe.js` behavior (with local tests).
+
+### Phase 65: Net-proxy wsClose helper completeness (done)
+Goal: ensure the CJS `net-proxy` copies of the WebSocket safety helpers have the same “high signal” defensive behavior as the canonical repo implementation.
+
+Progress:
+- `net-proxy/src/test/ws-close.test.ts`: added missing coverage for:
+  - `wsCloseSafe` empty reason behavior (treat as absent)
+  - `wsCloseSafe` hostile reason input (toString throws)
+  - `wsCloseSafe` invalid ws input (no-op)
+  - `wsSendSafe` invalid ws input (returns false, cb async)
+  - `wsIsOpenSafe` invalid ws input + OPEN getter throw behavior
+
+### Phase 66: Clamp hostile negative bufferedAmount (done)
+Goal: treat negative `bufferedAmount` readings as invalid and clamp them to `0` so hostile/buggy implementations cannot undercount backlog and bypass backpressure.
+
+Progress:
+- `src/ws_backpressure.js`: clamp negative `ws.bufferedAmount` to `0`.
+- `web/src/net/{wsSafe.ts,rtcSafe.ts}`: clamp negative `bufferedAmount` to `0`.
+- `net-proxy/src/wsBufferedAmount.ts`: clamp negative `bufferedAmount` to `0`.
+- Tests:
+  - `tests/ws_backpressure_contract.test.js`: added regression for negative bufferedAmount.
+  - `tests/web_ws_safe_contract.test.js`: added `wsBufferedAmountSafe` regression (incl. negative).
+  - `tests/web_rtc_safe_contract.test.js`: extended regression to include negative.
+  - `net-proxy/src/test/ws-buffered-amount.test.ts`: added negative bufferedAmount coverage.
+
+### Phase 67: De-duplicate socket/stream safe method helpers (done)
+Goal: reduce drift and repetition by single-sourcing the “hostile getter + close-race safe” socket/stream method invocations used across Node packages.
+
+Approach:
+- Add canonical helpers in repo-root `src/` with ESM+CJS parity:
+  - `src/socket_safe.js`, `src/socket_safe.cjs` (plus `.d.ts` stubs)
+- Convert workspace-local helpers into thin re-exports:
+  - `net-proxy/src/socketSafe.ts` → re-export from `src/socket_safe.cjs`
+  - `backend/aero-gateway/src/routes/socketSafe.ts` → re-export from `src/socket_safe.js` (keep `destroyQuietly` as a stable local alias)
+- Add contract/parity coverage:
+  - `tests/socket_safe_contract.test.js`
+  - `tests/socket_safe_parity.test.js`
+
+Outcomes:
+- Socket/stream best-effort calls (`destroy/end/pause/resume/...`) now share one implementation across Node workspaces, making behavior changes easier to audit and test-lock.
+
+### Phase 68: De-duplicate HTTP response write helpers (done)
+Goal: reduce drift by single-sourcing the “best-effort writeHead/end with destroy fallback” pattern used by Node HTTP servers.
+
+Approach:
+- Add canonical helpers with ESM+CJS parity:
+  - `src/http_response_safe.js`, `src/http_response_safe.cjs` (plus `.d.ts` stubs)
+- Convert workspace-local helper into a thin re-export:
+  - `net-proxy/src/httpResponseSafe.ts` → re-export from `src/http_response_safe.cjs`
+- Add contract/parity coverage:
+  - `tests/http_response_safe_contract.test.js`
+  - `tests/http_response_safe_parity.test.js`
+
+Outcomes:
+- Node HTTP responder helpers are single-sourced and guarded by the contract suite, preventing subtle drift across packages.
+
+### Phase 69: De-duplicate web helper server response writes (done)
+Goal: reduce drift and boilerplate in the repo’s small Node “web helper servers” by reusing the canonical best-effort HTTP response writer.
+
+Approach:
+- Refactor simple web servers to use `tryWriteResponse` from `src/http_response_safe.js` instead of local `tryGetProp` + `writeHead/end/destroy` wrappers:
+  - `web/demo/server.js`
+  - `web/serve-smoke-test.mjs`
+- Preserve behavior by keeping existing headers/caching semantics; only centralize the write path and its error handling.
+
+Outcomes:
+- Web helper servers have simpler, more consistent response writing and inherit the same hostile-getter/close-race hardening as the rest of the repo.
+
+### Phase 70: De-duplicate web tooling response safety helpers (done)
+Goal: reduce drift by removing ad-hoc “destroy on response write failure” helpers in web tooling and reusing the canonical socket/HTTP helpers.
+
+Approach:
+- `web/vite.config.ts`: replace `destroyResponseQuietly` (and its `tryGetProp` dependency) with `destroyBestEffort` from `src/socket_safe.js`.
+- `web/scripts/serve.cjs`: replace local `writeHeadSafe/endSafe/destroySafe` helpers with `tryWriteResponse` from `src/http_response_safe.cjs`.
+
+Outcomes:
+- Web tooling now uses the same canonical safety helpers as production services, shrinking duplicated “best-effort response” implementations.
+
+### Phase 71: De-duplicate bench server response safety helpers (done)
+Goal: reduce drift in bench tooling by reusing the canonical “destroy best-effort” and “tryWriteResponse” primitives for non-streaming responses.
+
+Approach:
+- `bench/server.js`:
+  - Replace local `destroyResponseQuietly` with `destroyBestEffort` from `src/socket_safe.js`.
+  - Refactor `sendText(...)` to use `tryWriteResponse` from `src/http_response_safe.js` (preserving existing headers like `Cache-Control: no-store` and bounded body formatting).
+
+Outcomes:
+- Bench’s dev-only static server now shares the same hardened response teardown/write path as production Node services, without changing the streaming file path (`pipeline`).
+
+### Phase 72: De-duplicate GPU bench server response writes (done)
+Goal: reduce drift in bench tooling by removing ad-hoc response “destroy on failure” wrappers and reusing the canonical helpers.
+
+Approach:
+- `bench/gpu_bench.ts`:
+  - Replace local `destroyResponseQuietly` wrappers with `destroyBestEffort` from `src/socket_safe.js`.
+  - Serve the bench HTML using `tryWriteResponse` from `src/http_response_safe.js` (instead of `setHeaderBestEffort` + `endBestEffort`).
+
+Outcomes:
+- Bench tooling uses the same hardened HTTP response writer and destroy semantics as the rest of the repo, shrinking duplicated “best-effort response” logic.
+
+### Phase 73: De-duplicate dev server end() safety wrappers (done)
+Goal: reduce drift in small Node dev helper servers by removing local “end + destroy-on-throw” wrappers and reusing the canonical response writer.
+
+Approach:
+- `server/range_server.js`: replace local `endSafe` with `tryWriteResponse(..., headers=null)` in all non-streaming response paths (OPTIONS / HEAD / 304 / errors).
+- `server/chunk_server.js`: same replacement for non-streaming response paths.
+
+Outcomes:
+- Dev helper servers now share the same hardened “writeHead + end with destroy fallback” behavior as production Node services, while keeping their streaming `pipeline(...)` paths unchanged.
+
+### Phase 74: Remove remaining bench server response helper drift (done)
+Goal: finish de-duplicating bench tooling response boundaries by removing remaining local `tryGetProp`-based `setHeader/end` wrappers.
+
+Approach:
+- `bench/server.js`:
+  - Remove local `setHeaderBestEffort` / `endBestEffort` wrappers and stop importing `src/safe_props.js` here.
+  - Use `tryWriteResponse` for all non-streaming responses (e.g. OPTIONS / HEAD / 405 errors).
+  - Use a single `res.writeHead(200, headers)` + `pipeline(...)` for streaming file responses.
+
+Outcomes:
+- Bench static server now has no ad-hoc response-method wrappers; it uses the same canonical best-effort HTTP writer as the rest of the repo and keeps the streaming path minimal and explicit.
+
+### Phase 75: De-duplicate “call a socket method and capture error” helpers (done)
+Goal: reduce drift by single-sourcing the “call method if present; return thrown error (or missing-method error) instead of throwing” helper used by TCP backpressure/teardown paths.
+
+Approach:
+- Extend canonical helpers:
+  - `src/socket_safe.js` / `src/socket_safe.cjs`: add `callMethodCaptureErrorBestEffort(obj, key, ...args)` with ESM/CJS parity + `.d.ts` declarations.
+  - Add contract/parity coverage:
+    - `tests/socket_safe_contract.test.js`
+    - `tests/socket_safe_parity.test.js`
+- Migrate callsites:
+  - `server/src/tcpProxy.js`: remove local `tryGetMethod`/`destroyBestEffort`/`callMethodCaptureError` implementations; reuse canonical helpers.
+  - `tools/net-proxy-server/src/server.js`: remove local `tryGetMethod`/`callMethod*`/`destroyQuietly`/`removeAllListenersQuietly` and reuse canonical helpers.
+
+Outcomes:
+- TCP pause/resume/end error capture is now consistent across Node packages and locked by the repo-root contract suite.
+
+### Phase 76: De-duplicate disk-streaming browser e2e server response helpers (done)
+Goal: reduce drift in browser e2e harness servers by removing local response “destroy on failure” wrappers and reusing the canonical HTTP response writer.
+
+Approach:
+- `tools/disk-streaming-browser-e2e/src/servers.js`:
+  - Remove local `destroyQuietly` / `setHeaderBestEffort` / `endBestEffort` / `withCommonAppHeaders` wrappers.
+  - Use `tryWriteResponse` from `src/http_response_safe.cjs` and a shared `SAB_HEADERS` constant so all responses consistently include COOP/COEP for `crossOriginIsolated`.
+
+Outcomes:
+- The browser e2e harness server now uses the same hardened response writer as production Node services, shrinking duplicated “best-effort response” logic.
+
+### Phase 77: De-duplicate ws-shim socket method wrappers (done)
+Goal: reduce drift in the `ws` fallback shim by reusing canonical “destroy/end best-effort” and “call method + capture error” helpers.
+
+Approach:
+- `scripts/ws-shim.mjs`:
+  - Remove local `tryGetProp` + `tryGetMethod` + `callMethodOptional` helpers.
+  - Replace local `destroyQuietly` / `endQuietly` / `writeCaptureError` / `callRequiredMethodCaptureError` logic with imports from `src/socket_safe.js`:
+    - `destroyBestEffort`
+    - `endBestEffort`
+    - `callMethodCaptureErrorBestEffort`
+
+Outcomes:
+- The shim’s close-race/hostile-getter-safe socket method calls are now single-sourced, and the contract suite continues to validate shim behavior.
+
+### Phase 78: De-duplicate socket_end_then_destroy internal helpers (done)
+Goal: reduce drift by removing duplicated “safe method lookup + optional invocation” logic from the canonical `socket_end_then_destroy` helper itself.
+
+Approach:
+- `src/socket_safe.{js,cjs}`:
+  - Export `tryGetMethodBestEffort(obj, key)` for safe method retrieval.
+  - Export `callMethodBestEffort(obj, key, ...args)` for safe optional invocations (returns boolean).
+  - Update `.d.ts` stubs accordingly.
+- `src/socket_end_then_destroy.{js,cjs}`:
+  - Replace local `tryGetProp`/`tryGetMethod`/`callMethodOptional` helpers with the canonical exports above.
+  - Replace ad-hoc `timer.unref` best-effort call with `unrefBestEffort(...)`.
+
+Outcomes:
+- `socket_end_then_destroy` is now implemented in terms of the same canonical safety helpers it conceptually depends on, making future behavior changes easier to audit and test-lock.
+
+### Phase 79: Test-lock new socket_safe exports (done)
+Goal: prevent drift in newly-exported socket helper primitives (`tryGetMethodBestEffort`, `callMethodBestEffort`) by extending contract/parity coverage.
+
+Approach:
+- `tests/socket_safe_contract.test.js`: add coverage for:
+  - `tryGetMethodBestEffort` return shape (function or null)
+  - `callMethodBestEffort` return behavior (true on missing method, false on thrown method)
+- `tests/socket_safe_parity.test.js`: add basic ESM/CJS parity assertions for the new exports.
+
+Outcomes:
+- The canonical helper surface is guarded by the contract suite, reducing the chance of subtle ESM/CJS drift when these primitives are reused by other modules.
+
+### Phase 80: De-duplicate raw socket write/destroy fallbacks (done)
+Goal: reduce drift by reusing canonical socket safety helpers in remaining “raw socket write” boundaries.
+
+Approach:
+- `src/http_upgrade_reject.js`: replace ad-hoc `socket?.destroy?.()` fallback with `destroyBestEffort` from `src/socket_safe.js`.
+- `src/ws_handshake_response.js`: replace `try { socket.write(...) } catch { socket.destroy?.() }` with:
+  - `callMethodCaptureErrorBestEffort(socket, "write", ...)`
+  - `destroyBestEffort(socket)` on error
+
+Outcomes:
+- Raw socket handshake/rejection paths now use the same hardened “hostile getter + close-race safe” helpers as the rest of the repo, further reducing ad-hoc best-effort logic.
+
+### Phase 81: Web: De-duplicate best-effort `.destroy?.()` calls (done)
+Goal: reduce drift in browser/WebWorker code by centralizing “best-effort optional method call” behavior (and avoid direct optional-chaining method calls that can throw on hostile proxies).
+
+Approach:
+- Add `web/src/safeMethod.ts`:
+  - `callMethodBestEffort(obj, key, ...args)` for safe, best-effort optional method invocation (returns boolean).
+  - `destroyBestEffort(obj)` convenience wrapper.
+- Replace ad-hoc `.destroy?.()` / `.unconfigure?.()` calls with the canonical helper:
+  - `web/src/gpu/webgpu-presenter.ts`
+  - `web/src/gpu/webgpu-presenter-backend.ts`
+  - `web/src/workers/gpu-worker.ts`
+  - `web/src/workers/io.worker.ts`
+  - `web/src/bench/webgpu_bench.ts`
+
+Outcomes:
+- WebGPU presenter/worker teardown paths now share a single hardened “call optional method best-effort” primitive, reducing repetition and making future hardening changes one-touch.
+
+### Phase 82: Web: Test-lock and extend safeMethod usage for event callbacks (done)
+Goal: make web-side “optional method call” behavior more robust and prevent drift by covering hostile getter cases with tests.
+
+Approach:
+- `web/src/safeMethod.ts`:
+  - Export `tryGetMethodBestEffort(...)` so callsites can safely detect presence (without treating missing as success).
+- Replace remaining high-value optional-chaining method calls in WebGPU paths:
+  - Use `callMethodBestEffort(ev, "preventDefault")` instead of `ev?.preventDefault?.()` / casted variants.
+  - Use `tryGetMethodBestEffort(device, "addEventListener"/"removeEventListener")` to install/remove `"uncapturederror"` handlers without exposing hostile getter throws.
+  - `web/src/bench/webgpu_bench.ts`: simplify teardown by calling `callMethodBestEffort(device, "removeEventListener", ...)`.
+- Add contract coverage:
+  - `tests/safe_method_web_contract.test.js`: covers hostile getters, missing methods, and throwing methods for `tryGetMethodBestEffort`/`callMethodBestEffort`/`destroyBestEffort`.
+
+Outcomes:
+- WebGPU uncaptured-error handler install/remove and `preventDefault` calls are now centralized and hostile-getter-safe, with contract tests guarding future changes.
+
+### Phase 83: Gateway: remove legacy destroyQuietly alias (done)
+Goal: reduce drift and improve naming clarity in the gateway routes by using the canonical helper name (`destroyBestEffort`) consistently.
+
+Approach:
+- `backend/aero-gateway/src/routes/socketSafe.ts`: stop re-exporting `destroyBestEffort` under the legacy alias `destroyQuietly`.
+- Update gateway route code to import/call `destroyBestEffort` directly:
+  - `tcpProxy.ts`
+  - `tcpMuxBridge.ts`
+  - `tcpBridge.ts`
+  - `wsDuplexClose.ts`
+
+Outcomes:
+- Gateway routes now use a single, repo-wide name for best-effort teardown (`destroyBestEffort`), reducing cognitive overhead and avoiding “quietly” vs “best-effort” naming drift.
+
+### Phase 84: De-duplicate “write + capture ok + capture error” patterns (done)
+Goal: remove remaining ad-hoc `try/catch` wrappers around `stream.write(...)` in backpressure-sensitive code that needs both:
+- the write return value (`ok`) and
+- a best-effort error capture path that is safe against hostile getters.
+
+Approach:
+- `src/socket_safe.{js,cjs}`:
+  - Add `writeCaptureErrorBestEffort(stream, ...args) -> { ok: boolean, err: unknown | null }`.
+  - Update `.d.ts` stubs and extend contract/parity tests to lock behavior.
+- Replace local `try { ok = x.write(...) } catch { ... }` blocks with the canonical helper:
+  - `backend/aero-gateway/src/routes/tcpMuxBridge.ts`
+  - `backend/aero-gateway/src/routes/tcpBridge.ts`
+  - `net-proxy/src/tcpRelay.ts`
+  - `net-proxy/src/tcpMuxRelay.ts`
+- Extend per-package shim exports where used:
+  - `backend/aero-gateway/src/routes/socketSafe.ts`
+  - `net-proxy/src/socketSafe.ts`
+
+Outcomes:
+- “write return + sync throw” handling is now single-sourced and test-locked, reducing drift and making backpressure-related safety changes one-touch.
+
+### Phase 85: Apply writeCaptureErrorBestEffort to remaining tool callsites (done)
+Goal: remove the last remaining `let ok=false; try { ok = socket.write(...) } catch { ... }` patterns in dev/test tooling so backpressure handling stays consistent across the repo.
+
+Approach:
+- `tools/net-proxy-server/src/server.js`:
+  - Replace the remaining TCP stream `.write(...)` try/catch blocks with `writeCaptureErrorBestEffort`.
+
+Outcomes:
+- Tooling now uses the same canonical “write return + sync throw” primitive as production code, eliminating drift.
+
+### Phase 86: Prefer specialized capture helpers over generic callMethodCaptureErrorBestEffort (done)
+Goal: further reduce drift by using more specific, self-documenting primitives (`writeCaptureErrorBestEffort`, `endCaptureErrorBestEffort`) where callsites were still using the generic “call method + capture error” helper.
+
+Approach:
+- `src/ws_handshake_response.js`: use `writeCaptureErrorBestEffort` for handshake writes.
+- `tools/net-proxy-server/src/server.js`: use `endCaptureErrorBestEffort` for FIN forwarding.
+
+Outcomes:
+- Remaining “write/end” capture callsites now share the canonical helpers dedicated to those operations, keeping behavior consistent and intent clearer.
+
+### Phase 87: De-duplicate minimal_ws socket write/destroy wrappers (done)
+Goal: reduce drift in `tools/minimal_ws.js` by reusing canonical “safe write capture” + “destroy best-effort” helpers (including hostile getter safety).
+
+Approach:
+- `tools/minimal_ws.js`:
+  - Implement `trySocketWrite(...)` via `writeCaptureErrorBestEffort(...)` (preserving callback error microtask semantics).
+  - Implement `trySocketDestroy(...)` via `destroyBestEffort(...)`.
+
+Outcomes:
+- The minimal WebSocket shim now shares the repo-wide hardened socket write/destroy primitives, without changing contract behavior.
+
+### Phase 88: HTTP response safe API alignment (done)
+Goal: keep the canonical “best-effort response writer” aligned with Node’s real `ServerResponse.writeHead(...)` overloads while preserving the repo’s “never throw at boundaries” posture.
+
+Approach:
+- `src/http_response_safe.{js,cjs}`:
+  - Treat `headers` as one of:
+    - `OutgoingHttpHeaders` (object map)
+    - `OutgoingHttpHeader[]` raw header list (validated; must be even-length and alternating `string` keys with `string | number | string[]` values)
+  - Ignore invalid header shapes (including empty arrays) and fall back to `writeHead(statusCode)` instead of throwing and tearing down.
+  - Harden `sendJsonNoStore` / `sendTextNoStore` against hostile `opts.contentType` getters and missing/invalid values (stable defaults).
+- Typings:
+  - Update `src/http_response_safe*.d.ts` to reflect the supported header shapes and optional `contentType`.
+- Tests:
+  - Extend contract + parity coverage to lock in header-array handling and `opts.contentType` hardening.
+
+Outcomes:
+- Canonical response writer supports Node’s `writeHead(status, rawHeadersArray)` path safely and deterministically.
+- `sendJsonNoStore` / `sendTextNoStore` no longer rely on trusted `opts` shapes for content-type selection.
+- ESM/CJS parity is test-locked for the new behaviors.
+
+### Phase 89: Web helper parity polish (done)
+Goal: keep browser/worker best-effort helpers aligned with the canonical “nullish + object/function receiver” posture so hostile proxies and primitive inputs cannot crash teardown paths.
+
+Approach:
+- `web/src/unrefSafe.ts`: align the guard to `handle == null` (avoid “falsy” semantics drift).
+- `web/src/safeMethod.ts`: bail out early for non-object/non-function receivers.
+
+Outcomes:
+- Web helper behavior stays consistent with the canonical Node-side helpers, and contract coverage continues to prevent drift.
+
+### Phase 90: ws_safe invalid-input hardening (done)
+Goal: ensure canonical Node-side WebSocket safety helpers fail closed on clearly-invalid inputs while preserving “fail open when state is not observable” semantics for real WebSocket-like objects.
+
+Approach:
+- `src/ws_safe.js`:
+  - Make `wsIsOpenSafe` return `false` for non-object/non-function inputs (avoid treating primitives as open).
+- Tests:
+  - Extend `tests/ws_safe_contract.test.js` to lock in invalid-input behavior.
+
+Outcomes:
+- `wsIsOpenSafe(123)` (and other primitive inputs) reliably returns `false`.
+- Existing behavior for object-like inputs without observable `readyState` remains unchanged and contract-locked.
+
+### Phase 91: ws_backpressure invalid-input hardening + typing alignment (done)
+Goal: keep `createWsSendQueue` robust to invalid `ws` inputs and keep its `.d.ts`/JSDoc aligned with its defaulting behavior.
+
+Approach:
+- `src/ws_backpressure.js`:
+  - Make the internal `isOpen()` fail closed for non-object/non-function `ws` inputs.
+  - Update JSDoc to mark `ws` / `highWatermarkBytes` / `lowWatermarkBytes` as optional (runtime defaults).
+- `src/ws_backpressure.d.ts`:
+  - Make `ws`, `highWatermarkBytes`, and `lowWatermarkBytes` optional.
+  - Allow `createWsSendQueue(opts?)` to be called with `opts` omitted, matching runtime behavior.
+- Tests:
+  - Add a contract regression to ensure primitive `ws` inputs are not treated as open.
+
+Outcomes:
+- Backpressure callbacks are not triggered for nonsense primitive `ws` inputs.
+- Type declarations reflect the actual supported call shapes (defaults) without affecting runtime behavior.
+
+### Phase 92: Contract-suite drift + timing hardening (done)
+Goal: keep the contract/parity suite reliable across environments and prevent “type stub drift” between ESM and CJS helper surfaces.
+
+Approach:
+- Add a contract test that auto-discovers `src/**/*.cjs.d.ts` files and enforces:
+  - the matching `src/**/*.d.ts` exists, and
+  - normalized contents match (ignoring CRLF and trailing whitespace).
+- Add a contract test that ensures dual-module helper stubs match the *runtime* export surface:
+  - parse `export function ...` declarations from the `.d.ts` files, and
+  - assert the same names exist as `function` exports in both `src/<name>.js` (ESM) and `src/<name>.cjs` (CJS).
+- Extend the same runtime export contract to cover ESM-only `src/**/*.d.ts` stubs:
+  - when there is no `.cjs.d.ts` pair, require a matching `src/<name>.js` runtime module and validate exported function names there.
+- Add a module boundary contract that prevents workspaces from deep-importing repo-root `src/*` helpers directly:
+  - allow only minimal `export * from ".../src/..."` shim modules inside each workspace.
+- Replace brittle fixed sleeps in the `ws_backpressure` contract with deterministic scheduling primitives / bounded waits.
+
+Outcomes:
+- The contract suite fails if any dual-module `.d.ts` pair in `src/` drifts.
+- The contract suite fails if any helper `.d.ts` declares a function that isn’t exported at runtime (ESM and/or CJS, depending on module format).
+- The contract suite fails if `net-proxy` or `aero-gateway` code deep-imports repo-root `src/*` helpers outside of shim modules.
+- `ws_backpressure` contract timing is deterministic and less sensitive to runtime load or event-loop scheduling differences.
+
+### Phase 93: Helper typing ergonomics (done)
+Goal: make the repo’s defensive helper surfaces feel “type-correct” in TypeScript without changing runtime behavior.
+
+Approach:
+- Prefer `PropertyKey` over `string` for helper APIs that accept property/method keys, matching real JS semantics (including `symbol` keys).
+- Add small contract coverage for symbol-key method lookup/invocation where helpers explicitly accept a key argument.
+
+Outcomes:
+- `safe_props` and `socket_safe` TypeScript stubs accept `PropertyKey` where appropriate.
+- Contract suite includes symbol-key regressions for:
+  - the web helper (`web/src/safeMethod.ts`)
+  - the canonical Node socket helper (`src/socket_safe.js`)
+  - the canonical safe getter helper (`src/safe_props.js`)
+- `safe_props` runtime guards use the repo-standard “nullish + object/function” posture (`obj == null`) to avoid falsy-vs-nullish drift.
 
 Some coding guidelines:
 

@@ -130,6 +130,7 @@ test("web rtcSafe: pcCloseSafe does not throw if close getter throws", () => {
 test("web rtcSafe: dcBufferedAmountSafe returns 0 for invalid/hostile values", () => {
   assert.equal(dcBufferedAmountSafe(null), 0);
   assert.equal(dcBufferedAmountSafe({ bufferedAmount: 123 }), 123);
+  assert.equal(dcBufferedAmountSafe({ bufferedAmount: -1 }), 0);
   assert.equal(dcBufferedAmountSafe({ bufferedAmount: "nope" }), 0);
 });
 

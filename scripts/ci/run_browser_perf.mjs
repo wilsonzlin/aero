@@ -5,6 +5,7 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { unrefBestEffort } from "../../src/unref_safe.js";
 
 function usage(exitCode) {
   const msg = `
@@ -288,7 +289,7 @@ async function waitForHttpReady(url, { timeoutMs, intervalMs, serverProcess, get
 async function canBind(port) {
   return new Promise((resolve) => {
     const srv = net.createServer();
-    srv.unref();
+    unrefBestEffort(srv);
     srv.once("error", () => resolve(false));
     srv.listen({ port, host: "127.0.0.1" }, () => {
       srv.close(() => resolve(true));
@@ -304,7 +305,7 @@ async function ensurePortFree(port) {
     console.warn(`[ci-perf] preview port ${port} is in use; falling back to an ephemeral port`);
     return new Promise((resolve, reject) => {
       const srv = net.createServer();
-      srv.unref();
+      unrefBestEffort(srv);
       srv.once("error", (err) => reject(err));
       srv.listen({ port: 0, host: "127.0.0.1" }, () => {
         const addr = srv.address();

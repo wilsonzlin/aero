@@ -9,6 +9,7 @@ import {
   type DemoVmWorkerStepResult,
 } from "./demo_vm_worker_protocol";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -164,7 +165,7 @@ export class DemoVmWorkerClient {
           this.#pending.delete(id);
           reject(new Error(`Timed out waiting for demo VM worker RPC (${req.type}) (${timeoutMs}ms).`));
         }, timeoutMs);
-        (timeout as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timeout);
       }
       try {
         activeWorker.postMessage(req);

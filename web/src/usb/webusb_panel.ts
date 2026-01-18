@@ -1,6 +1,7 @@
 import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 import { WebUsbBackend, type SetupPacket } from "./webusb_backend";
 import { formatHexBytes, hex16, hex8 } from "./usb_hex";
 
@@ -117,7 +118,7 @@ async function runWebUsbProbeWorker(msg: unknown, timeoutMs = 10_000): Promise<u
       worker.terminate();
       reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-    (timeout as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timeout);
 
     const cleanup = () => {
       window.clearTimeout(timeout);

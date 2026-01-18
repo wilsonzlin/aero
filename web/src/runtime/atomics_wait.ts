@@ -1,3 +1,5 @@
+import { unrefBestEffort } from "../unrefSafe";
+
 export type WaitUntilNotEqualResult = 'ok' | 'timed-out' | 'not-equal';
 
 export interface WaitUntilNotEqualOptions {
@@ -70,7 +72,7 @@ function sleepMs(ms: number): Promise<void> {
 
   return new Promise(resolve => {
     const timer = setTimeout(resolve, Math.max(0, ms));
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
 }
 

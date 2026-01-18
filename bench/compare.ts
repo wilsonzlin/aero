@@ -27,7 +27,7 @@ const OPTIONAL_STORAGE_METRICS = new Set(["random_write_4k_p95_ms"]);
 function usage(exitCode: number) {
   const msg = `
 Usage:
-  node --experimental-strip-types bench/compare.ts --baseline <storage_bench.json> --candidate <storage_bench.json> --out-dir <dir>
+  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/compare.ts --baseline <storage_bench.json> --candidate <storage_bench.json> --out-dir <dir>
 
 Options:
   --baseline <path>          Baseline storage_bench.json (required)

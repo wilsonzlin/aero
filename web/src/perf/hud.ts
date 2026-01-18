@@ -1,6 +1,7 @@
 import './hud.css';
 
 import type { PerfApi, PerfHudSnapshot } from './types';
+import { unrefBestEffort } from '../unrefSafe';
 
 export type PerfHudHandle = {
   show(): void;
@@ -439,7 +440,7 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
     perf.setHudActive(true);
     update();
     const timer = window.setInterval(update, 1000 / HUD_UPDATE_HZ);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     updateTimer = timer as unknown as number;
   };
 
@@ -550,7 +551,7 @@ export const installHud = (perf: PerfApi): PerfHudHandle => {
           traceDownloadResetTimer = null;
           setText(traceDownloadBtn, idleLabel);
         }, 2500);
-        (resetTimer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(resetTimer);
         traceDownloadResetTimer = resetTimer as unknown as number;
       } finally {
         traceDownloadBtn.disabled = false;

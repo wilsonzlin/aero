@@ -2,8 +2,8 @@ import type { Duplex } from "node:stream";
 
 import { formatOneLineUtf8 } from "./text";
 
-import { encodeHttpTextResponse } from "../../src/http_text_response.cjs";
-import { endThenDestroyQuietly } from "../../src/socket_end_then_destroy.cjs";
+import { encodeHttpTextResponse } from "./httpTextResponse";
+import { endThenDestroyQuietly } from "./socketEndThenDestroy";
 
 const MAX_UPGRADE_ERROR_MESSAGE_BYTES = 512;
 

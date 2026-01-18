@@ -1,5 +1,6 @@
 import type { AeroConfigManager } from "../config/manager";
 import type { WorkerCoordinator } from "../runtime/coordinator";
+import { unrefBestEffort } from "../unrefSafe";
 
 export function mountStatusPanel(
   container: HTMLElement,
@@ -82,5 +83,5 @@ export function mountStatusPanel(
 
   updateWorkers();
   const timer = globalThis.setInterval(updateWorkers, 250);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
 }

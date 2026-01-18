@@ -4,6 +4,7 @@ import { EventEmitter, once } from "node:events";
 import net from "node:net";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
+import { unrefBestEffort } from "../unrefSafe";
 import {
   TCP_MUX_SUBPROTOCOL,
   TcpMuxCloseFlags,
@@ -40,7 +41,7 @@ async function openWebSocket(url: string, protocol: string): Promise<WebSocket> 
   const ws = new WebSocket(url, protocol);
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), 2_000);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("open", () => {
       clearTimeout(timeout);
       resolve();
@@ -56,7 +57,7 @@ async function openWebSocket(url: string, protocol: string): Promise<WebSocket> 
 async function waitForClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for close")), timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("close", (code, reason) => {
       clearTimeout(timeout);
       resolve({ code, reason: reason.toString() });
@@ -115,7 +116,7 @@ function createFrameWaiter(ws: WebSocket): FrameWaiter {
         if (i !== -1) waiters.splice(i, 1);
         reject(new Error("timeout waiting for frame"));
       }, timeoutMs);
-      timer.unref();
+      unrefBestEffort(timer);
 
       waiter = { predicate, resolve, reject, timer };
       waiters.push(waiter);
@@ -151,7 +152,7 @@ test("tcp-mux upgrade requires aero-tcp-mux-v1 subprotocol", async () => {
 
       const statusCode = await new Promise<number>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket rejection")), 2_000);
-        timeout.unref();
+        unrefBestEffort(timeout);
 
         ws.once("open", () => {
           clearTimeout(timeout);
@@ -188,7 +189,7 @@ test("tcp-mux negotiates aero-tcp-mux-v1 subprotocol when multiple are offered",
     ws = new WebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, ["bogus-subprotocol", TCP_MUX_SUBPROTOCOL]);
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), 2_000);
-      timeout.unref();
+      unrefBestEffort(timeout);
       ws!.once("open", () => {
         clearTimeout(timeout);
         resolve();
@@ -1197,7 +1198,7 @@ test("tcp-mux propagates CLOSE(FIN) as TCP FIN while still allowing server->clie
       serverSawFin,
       new Promise<never>((_resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("timeout waiting for TCP FIN")), 2_000);
-        timeout.unref();
+        unrefBestEffort(timeout);
       })
     ]);
 
@@ -1361,7 +1362,7 @@ async function waitForServerSocketClose(socket: net.Socket, timeoutMs = 2_000): 
     closePromise,
     new Promise<never>((_resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("timeout waiting for TCP socket close")), timeoutMs);
-      timeout.unref();
+      unrefBestEffort(timeout);
     })
   ]);
 }

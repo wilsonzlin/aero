@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
+import { unrefBestEffort } from "../unrefSafe";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { InputEventType } from "../input/event_queue";
 import { encodeCommand } from "../ipc/protocol";
@@ -17,6 +18,9 @@ import {
 } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import { NET_WORKER_NODE_EXEC_ARGV } from "./test_utils/worker_exec_argv";
+
+const CPU_WORKER_EXEC_ARGV = NET_WORKER_NODE_EXEC_ARGV;
 
 async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -28,7 +32,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
       cleanup();
       reject(new Error(`timed out after ${effectiveTimeoutMs}ms waiting for worker message`));
     }, effectiveTimeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
 
     const onMessage = (msg: unknown) => {
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
@@ -124,11 +128,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   it("boots via config.update + init and reaches READY", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -158,11 +160,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const runSliceCounterIndex = 63;
     Atomics.store(status, runSliceCounterIndex, 0);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -199,7 +199,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       while (baseline === 0 && Date.now() < deadline) {
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, 20);
-          (timer as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timer);
         });
         baseline = Atomics.load(status, runSliceCounterIndex) >>> 0;
       }
@@ -222,7 +222,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       const afterWake = Atomics.load(status, runSliceCounterIndex) >>> 0;
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, 500);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
       });
       const end = Atomics.load(status, runSliceCounterIndex) >>> 0;
       const diff = (end - afterWake) >>> 0;
@@ -259,11 +259,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     Atomics.store(status, StatusIndex.IoKeyboardBackendSwitchCounter, 499);
     Atomics.store(status, StatusIndex.IoMouseBackendSwitchCounter, 599);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -310,11 +308,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -354,11 +350,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
   it("forwards AeroGPU fence completion messages into Machine.aerogpu_complete_fence (dummy machine)", async () => {
     const segments = allocateTestSegments();
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -395,11 +389,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
   it("drains dummy AeroGPU submissions and posts aerogpu.submit messages", async () => {
     const segments = allocateTestSegments();
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -483,11 +475,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
     Atomics.store(status, StatusIndex.GpuReady, 0);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -587,11 +577,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   it("queues AeroGPU fence completions while snapshot-paused and flushes them on resume (dummy machine)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -667,11 +655,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
     Atomics.store(status, StatusIndex.GpuReady, 1);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -771,11 +757,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
     const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -842,11 +826,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -920,11 +902,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1071,11 +1051,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1160,11 +1138,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1242,11 +1218,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1310,11 +1284,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1370,11 +1342,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
     const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1483,11 +1453,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   it("enforces vm.snapshot.pause before machine snapshot RPCs and reports missing WASM", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1556,11 +1524,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   it("enforces vm.snapshot.pause before machine restore RPCs and reports missing WASM", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1629,11 +1595,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   it("processes multiple queued machine snapshot save requests (no WASM)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1700,11 +1664,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
     const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1834,11 +1796,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
   }
 
   it("selects CD boot when install media is present", async () => {
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1865,11 +1825,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
   }, 20_000);
 
   it("selects HDD boot when install media is absent", async () => {
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1896,11 +1854,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
   }, 20_000);
 
   it("honors explicit bootDevice preference when provided", async () => {
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1928,11 +1884,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
   }, 20_000);
 
   it("honors explicit CD boot when mounts select a CD even if CD metadata is missing", async () => {
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1960,11 +1914,9 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
   }, 20_000);
 
   it("ignores explicit bootDevice values when the corresponding device is absent", async () => {
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1997,11 +1949,9 @@ describe("workers/machine_cpu.worker (active boot device reporting)", () => {
   it("reports the firmware-selected active boot device after reset (dummy machine)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2070,11 +2020,9 @@ describe("workers/machine_cpu.worker (CD-first boot policy)", () => {
   it("keeps boot drive as HDD0 while booting from CD when both devices are present (dummy machine)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2179,11 +2127,9 @@ describe("workers/machine_cpu.worker (guest reset boot policy)", () => {
   it("switches from CD to HDD when the guest requests a reset, even if HDD metadata is missing (dummy machine)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2271,11 +2217,9 @@ describe("workers/machine_cpu.worker (boot drive API compat)", () => {
   it("boots from HDD when bootDevice=hdd and HDD is selected via mounts even if HDD metadata is missing (dummy machine)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2338,11 +2282,9 @@ describe("workers/machine_cpu.worker (boot drive API compat)", () => {
   it("uses camelCase setBootDrive when booting from CD (dummy machine)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2412,11 +2354,9 @@ describe("workers/machine_cpu.worker (network API compat)", () => {
       vramBytes: 0,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2472,11 +2412,9 @@ describe("workers/machine_cpu.worker (snapshot restore boot device reporting)", 
   it("reports active boot device after a successful machine snapshot restore (dummy machine)", async () => {
     const segments = allocateTestSegments();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: CPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {

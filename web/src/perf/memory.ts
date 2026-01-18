@@ -1,3 +1,5 @@
+import { unrefBestEffort } from '../unrefSafe';
+
 export const WASM_PAGE_SIZE_BYTES = 64 * 1024;
 
 type PerformanceMemoryLike = {
@@ -226,7 +228,7 @@ export class MemoryTelemetry {
     if (this.timer !== null) return;
     const intervalMs = Math.max(1, Math.floor(1000 / this.sampleHz));
     this.timer = setInterval(() => this.sampleNow(null), intervalMs);
-    (this.timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.timer);
   }
 
   stop(): void {

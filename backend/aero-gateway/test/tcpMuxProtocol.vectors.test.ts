@@ -9,7 +9,6 @@ import {
   MAX_TCP_MUX_OPEN_HOST_BYTES,
   MAX_TCP_MUX_OPEN_METADATA_BYTES,
   TcpMuxMsgType,
-  type TcpMuxMsgType,
   TcpMuxFrameParser,
   decodeTcpMuxClosePayload,
   decodeTcpMuxErrorPayload,

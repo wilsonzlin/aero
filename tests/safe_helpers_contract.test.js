@@ -65,6 +65,18 @@ test('safe_props: typed helpers filter correctly', () => {
   assert.equal(tryGetNumberProp({ n: Infinity }, 'n'), undefined);
 });
 
+test('safe_props: supports symbol keys', () => {
+  const sym = Symbol('x');
+  const obj = { [sym]: 'ok' };
+  assert.equal(tryGetProp(obj, sym), 'ok');
+  assert.equal(tryGetStringProp(obj, sym), 'ok');
+  assert.equal(tryGetNumberProp(obj, sym), undefined);
+
+  assert.equal(safePropsCjs.tryGetProp(obj, sym), 'ok');
+  assert.equal(safePropsCjs.tryGetStringProp(obj, sym), 'ok');
+  assert.equal(safePropsCjs.tryGetNumberProp(obj, sym), undefined);
+});
+
 test('instanceof_safe: never throws and returns false on hostile proxies', () => {
   const hostile = new Proxy(
     {},

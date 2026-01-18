@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { VmCoordinator } from '../src/vmCoordinator.js';
+import { unrefBestEffort } from '../src/unref_safe.js';
 
 const WATCHDOG_TEST_TIMEOUT_MS = 30_000;
 
@@ -17,7 +18,7 @@ function onceEvent(target, type) {
 function sleep(ms) {
   return new Promise((resolve) => {
     const timeout = setTimeout(resolve, ms);
-    timeout.unref();
+    unrefBestEffort(timeout);
   });
 }
 
@@ -40,7 +41,7 @@ test(
     const interval = setInterval(() => {
       ticks += 1;
     }, 10);
-    interval.unref?.();
+    unrefBestEffort(interval);
 
     const errorEventPromise = onceEvent(vm, 'error');
     await vm.start({ mode: 'nonYieldingLoop' });

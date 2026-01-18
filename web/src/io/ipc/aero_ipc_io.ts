@@ -2,6 +2,7 @@ import { RingBuffer } from "../../ipc/ring_buffer.ts";
 import { decodeCommand, decodeEvent, encodeCommand, encodeEvent, type Command, type Event } from "../../ipc/protocol.ts";
 import type { IrqSink } from "../device_manager.ts";
 import { formatOneLineError } from "../../text.ts";
+import { unrefBestEffort } from "../../unrefSafe";
 
 /**
  * IRQ callback invoked by {@link AeroIpcIoClient.poll}.
@@ -420,7 +421,7 @@ export class AeroIpcIoServer implements IrqSink {
           // Yield to allow other tasks (e.g. worker `onmessage`) to run.
           await new Promise((resolve) => {
             const timer = setTimeout(resolve, 0);
-            (timer as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timer);
           });
           if (opts.signal?.aborted) return;
         }

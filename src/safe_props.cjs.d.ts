@@ -1,4 +1,4 @@
-export function tryGetProp(obj: unknown, key: string): unknown | undefined;
-export function tryGetStringProp(obj: unknown, key: string): string | undefined;
-export function tryGetNumberProp(obj: unknown, key: string): number | undefined;
+export function tryGetProp(obj: unknown, key: PropertyKey): unknown | undefined;
+export function tryGetStringProp(obj: unknown, key: PropertyKey): string | undefined;
+export function tryGetNumberProp(obj: unknown, key: PropertyKey): number | undefined;
 

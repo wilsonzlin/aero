@@ -6,18 +6,21 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import { createIpcBuffer, openRingByKind } from "../../ipc/ipc.ts";
 import { queueKind, ringCtrl } from "../../ipc/layout.ts";
 import { encodeCommand } from "../../ipc/protocol.ts";
+import { makeNodeWorkerExecArgv } from "../../test_utils/worker_threads_exec_argv";
+import { unrefBestEffort } from "../../unrefSafe";
 
 import { AeroIpcIoServer, type AeroIpcIoDispatchTarget } from "./aero_ipc_io.ts";
 
 const WORKER_READY_TIMEOUT_MS = 10_000;
 const TICK_TIMEOUT_MS = 10_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
+const WORKER_EXEC_ARGV = makeNodeWorkerExecArgv();
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms: ${label}`)), timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -29,7 +32,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 async function sleep0(): Promise<void> {
   await new Promise((resolve) => {
     const timer = setTimeout(resolve, 0);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
 }
 
@@ -219,7 +222,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
         // Make command handling non-trivial so the ring stays hot while we flood.
         workIters: 2000,
       },
-      execArgv: ["--experimental-strip-types"],
+      execArgv: WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     let exited = false;
@@ -281,7 +284,7 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
         // Work is driven by malformed decode cost, not handler cost.
         workIters: 0,
       },
-      execArgv: ["--experimental-strip-types"],
+      execArgv: WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     const malformed = makeMalformedMmioWrite(8 * 1024);

@@ -4,7 +4,7 @@
 // future release. `--import` + `register()` is the supported replacement.
 //
 // This module is intended to be used with:
-//   node --import ./scripts/register-ts-strip-loader.mjs --experimental-strip-types ...
+//   node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs ...
 import { register } from "node:module";
 
 register("./ts-strip-loader.mjs", import.meta.url);

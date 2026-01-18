@@ -5,6 +5,7 @@ import { PassThrough } from "node:stream";
 import { once } from "node:events";
 import { WebSocketServer } from "ws";
 import { startProxyServer } from "../server";
+import { unrefBestEffort } from "../unrefSafe";
 
 async function sendRawUpgradeRequest(
   host: string,
@@ -20,7 +21,7 @@ async function sendRawUpgradeRequest(
       cleanup();
       reject(new Error("timeout: sendRawUpgradeRequest"));
     }, 2000);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
 
     const cleanup = () => {
       if (done) return;

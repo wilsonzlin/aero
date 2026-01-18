@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { VRAM_BASE_PADDR } from "../arch/guest_phys";
+import { unrefBestEffort } from "../unrefSafe";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
 import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
@@ -24,11 +25,13 @@ import {
   SCANOUT_SOURCE_WDDM,
 } from "../ipc/scanout_state";
 import { CURSOR_STATE_GENERATION_BUSY_BIT, CursorStateIndex } from "../ipc/cursor_state";
+import { WORKER_THREADS_WEBWORKER_EXEC_ARGV } from "./test_utils/worker_exec_argv";
 
 // These worker-thread integration tests can be sensitive to scheduling jitter in CI/agent
 // sandboxes (especially on newer Node majors). Keep timeouts generous to avoid flakes.
 const WORKER_MESSAGE_TIMEOUT_MS = 20_000;
 const TEST_TIMEOUT_MS = 70_000;
+const GPU_WORKER_EXEC_ARGV = WORKER_THREADS_WEBWORKER_EXEC_ARGV;
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -40,7 +43,7 @@ async function waitForWorkerMessage(
       cleanup();
       reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
     }, timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
 
     const onMessage = (msg: unknown) => {
       // Surface runtime worker errors eagerly.
@@ -194,11 +197,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -300,11 +301,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B5G6R5,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -414,11 +413,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B5G5R5A1,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -521,11 +518,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -624,11 +619,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_R8G8B8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -728,11 +721,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8A8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -833,11 +824,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8A8_SRGB,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -916,11 +905,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     const height = 1;
     const pitchBytes = 4;
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1058,11 +1045,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1161,11 +1146,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8_SRGB,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1262,11 +1245,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8A8_SRGB,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1363,11 +1344,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1470,11 +1449,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1572,11 +1549,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_R8G8B8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1678,11 +1653,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_R8G8B8A8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1784,11 +1757,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8A8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1887,11 +1858,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8A8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -1982,11 +1951,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2079,11 +2046,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2184,11 +2149,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       format: SCANOUT_FORMAT_B8G8R8X8,
     });
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {
@@ -2285,11 +2248,9 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     Atomics.store(scanoutWords, ScanoutStateIndex.GENERATION, (SCANOUT_STATE_GENERATION_BUSY_BIT | 1) | 0);
     Atomics.store(cursorWords, CursorStateIndex.GENERATION, (CURSOR_STATE_GENERATION_BUSY_BIT | 1) | 0);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: GPU_WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {

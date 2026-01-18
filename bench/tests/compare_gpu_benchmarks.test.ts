@@ -6,10 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "..", "..");
-const compareScriptPath = path.join(repoRoot, "scripts", "compare_gpu_benchmarks.ts");
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const COMPARE_GPU_SCRIPT_PATH = fileURLToPath(new URL("../../scripts/compare_gpu_benchmarks.ts", import.meta.url));
+const TS_STRIP_LOADER_URL = new URL("../../scripts/register-ts-strip-loader.mjs", import.meta.url);
 
 const writeJson = async (filePath: string, value: unknown) => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
@@ -45,7 +44,9 @@ const runCompare = ({
     process.execPath,
     [
       "--experimental-strip-types",
-      compareScriptPath,
+      "--import",
+      TS_STRIP_LOADER_URL.href,
+      COMPARE_GPU_SCRIPT_PATH,
       "--baseline",
       baseline,
       "--candidate",
@@ -57,7 +58,7 @@ const runCompare = ({
       "--profile",
       "pr-smoke",
     ],
-    { encoding: "utf8", cwd: repoRoot },
+    { encoding: "utf8", cwd: REPO_ROOT },
   );
 
 test("compare_gpu_benchmarks exits 1 on regression beyond threshold", async () => {

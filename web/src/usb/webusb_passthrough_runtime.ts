@@ -19,6 +19,7 @@ import {
 import { UsbProxyRing } from "./usb_proxy_ring";
 import { subscribeUsbProxyCompletionRing } from "./usb_proxy_ring_dispatcher";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type UsbPassthroughBridgeLike = {
   drain_actions(): unknown;
@@ -674,7 +675,7 @@ export class WebUsbPassthroughRuntime {
     const timer = setInterval(() => {
       void this.pollOnce();
     }, this.#pollIntervalMs) as unknown as number;
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     this.#pollTimer = timer;
   }
 

@@ -231,6 +231,12 @@ test("ws_safe: wsIsOpenSafe does not throw if readyState getter throws", () => {
   assert.equal(wsIsOpenSafe(ws), false);
 });
 
+test("ws_safe: wsIsOpenSafe returns false on invalid ws input", () => {
+  assert.equal(wsIsOpenSafe(null), false);
+  assert.equal(wsIsOpenSafe(undefined), false);
+  assert.equal(wsIsOpenSafe(123), false);
+});
+
 test("ws_safe: wsIsOpenSafe returns true when readyState is not observable", () => {
   assert.equal(wsIsOpenSafe({}), true);
 });

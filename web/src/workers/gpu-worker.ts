@@ -16,6 +16,8 @@ import { perf } from '../perf/perf';
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from '../perf/shared.js';
 import { installWorkerPerfHandlers } from '../perf/worker';
 import { PerfWriter } from '../perf/writer.js';
+import { unrefBestEffort } from "../unrefSafe";
+import { destroyBestEffort } from "../safeMethod";
 
 import {
   FRAME_DIRTY,
@@ -2431,7 +2433,7 @@ async function telemetryTick(): Promise<void> {
 function startTelemetryPolling(): void {
   if (telemetryPollTimer !== null) return;
   const timer = setInterval(() => void telemetryTick(), TELEMETRY_POLL_INTERVAL_MS) as unknown as number;
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   telemetryPollTimer = timer;
   void telemetryTick();
 }
@@ -2578,7 +2580,7 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
   //   WebGL2 presenter needs a live context reference for that).
   const preservePresenterForRestore = startRecovery === false;
   if (!preservePresenterForRestore) {
-    presenter?.destroy?.();
+    destroyBestEffort(presenter);
     presenter = null;
   }
   cursorPresenterLastImageOwner = null;
@@ -3836,7 +3838,7 @@ async function tryInitBackend(
 
 async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, height: number): Promise<void> {
   const prevPresenterBackend = presenter?.backend ?? null;
-  presenter?.destroy?.();
+  destroyBestEffort(presenter);
   presenter = null;
   cursorPresenterLastImageOwner = null;
   latestFrameTimings = null;
@@ -4128,7 +4130,7 @@ function startRuntimePolling(): void {
       shutdownRuntime();
     }
   }, 8) as unknown as number;
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   runtimePollTimer = timer;
 }
 
@@ -4283,7 +4285,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         framebufferProtocolLayoutKey = null;
         (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer = undefined;
 
-        presenter?.destroy?.();
+        destroyBestEffort(presenter);
         presenter = null;
         cursorPresenterLastImageOwner = null;
         latestFrameTimings = null;
@@ -5538,7 +5540,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     case "shutdown": {
       stopTelemetryPolling();
       uninstallContextLossHandlers();
-      presenter?.destroy?.();
+      destroyBestEffort(presenter);
       presenter = null;
       cursorPresenterLastImageOwner = null;
       runtimeInit = null;

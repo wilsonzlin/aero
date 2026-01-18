@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
+import { unrefBestEffort } from "../unrefSafe";
 import { openRingByKind } from "../ipc/ipc";
 import { encodeCommand } from "../ipc/protocol";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
@@ -15,6 +16,9 @@ import {
   type SharedMemorySegments,
 } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+import { WORKER_THREADS_WEBWORKER_EXEC_ARGV } from "./test_utils/worker_exec_argv";
+
+const WORKER_EXEC_ARGV = WORKER_THREADS_WEBWORKER_EXEC_ARGV;
 
 function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false;
@@ -34,7 +38,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
       cleanup();
       reject(new Error(`timed out after ${effectiveTimeoutMs}ms waiting for worker message`));
     }, effectiveTimeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
 
     const onMessage = (msg: unknown) => {
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
@@ -127,11 +131,9 @@ describe("workers/io.worker (machine runtime host-only mode)", () => {
     views.guestU8.fill(0x5a);
     const guestCopy = views.guestU8.slice();
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
-    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./io.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: WORKER_EXEC_ARGV,
     } as unknown as WorkerOptions);
 
     try {

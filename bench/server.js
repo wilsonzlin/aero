@@ -5,6 +5,8 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { formatOneLineError, formatOneLineUtf8 } from "../src/text.js";
 import { isExpectedStreamAbort } from "../src/stream_abort.js";
+import { destroyBestEffort } from "../src/socket_safe.js";
+import { tryWriteResponse } from "../src/http_response_safe.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -35,22 +37,21 @@ function safeResolve(rootDir, requestPath) {
   return resolved;
 }
 
-function sendText(res, statusCode, text) {
+function sendText(res, statusCode, text, extraHeaders) {
   const safeText = formatOneLineUtf8(text, MAX_ERROR_BODY_BYTES) || "Error";
   const body = Buffer.from(safeText, "utf8");
-  try {
-    res.statusCode = statusCode;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Content-Length", body.length);
-    res.setHeader("Cache-Control", "no-store");
-    res.end(body);
-  } catch {
-    try {
-      res.destroy();
-    } catch {
-      // ignore
-    }
-  }
+  const headers = {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Length": body.length,
+    "Cache-Control": "no-store",
+    ...extraHeaders,
+  };
+  tryWriteResponse(
+    res,
+    statusCode,
+    headers,
+    body,
+  );
 }
 
 function pipeFile(res, filePath) {
@@ -79,28 +80,15 @@ export async function startStaticServer(opts) {
     try {
       const method = req.method ?? "GET";
       if (method === "OPTIONS") {
-        try {
-          res.statusCode = 204;
-          res.setHeader("Allow", "GET, HEAD, OPTIONS");
-          res.setHeader("Cache-Control", "no-store");
-          res.setHeader("Content-Length", "0");
-          res.end();
-        } catch {
-          try {
-            res.destroy();
-          } catch {
-            // ignore
-          }
-        }
+        tryWriteResponse(res, 204, {
+          Allow: "GET, HEAD, OPTIONS",
+          "Cache-Control": "no-store",
+          "Content-Length": "0",
+        });
         return;
       }
       if (method !== "GET" && method !== "HEAD") {
-        try {
-          res.setHeader("Allow", "GET, HEAD, OPTIONS");
-        } catch {
-          // ignore (sendText will destroy if response is unusable)
-        }
-        sendText(res, 405, "Method Not Allowed");
+        sendText(res, 405, "Method Not Allowed", { Allow: "GET, HEAD, OPTIONS" });
         return;
       }
 
@@ -155,11 +143,18 @@ export async function startStaticServer(opts) {
         return;
       }
 
-      res.statusCode = 200;
-      res.setHeader("Content-Type", contentType(filePath));
-      res.setHeader("Content-Length", st.size);
+      const headers = {
+        "Content-Type": contentType(filePath),
+        "Content-Length": st.size,
+      };
       if (method === "HEAD") {
-        res.end();
+        tryWriteResponse(res, 200, headers);
+        return;
+      }
+      try {
+        res.writeHead(200, headers);
+      } catch {
+        destroyBestEffort(res);
         return;
       }
       pipeFile(res, filePath);

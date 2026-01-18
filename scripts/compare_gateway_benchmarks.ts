@@ -28,7 +28,7 @@ import { formatOneLineError, truncateUtf8 } from "../src/text.js";
 function usage(exitCode: number) {
   const msg = `
 Usage:
-  node --experimental-strip-types scripts/compare_gateway_benchmarks.ts --baseline <gateway.json> --candidate <gateway.json> --out-dir <dir>
+  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gateway_benchmarks.ts --baseline <gateway.json> --candidate <gateway.json> --out-dir <dir>
 
 Options:
   --baseline <path>          Baseline gateway bench report (required)

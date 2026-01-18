@@ -118,7 +118,6 @@ test("CPU↔IO AIPC: i8042 port I/O roundtrip in browser workers", async ({ page
         cleanup();
         reject(new Error("Timed out waiting for io_aipc.worker import marker"));
       }, 20_000);
-      (timer as unknown as { unref?: () => void }).unref?.();
     });
 
     ioWorker.postMessage({ type: "init", ipcBuffer: buffer, devices: ["i8042"], tickIntervalMs: 1 });
@@ -274,7 +273,6 @@ test("CPU↔IO AIPC: PCI config + BAR-backed MMIO dispatch in browser workers", 
         cleanup();
         reject(new Error("Timed out waiting for io_aipc.worker import marker"));
       }, 20_000);
-      (timer as unknown as { unref?: () => void }).unref?.();
     });
 
     ioWorker.postMessage({ type: "init", ipcBuffer: buffer, devices: ["pci_test"], tickIntervalMs: 1 });

@@ -4,6 +4,7 @@ import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
 import { formatOneLineError } from "../text";
 import { negateI32Saturating } from "../input/int32";
+import { unrefBestEffort } from "../unrefSafe";
 import {
   FRAMEBUFFER_COPY_MESSAGE_TYPE,
   FRAMEBUFFER_FORMAT_RGBA8888,
@@ -763,7 +764,7 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
       stop();
     }
   }, 50);
-  (tickTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(tickTimer);
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {

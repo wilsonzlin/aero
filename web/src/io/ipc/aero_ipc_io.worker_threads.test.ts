@@ -5,12 +5,14 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { createIpcBuffer } from "../../ipc/ipc.ts";
 import { queueKind } from "../../ipc/layout.ts";
+import { makeNodeWorkerExecArgv } from "../../test_utils/worker_threads_exec_argv";
+import { unrefBestEffort } from "../../unrefSafe";
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms: ${label}`)), timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -26,17 +28,18 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       { kind: queueKind.EVT, capacityBytes: 1 << 16 },
     ]);
     const vram = new SharedArrayBuffer(0x1000);
+    const workerExecArgv = makeNodeWorkerExecArgv();
 
     const ioWorker = new Worker(new URL("./test_workers/aipc_io_server_worker.ts", import.meta.url), {
       type: "module",
       workerData: { ipcBuffer, tickIntervalMs: 1, vram },
-      execArgv: ["--experimental-strip-types"],
+      execArgv: workerExecArgv,
     } as unknown as WorkerOptions);
 
     const cpuWorker = new Worker(new URL("./test_workers/aipc_cpu_roundtrip_worker.ts", import.meta.url), {
       type: "module",
       workerData: { ipcBuffer, vram },
-      execArgv: ["--experimental-strip-types"],
+      execArgv: workerExecArgv,
     } as unknown as WorkerOptions);
 
     try {

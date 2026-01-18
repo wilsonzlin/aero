@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { once } from "node:events";
 
 import { alignUp, ringCtrl } from "../src/ipc/layout.ts";
+import { WORKER_EXEC_ARGV } from "./_helpers/worker_exec_argv.ts";
 
 function createCmdEvtSharedBuffer(
   cmdCapBytes: number,
@@ -33,13 +34,13 @@ test("AIPC I/O server: diskRead/diskWrite copy between shared guest memory + dis
   const ioWorker = new Worker(new URL("./workers/aero_ipc_disk_server_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, guestSab, diskSab },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_disk_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, guestSab, diskSab },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   try {

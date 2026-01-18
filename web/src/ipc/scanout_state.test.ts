@@ -24,6 +24,9 @@ import {
   wrapScanoutState,
 } from "./scanout_state";
 import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci";
+import { makeNodeWorkerExecArgv } from "../test_utils/worker_threads_exec_argv";
+
+const WORKER_EXEC_ARGV = makeNodeWorkerExecArgv();
 
 describe("ipc/scanout_state", () => {
   it("publishScanoutState + snapshotScanoutState roundtrips values", () => {
@@ -264,7 +267,6 @@ describe("ipc/scanout_state", () => {
     const ctrlSab = new SharedArrayBuffer(4);
     const ctrl = new Int32Array(ctrlSab);
 
-    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const scanoutModuleUrl = new URL("./scanout_state.ts", import.meta.url).href;
 
     const worker = new Worker(
@@ -291,7 +293,7 @@ describe("ipc/scanout_state", () => {
         eval: true,
         type: "module",
         workerData: { scanoutSab, ctrlSab, scanoutModuleUrl },
-        execArgv: ["--experimental-strip-types", "--import", registerUrl.href],
+        execArgv: WORKER_EXEC_ARGV,
       } as unknown as WorkerOptions,
     );
 

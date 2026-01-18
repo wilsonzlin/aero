@@ -2,6 +2,7 @@
 
 import { IoClient } from "../io/ipc/io_client.ts";
 import { SharedRingBuffer } from "../io/ipc/ring_buffer.ts";
+import { unrefBestEffort } from "../unrefSafe";
 
 type DebugCommand =
   | { type: "Pause" }
@@ -44,7 +45,7 @@ function nowMs(): number {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
 }
 

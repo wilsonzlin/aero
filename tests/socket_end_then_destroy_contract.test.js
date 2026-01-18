@@ -81,6 +81,69 @@ for (const impl of implementations) {
     }
   });
 
+  test(`socket_end_then_destroy (${impl.name}): does not throw if end getter throws (hostile socket)`, () => {
+    let timeoutCalls = 0;
+    const prevSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = () => {
+      timeoutCalls += 1;
+      throw new Error("unexpected timer");
+    };
+
+    try {
+      const socket = {
+        get end() {
+          throw new Error("boom");
+        },
+        once() {
+          throw new Error("unexpected once");
+        },
+      };
+      assert.doesNotThrow(() => impl.endThenDestroyQuietly(socket, "hello", { timeoutMs: 123 }));
+      assert.equal(timeoutCalls, 0);
+    } finally {
+      globalThis.setTimeout = prevSetTimeout;
+    }
+  });
+
+  test(`socket_end_then_destroy (${impl.name}): does not throw if timer.unref getter throws`, () => {
+    const calls = [];
+    let timeoutFn;
+    let timeoutMs;
+
+    const prevSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms) => {
+      timeoutFn = fn;
+      timeoutMs = ms;
+      return {
+        get unref() {
+          throw new Error("boom");
+        },
+      };
+    };
+
+    try {
+      const socket = {
+        end(data) {
+          calls.push(["end", data]);
+        },
+        destroy() {
+          calls.push(["destroy"]);
+        },
+        once() {},
+      };
+
+      assert.doesNotThrow(() => impl.endThenDestroyQuietly(socket, "hello", { timeoutMs: 50 }));
+      assert.deepEqual(calls, [["end", "hello"]]);
+      assert.equal(timeoutMs, 50);
+      assert.equal(typeof timeoutFn, "function");
+
+      timeoutFn();
+      assert.deepEqual(calls, [["end", "hello"], ["destroy"]]);
+    } finally {
+      globalThis.setTimeout = prevSetTimeout;
+    }
+  });
+
   test(`socket_end_then_destroy (${impl.name}): destroys immediately if end() throws`, () => {
     const calls = [];
     let timeoutCalls = 0;

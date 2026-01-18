@@ -5,6 +5,7 @@ import net from "node:net";
 import dgram from "node:dgram";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
+import { unrefBestEffort } from "../unrefSafe";
 
 async function startTcpEchoServer(): Promise<{ port: number; close: () => Promise<void> }> {
   const server = net.createServer((socket) => {
@@ -52,7 +53,7 @@ async function openWebSocket(url: string): Promise<WebSocket> {
   const ws = new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), 2_000);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("open", () => {
       clearTimeout(timeout);
       resolve();
@@ -68,7 +69,7 @@ async function openWebSocket(url: string): Promise<WebSocket> {
 async function waitForBinaryMessage(ws: WebSocket, timeoutMs = 2_000): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for message")), timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("message", (data, isBinary) => {
       clearTimeout(timeout);
       assert.equal(isBinary, true);
@@ -84,7 +85,7 @@ async function waitForBinaryMessage(ws: WebSocket, timeoutMs = 2_000): Promise<B
 async function waitForClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout waiting for close")), timeoutMs);
-    timeout.unref();
+    unrefBestEffort(timeout);
     ws.once("close", (code, reason) => {
       clearTimeout(timeout);
       resolve({ code, reason: reason.toString() });
@@ -204,7 +205,7 @@ test("tcp relay enforces socket-level buffering cap with 1011 close", async () =
       created,
       new Promise((_, reject) => {
         const timeout = setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000);
-        timeout.unref();
+        unrefBestEffort(timeout);
       })
     ]);
 
@@ -273,7 +274,7 @@ test("tcp relay closes with 1011 if tcpSocket.writableLength getter throws", asy
       created,
       new Promise((_, reject) => {
         const timeout = setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000);
-        timeout.unref();
+        unrefBestEffort(timeout);
       })
     ]);
 

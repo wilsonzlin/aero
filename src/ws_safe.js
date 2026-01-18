@@ -4,7 +4,7 @@ import { formatOneLineUtf8 } from "./text.js";
 const MAX_WS_CLOSE_REASON_BYTES = 123;
 
 export function wsIsOpenSafe(ws) {
-  if (!ws) return false;
+  if (ws == null || (typeof ws !== "object" && typeof ws !== "function")) return false;
   let openState = 1;
   try {
     openState = typeof ws.OPEN === "number" ? ws.OPEN : 1;

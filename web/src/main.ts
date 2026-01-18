@@ -56,6 +56,7 @@ import { installBootDeviceBackendOnAeroGlobal } from "./runtime/boot_device_back
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
 import { formatOneLineError } from "./text";
+import { unrefBestEffort } from "./unrefSafe";
 import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
 import { DiskManager, type RemoteCacheStatusSerializable } from "./storage/disk_manager";
 import { pruneRemoteCachesAndRefresh } from "./storage/remote_cache_ui_actions";
@@ -746,7 +747,7 @@ function downloadFile(file: Blob, filename: string): void {
   a.click();
   // Safari can cancel the download if the object URL is revoked synchronously.
   const timer = window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
 }
 
 function downloadJson(value: unknown, filename: string): void {
@@ -1651,7 +1652,7 @@ function renderMachinePanel(): HTMLElement {
           }
         }
       }, 50);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       testState.ready = true;
     })
     .catch((err) => {
@@ -1898,7 +1899,7 @@ function renderMachineWorkerPanel(): HTMLElement {
             testState.strideBytes = Math.max(0, stride | 0);
             presenter?.presentLatestFrame();
           }, 50);
-            (sharedPollTimer as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(sharedPollTimer);
           }
           return;
         }
@@ -2173,7 +2174,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
         stopMainStepLoop();
       }
     }, TICK_MS);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     mainStepTimer = timer as unknown as number;
   }
 
@@ -2316,7 +2317,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
           autosaveInFlight = false;
         });
     }, seconds * 1000);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     autosaveTimer = timer as unknown as number;
     status.textContent = `Auto-save every ${seconds}s.`;
   }
@@ -3858,7 +3859,7 @@ function renderAudioPanel(): HTMLElement {
         `underrunFrames: ${metrics.underrunCount}\n` +
         `overrunFrames: ${metrics.overrunCount}`;
     }, 20);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     toneTimer = timer as unknown as number;
   }
 
@@ -3981,7 +3982,7 @@ function renderAudioPanel(): HTMLElement {
           `producer.underrunFrames: ${workerCoordinator.getAudioProducerUnderrunCount()}\n` +
           `producer.overrunFrames: ${workerCoordinator.getAudioProducerOverrunCount()}`;
       }, 50);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       toneTimer = timer as unknown as number;
 
       status.textContent = "Audio initialized (worker tone backend).";
@@ -4080,7 +4081,7 @@ function renderAudioPanel(): HTMLElement {
           cleanup();
           reject(new Error(`Timed out waiting for HDA demo worker init (${timeoutMs}ms).`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
 
         const cleanup = () => {
           window.clearTimeout(timer);
@@ -4140,7 +4141,7 @@ function renderAudioPanel(): HTMLElement {
           `ring.writeFrameIndex: ${write}` +
           (demoLines.length ? `\n${demoLines.join("\n")}` : "");
       }, 50);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       toneTimer = timer as unknown as number;
     },
   });
@@ -4228,7 +4229,7 @@ function renderAudioPanel(): HTMLElement {
           cleanup();
           reject(new Error(`Timed out waiting for virtio-snd demo worker init (${timeoutMs}ms).`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
 
         const cleanup = () => {
           window.clearTimeout(timer);
@@ -4289,7 +4290,7 @@ function renderAudioPanel(): HTMLElement {
           `ring.writeFrameIndex: ${write}` +
           (demoLines.length ? `\n${demoLines.join("\n")}` : "");
       }, 50);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       toneTimer = timer as unknown as number;
     },
   });
@@ -4406,7 +4407,7 @@ function renderAudioPanel(): HTMLElement {
             need -= written;
           }
         }, 25);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
         loopbackTimer = timer as unknown as number;
       }
 
@@ -5148,7 +5149,7 @@ function renderAudioPanel(): HTMLElement {
             cleanup();
             reject(new Error("Timed out waiting for IO worker HDA codec debug state response."));
           }, 3000);
-          (timeout as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timeout);
 
           const onMessage = (ev: MessageEvent<unknown>) => {
             const msg = ev.data as Partial<HdaCodecDebugStateResultMessage> | null;
@@ -5203,7 +5204,7 @@ function renderAudioPanel(): HTMLElement {
             cleanup();
             reject(new Error("Timed out waiting for IO worker HDA snapshot state response."));
           }, 3000);
-          (timeout as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timeout);
 
           const onMessage = (ev: MessageEvent<unknown>) => {
             const msg = ev.data as Partial<HdaSnapshotStateResultMessage> | null;
@@ -5544,7 +5545,7 @@ function renderAudioPanel(): HTMLElement {
               cleanup();
               reject(new Error("Timed out waiting for IO worker HDA codec debug state response."));
             }, 3000);
-            (timeout as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timeout);
 
             const onMessage = (ev: MessageEvent<unknown>) => {
               const msg = ev.data as Partial<HdaCodecDebugStateResultMessage> | null;
@@ -5601,7 +5602,7 @@ function renderAudioPanel(): HTMLElement {
               cleanup();
               reject(new Error("Timed out waiting for IO worker HDA snapshot state response."));
             }, 3000);
-            (timeout as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timeout);
 
             const onMessage = (ev: MessageEvent<unknown>) => {
               const msg = ev.data as Partial<HdaSnapshotStateResultMessage> | null;
@@ -5669,7 +5670,7 @@ function renderAudioPanel(): HTMLElement {
               cleanup();
               reject(new Error("Timed out waiting for IO worker HDA tick stats response."));
             }, 3000);
-            (timeout as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timeout);
 
             const onMessage = (ev: MessageEvent<unknown>) => {
               const msg = ev.data as Partial<HdaTickStatsResultMessage> | null;
@@ -5726,7 +5727,7 @@ function renderAudioPanel(): HTMLElement {
               cleanup();
               reject(new Error("Timed out waiting for IO worker virtio-snd snapshot state response."));
             }, 3000);
-            (timeout as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timeout);
 
             const onMessage = (ev: MessageEvent<unknown>) => {
               const msg = ev.data as Partial<VirtioSndSnapshotStateResultMessage> | null;
@@ -5782,7 +5783,7 @@ function renderAudioPanel(): HTMLElement {
               cleanup();
               reject(new Error("Timed out waiting for GPU screenshot response."));
             }, 8000);
-            (timeout as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timeout);
 
             const onMessage = (ev: MessageEvent<unknown>) => {
               const msg = ev.data;
@@ -6292,7 +6293,7 @@ function renderInputDiagnosticsPanel(): HTMLElement {
 
   tick();
   const timer = globalThis.setInterval(tick, 250);
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
 
   return host;
 }
@@ -6445,7 +6446,7 @@ function renderInputPanel(): HTMLElement {
   };
   updateStatus();
   const statusTimer = globalThis.setInterval(updateStatus, 250);
-  (statusTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(statusTimer);
 
   return el(
     "div",
@@ -6675,8 +6676,8 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     channel.port2.start();
     // Unit tests run in the node environment; unref to avoid leaking handles.
     try {
-      (channel.port1 as unknown as { unref?: () => void }).unref?.();
-      (channel.port2 as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(channel.port1);
+      unrefBestEffort(channel.port2);
     } catch {
       // ignore
     }
@@ -6712,7 +6713,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
 
   ensureAttached();
   const attachTimer = globalThis.setInterval(ensureAttached, 250);
-  (attachTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(attachTimer);
   refreshUi();
 
   const hint = el("div", {
@@ -6890,7 +6891,7 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
 
   ensureAttached();
   const attachTimer = globalThis.setInterval(ensureAttached, 250);
-  (attachTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(attachTimer);
 
   refreshUi();
 
@@ -7156,7 +7157,7 @@ function renderWebUsbEhciHarnessWorkerPanel(): HTMLElement {
 
   ensureAttached();
   const attachTimer = globalThis.setInterval(ensureAttached, 250);
-  (attachTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(attachTimer);
   refreshUi();
 
   const hint = el("div", {
@@ -7274,7 +7275,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
             cleanup();
             reject(new Error("Timed out waiting for GPU screenshot response."));
           }, 8000);
-          (timeout as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timeout);
 
           const onMessage = (ev: MessageEvent<unknown>) => {
             const msg = ev.data;
@@ -8020,7 +8021,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
   update();
   const updateTimer = globalThis.setInterval(update, 250);
-  (updateTimer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(updateTimer);
 
   return el(
     "div",

@@ -15,6 +15,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { formatOneLineError, formatOneLineUtf8 } from "./src/text.js";
 import { isExpectedStreamAbort } from "../src/stream_abort.js";
+import { tryWriteResponse } from "../src/http_response_safe.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -45,18 +46,10 @@ function trySetHeader(res, name, value) {
   }
 }
 
-function endSafe(res, body) {
-  try {
-    res.end(body);
-    return true;
-  } catch {
-    try {
-      res.destroy();
-    } catch {
-      // ignore
-    }
-    return false;
-  }
+function finishResponse(res, statusCode, body) {
+  // Preserve existing semantics: callers typically pre-populate headers with `setHeader`.
+  // `tryWriteResponse(..., headers=null)` flushes those headers via `writeHead(statusCode)` and ends.
+  tryWriteResponse(res, statusCode, null, body);
 }
 
 function setStatusCodeSafe(res, statusCode) {
@@ -252,7 +245,6 @@ function setCommonHeaders(req, res, stat, { contentLength, statusCode, urlPath }
 function sendRequestError(req, res, { statusCode, message }) {
   const safeMessage = formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || "Error";
   const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from(safeMessage, "utf8");
-  setStatusCodeSafe(res, statusCode);
   trySetHeader(res, "Content-Type", "text/plain; charset=utf-8");
   trySetHeader(res, "Content-Length", String(body.length));
   trySetHeader(res, "Cache-Control", "no-store, no-transform");
@@ -280,7 +272,7 @@ function sendRequestError(req, res, { statusCode, message }) {
     trySetHeader(res, "Cross-Origin-Embedder-Policy", "require-corp");
   }
 
-  endSafe(res, body);
+  finishResponse(res, statusCode, body);
 }
 
 function sendAuthError(req, res, { statusCode }) {
@@ -300,7 +292,6 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "OPTIONS") {
     // CORS preflight for cross-origin fetches.
-    setStatusCodeSafe(res, 204);
     trySetHeader(res, "Cross-Origin-Resource-Policy", "cross-origin");
     trySetHeader(res, "Access-Control-Allow-Origin", "*");
     trySetHeader(res, "Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -327,7 +318,7 @@ const server = http.createServer((req, res) => {
     trySetHeader(res, "Content-Encoding", "identity");
     trySetHeader(res, "Cache-Control", "no-store, no-transform");
     trySetHeader(res, "Content-Length", "0");
-    endSafe(res);
+    finishResponse(res, 204);
     return;
   }
 
@@ -362,13 +353,13 @@ const server = http.createServer((req, res) => {
 
     if (isNotModified(req, stat)) {
       setCommonHeaders(req, res, stat, { contentLength: 0, statusCode: 304, urlPath: url.pathname });
-      endSafe(res);
+      finishResponse(res, 304);
       return;
     }
 
     if (req.method === "HEAD") {
       setCommonHeaders(req, res, stat, { contentLength: stat.size, statusCode: 200, urlPath: url.pathname });
-      endSafe(res);
+      finishResponse(res, 200);
       return;
     }
 

@@ -1,4 +1,5 @@
 import { alignUp, RECORD_ALIGN, ringCtrl, WRAP_MARKER } from "./layout.ts";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type AtomicsWaitResult = "ok" | "not-equal" | "timed-out";
 
@@ -15,7 +16,7 @@ function nowMs(): number {
 function sleepAsync(timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
 }
 

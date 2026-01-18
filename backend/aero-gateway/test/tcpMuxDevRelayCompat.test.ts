@@ -4,7 +4,8 @@ import { once } from "node:events";
 import { describe, it } from "node:test";
 
 import { createProxyServer } from "../../../tools/net-proxy-server/src/server.js";
-import { WebSocketTcpMuxProxyClient } from "../../../web/src/net/tcpMuxProxy.js";
+import { WebSocketTcpMuxProxyClient } from "../../../web/src/net/tcpMuxProxy.ts";
+import { unrefBestEffort } from "../../../src/unref_safe.js";
 
 async function listen(server: net.Server, host = "127.0.0.1"): Promise<number> {
   server.listen(0, host);
@@ -23,7 +24,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
   });
   try {
     return await Promise.race([promise, timeout]);

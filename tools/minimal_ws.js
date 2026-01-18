@@ -7,6 +7,8 @@ import { formatOneLineUtf8 } from "../src/text.js";
 import { isValidHttpToken } from "../src/httpTokens.js";
 import { rejectHttpUpgrade } from "../src/http_upgrade_reject.js";
 import { computeWebSocketAccept, encodeWebSocketHandshakeResponse } from "../src/ws_handshake_response.js";
+import { endThenDestroyQuietly } from "../src/socket_end_then_destroy.js";
+import { destroyBestEffort, writeCaptureErrorBestEffort } from "../src/socket_safe.js";
 
 const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
 
@@ -18,28 +20,15 @@ const MAX_WS_URL_LEN = 8 * 1024;
 const MAX_WS_CLOSE_REASON_BYTES = 123;
 
 function trySocketWrite(socket, data, cb) {
-  try {
-    return cb ? socket.write(data, cb) : socket.write(data);
-  } catch (err) {
-    if (typeof cb === "function") queueMicrotask(() => cb(err));
-    return false;
-  }
-}
-
-function trySocketEnd(socket, data) {
-  try {
-    socket.end(data);
-  } catch {
-    // ignore
-  }
+  const args = typeof cb === "function" ? [data, cb] : [data];
+  const res = writeCaptureErrorBestEffort(socket, ...args);
+  if (!res.err) return res.ok;
+  if (typeof cb === "function") queueMicrotask(() => cb(res.err));
+  return false;
 }
 
 function trySocketDestroy(socket) {
-  try {
-    socket.destroy();
-  } catch {
-    // ignore
-  }
+  destroyBestEffort(socket);
 }
 
 function commaSeparatedTokens(raw, { maxLen, maxTokens }) {
@@ -192,7 +181,7 @@ class WebSocket extends EventEmitter {
     const payload = encodeClosePayload(code, reason);
     if (this._socket) {
       trySocketWrite(this._socket, encodeFrame(0x8, payload, { mask: this._isClient }));
-      trySocketEnd(this._socket);
+      endThenDestroyQuietly(this._socket);
     }
   }
 
@@ -300,7 +289,11 @@ class WebSocket extends EventEmitter {
       settled = true;
       this.emit("unexpected-response", req, res);
       // Ensure the response body is drained even if the consumer ignores it.
-      res.resume();
+      try {
+        res.resume();
+      } catch {
+        // ignore
+      }
     });
 
     req.once("error", (err) => {
@@ -309,7 +302,13 @@ class WebSocket extends EventEmitter {
       this.emit("error", err);
     });
 
-    req.end();
+    try {
+      req.end();
+    } catch (err) {
+      if (settled) return;
+      settled = true;
+      queueMicrotask(() => this.emit("error", err));
+    }
   }
 
   _initFromSocket(socket, head, { isClient, protocol, maxPayload }) {
@@ -319,11 +318,19 @@ class WebSocket extends EventEmitter {
     this._protocol = protocol ?? "";
     this._maxPayload = Number.isFinite(maxPayload) ? maxPayload : 0;
 
-    socket.setNoDelay(true);
+    try {
+      socket.setNoDelay(true);
+    } catch {
+      // ignore
+    }
     socket.on("data", (chunk) => this._onData(chunk));
     socket.on("error", (err) => this.emit("error", err));
     socket.on("close", () => this._onSocketClose());
-    socket.resume();
+    try {
+      socket.resume();
+    } catch {
+      // ignore
+    }
 
     if (this._buffer.length > 0) {
       this._drainFrames();
@@ -450,7 +457,7 @@ class WebSocket extends EventEmitter {
             trySocketWrite(this._socket, encodeFrame(0x8, encodeClosePayload(code, reason), { mask: this._isClient }));
           }
         }
-        if (this._socket) trySocketEnd(this._socket);
+        if (this._socket) endThenDestroyQuietly(this._socket);
         continue;
       }
 

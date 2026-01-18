@@ -146,7 +146,6 @@ export class DebugOverlay {
     this._root.style.display = "block";
 
     this._interval = window.setInterval(() => this._render(), this._updateIntervalMs);
-    (this._interval as unknown as { unref?: () => void }).unref?.();
     this._render();
   }
 

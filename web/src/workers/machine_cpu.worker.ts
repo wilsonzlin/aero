@@ -63,6 +63,7 @@ import type { WasmApi } from "../runtime/wasm_loader";
 import { diskMetaToOpfsCowPaths } from "../storage/opfs_paths";
 import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
 import { MAX_INPUT_BATCH_RECYCLE_BYTES, shouldRecycleInputBatchBuffer } from "./input_batch_recycle_guard";
+import { unrefBestEffort } from "../unrefSafe";
 
 function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, but OPFS write streams
@@ -2711,7 +2712,7 @@ async function runLoop(): Promise<void> {
         await handleMachineOp(op);
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, 0);
-          (timer as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timer);
         });
         continue;
       }
@@ -2745,7 +2746,7 @@ async function runLoop(): Promise<void> {
 
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, 0);
-          (timer as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timer);
         });
         continue;
       }
@@ -2821,7 +2822,7 @@ async function runLoop(): Promise<void> {
       } else {
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, 0);
-          (timer as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timer);
         });
       }
     }

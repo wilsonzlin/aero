@@ -13,6 +13,11 @@ test("wsBufferedAmountSafe returns 0 for non-number bufferedAmount", () => {
   assert.equal(wsBufferedAmountSafe(ws), 0);
 });
 
+test("wsBufferedAmountSafe returns 0 for negative bufferedAmount", () => {
+  const ws = { bufferedAmount: -1 } as any;
+  assert.equal(wsBufferedAmountSafe(ws), 0);
+});
+
 test("wsBufferedAmountSafe returns 0 if bufferedAmount getter throws", () => {
   const ws = {} as any;
   Object.defineProperty(ws, "bufferedAmount", {

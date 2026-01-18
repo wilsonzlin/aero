@@ -1,6 +1,7 @@
 import type { Duplex } from "node:stream";
 
-import { endThenDestroyQuietly } from "../../../../src/socket_end_then_destroy.js";
+import { endThenDestroyQuietly } from "./socketEndThenDestroy.js";
+import { destroyBestEffort } from "./socketSafe.js";
 
 type GracefulDuplexCloser = Readonly<{
   endThenDestroy: () => void;
@@ -12,11 +13,7 @@ export function createGracefulDuplexCloser(
   opts: Readonly<{ timeoutMs?: number }> = {},
 ): GracefulDuplexCloser {
   const destroyNow = () => {
-    try {
-      socket.destroy();
-    } catch {
-      // ignore
-    }
+    destroyBestEffort(socket);
   };
 
   const endThenDestroy = () => {

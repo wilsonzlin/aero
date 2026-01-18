@@ -7,7 +7,15 @@ import { rejectHttpUpgrade } from "../../../src/http_upgrade_reject.js";
 import { wsCloseSafe, wsIsOpenSafe } from "../../../scripts/_shared/ws_safe.js";
 import { createWsSendQueue } from "../../../src/ws_backpressure.js";
 import { socketWritableLengthOrOverflow } from "../../../src/socket_writable_length.js";
+import {
+  callMethodCaptureErrorBestEffort,
+  destroyBestEffort,
+  endCaptureErrorBestEffort,
+  removeAllListenersBestEffort,
+  writeCaptureErrorBestEffort,
+} from "../../../src/socket_safe.js";
 import { tryGetProp, tryGetStringProp } from "../../../src/safe_props.js";
+import { unrefBestEffort } from "../../../src/unref_safe.js";
 import { hasWebSocketSubprotocol } from "./wsSubprotocol.js";
 import {
   TCP_MUX_HEADER_BYTES,
@@ -359,11 +367,7 @@ export async function createProxyServer(userConfig) {
       res.statusCode = 404;
       res.end();
     } catch {
-      try {
-        res.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(res);
     }
   });
 
@@ -507,9 +511,20 @@ export async function createProxyServer(userConfig) {
       lowWatermarkBytes: config.wsBackpressureLowWatermarkBytes,
       onPauseSources: () => {
         let didPauseAny = false;
-        for (const stream of streams.values()) {
+        for (const [streamId, stream] of streams) {
           if (stream.pausedForWsBackpressure) continue;
-          stream.socket.pause();
+          const err = callMethodCaptureErrorBestEffort(stream.socket, "pause");
+          if (err) {
+            log({
+              level: "warn",
+              event: "tcp_pause_failed",
+              sessionId,
+              streamId,
+              message: formatOneLineError(err, 512, "Error"),
+            });
+            destroyStream(streamId);
+            continue;
+          }
           stream.pausedForWsBackpressure = true;
           didPauseAny = true;
         }
@@ -517,9 +532,20 @@ export async function createProxyServer(userConfig) {
       },
       onResumeSources: () => {
         let didResumeAny = false;
-        for (const stream of streams.values()) {
+        for (const [streamId, stream] of streams) {
           if (!stream.pausedForWsBackpressure) continue;
-          stream.socket.resume();
+          const err = callMethodCaptureErrorBestEffort(stream.socket, "resume");
+          if (err) {
+            log({
+              level: "warn",
+              event: "tcp_resume_failed",
+              sessionId,
+              streamId,
+              message: formatOneLineError(err, 512, "Error"),
+            });
+            destroyStream(streamId);
+            continue;
+          }
           stream.pausedForWsBackpressure = false;
           didResumeAny = true;
         }
@@ -566,12 +592,8 @@ export async function createProxyServer(userConfig) {
     function destroyStream(streamId) {
       const stream = removeStream(streamId);
       if (!stream) return;
-      try {
-        stream.socket.removeAllListeners();
-        stream.socket.destroy();
-      } catch {
-        // ignore
-      }
+      removeAllListenersBestEffort(stream.socket);
+      destroyBestEffort(stream.socket);
     }
 
     function enforceTcpBackpressure(streamId, stream) {
@@ -597,23 +619,21 @@ export async function createProxyServer(userConfig) {
       while (stream.pendingWrites.length > 0) {
         const chunk = stream.pendingWrites.shift();
         stream.pendingWriteBytes -= chunk.length;
-        let ok = false;
-        try {
-          ok = stream.socket.write(chunk);
-        } catch (err) {
+        const res = writeCaptureErrorBestEffort(stream.socket, chunk);
+        if (res.err) {
           log({
             level: "warn",
             event: "tcp_write_failed",
             sessionId,
             streamId,
-            message: formatOneLineError(err, 512, "Error"),
+            message: formatOneLineError(res.err, 512, "Error"),
           });
           sendStreamError(streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
           destroyStream(streamId);
           return;
         }
         if (!enforceTcpBackpressure(streamId, stream)) return;
-        if (!ok) {
+        if (!res.ok) {
           stream.writePaused = true;
           return;
         }
@@ -624,9 +644,8 @@ export async function createProxyServer(userConfig) {
       // OPEN+DATA+FIN in a single WebSocket message without losing the DATA.
       if (stream.clientFin && !stream.endSent) {
         stream.endSent = true;
-        try {
-          stream.socket.end();
-        } catch (err) {
+        const err = endCaptureErrorBestEffort(stream.socket);
+        if (err) {
           log({
             level: "warn",
             event: "tcp_end_failed",
@@ -772,7 +791,19 @@ export async function createProxyServer(userConfig) {
 
       if (wsSend.isBackpressured()) {
         stream.pausedForWsBackpressure = true;
-        socket.pause();
+        const err = callMethodCaptureErrorBestEffort(socket, "pause");
+        if (err) {
+          stream.pausedForWsBackpressure = false;
+          log({
+            level: "warn",
+            event: "tcp_pause_failed",
+            sessionId,
+            streamId: frame.streamId,
+            message: formatOneLineError(err, 512, "Error"),
+          });
+          destroyStream(frame.streamId);
+          return;
+        }
       }
 
       socket.on("connect", () => {
@@ -848,23 +879,21 @@ export async function createProxyServer(userConfig) {
         return;
       }
 
-      let ok = false;
-      try {
-        ok = stream.socket.write(frame.payload);
-      } catch (err) {
+      const res = writeCaptureErrorBestEffort(stream.socket, frame.payload);
+      if (res.err) {
         log({
           level: "warn",
           event: "tcp_write_failed",
           sessionId,
           streamId: frame.streamId,
-          message: formatOneLineError(err, 512, "Error"),
+          message: formatOneLineError(res.err, 512, "Error"),
         });
         sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
         destroyStream(frame.streamId);
         return;
       }
       if (!enforceTcpBackpressure(frame.streamId, stream)) return;
-      if (!ok) {
+      if (!res.ok) {
         stream.writePaused = true;
       }
     }
@@ -973,7 +1002,7 @@ export async function createProxyServer(userConfig) {
     metricsTimer = setInterval(() => {
       log({ level: "info", event: "metrics", ...stats });
     }, config.metricsIntervalMs);
-    metricsTimer.unref?.();
+    unrefBestEffort(metricsTimer);
   }
 
   await new Promise((resolve) => httpServer.listen(config.port, config.host, resolve));

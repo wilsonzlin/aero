@@ -5,6 +5,7 @@ import WebSocket from "ws";
 import { EventEmitter } from "node:events";
 
 import { wsSendSafe } from "../../../scripts/_shared/ws_safe.js";
+import { unrefBestEffort } from "../../../src/unref_safe.js";
 
 import { createProxyServer } from "../src/server.js";
 import {
@@ -90,7 +91,7 @@ function createFrameWaiter(ws) {
           if (idx !== -1) pending.splice(idx, 1);
           reject(new Error("timeout"));
         }, timeoutMs);
-        timer.unref?.();
+        unrefBestEffort(timer);
         entry = { predicate, resolve, reject, timer };
         pending.push(entry);
       });
@@ -279,7 +280,7 @@ test("integration: enforces socket-level buffering with STREAM_BUFFER_OVERFLOW (
       created,
       new Promise((_, reject) => {
         const t = setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000);
-        t.unref?.();
+        unrefBestEffort(t);
       }),
     ]);
 
@@ -359,7 +360,7 @@ test("integration: enforces STREAM_BUFFER_OVERFLOW when writableLength getter th
       created,
       new Promise((_, reject) => {
         const t = setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000);
-        t.unref?.();
+        unrefBestEffort(t);
       }),
     ]);
 
@@ -636,7 +637,7 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
 
         writeMore();
       }, 50);
-      timer.unref?.();
+      unrefBestEffort(timer);
     });
     const burstPort = await listen(burstServer);
 
@@ -736,7 +737,7 @@ test("integration: backpressure poll resumes TCP reads after WS drains (small th
 
         writeMore();
       }, 50);
-      timer.unref?.();
+      unrefBestEffort(timer);
     });
     const burstPort = await listen(burstServer);
 

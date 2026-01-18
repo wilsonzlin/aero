@@ -23,8 +23,8 @@ function defaultOutDir(now: Date, scenarioId: string): string {
 export function formatBenchUsage(): string {
   return [
     'Usage:',
-    '  node --experimental-strip-types bench/runner.ts --list',
-    '  node --experimental-strip-types bench/runner.ts <scenarioId> [options]',
+    '  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts --list',
+    '  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts <scenarioId> [options]',
     '',
     'Options:',
     '  --disk-image <pathOrUrl>  Disk image path/URL (or env AERO_DISK_IMAGE_PATH)',
@@ -34,8 +34,8 @@ export function formatBenchUsage(): string {
     '  --help                    Show this help',
     '',
     'Examples:',
-    '  AERO_DISK_IMAGE_PATH=/path/to/win7.img node --experimental-strip-types bench/runner.ts system_boot',
-    '  node --experimental-strip-types bench/runner.ts noop',
+    '  AERO_DISK_IMAGE_PATH=/path/to/win7.img node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts system_boot',
+    '  node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts noop',
     '',
   ].join('\n');
 }

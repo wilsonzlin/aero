@@ -7,6 +7,7 @@
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
 import { formatOneLineError, formatOneLineUtf8 } from "../text.ts";
+import { unrefBestEffort } from "../unrefSafe";
 import { wsBufferedAmountSafe, wsCloseSafe, wsIsOpenSafe, wsProtocolSafe, wsSendSafe } from "./wsSafe.ts";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
@@ -572,7 +573,7 @@ export class WebSocketTcpMuxProxyClient {
       queueMicrotask(run);
     } else {
       const timer = setTimeout(run, delayMs);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
     }
   }
 

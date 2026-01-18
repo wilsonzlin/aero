@@ -5,6 +5,7 @@ import { once } from "node:events";
 
 import { alignUp, ringCtrl } from "../src/ipc/layout.ts";
 import { PCI_MMIO_BASE } from "../src/arch/guest_phys.ts";
+import { WORKER_EXEC_ARGV } from "./_helpers/worker_exec_argv.ts";
 
 function createCmdEvtSharedBuffer(cmdCapBytes: number, evtCapBytes: number): { sab: SharedArrayBuffer; cmdOffset: number; evtOffset: number } {
   const cmdOffset = 0;
@@ -30,13 +31,13 @@ test("AIPC I/O worker: i8042 port I/O + IRQ signalling", async () => {
   const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, devices: ["i8042"], tickIntervalMs: 1 },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, scenario: "i8042" },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   try {
@@ -75,13 +76,13 @@ test("AIPC I/O worker: i8042 output port toggles A20 + requests reset", async ()
   const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, devices: ["i8042"], tickIntervalMs: 1 },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, scenario: "i8042_output_port" },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   try {
@@ -111,13 +112,13 @@ test("AIPC I/O worker: PCI config + BAR-backed MMIO dispatch", async () => {
   const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, devices: ["pci_test"], tickIntervalMs: 1 },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, scenario: "pci_test" },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   try {
@@ -140,13 +141,13 @@ test("AIPC I/O worker: 16550 UART emits serial output bytes", async () => {
   const ioWorker = new Worker(new URL("./workers/aero_ipc_io_server_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, devices: ["uart16550"], tickIntervalMs: 1 },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   const cpuWorker = new Worker(new URL("./workers/aero_ipc_cpu_sequence_worker.ts", import.meta.url), {
     type: "module",
     workerData: { sab, cmdOffset, evtOffset, scenario: "uart16550" },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   try {

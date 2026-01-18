@@ -23,6 +23,7 @@ import {
 } from "./http_headers";
 import { formatOneLineError } from "../text";
 import { isErrorInstance, isInstanceOf, tryGetErrorCause } from "../errors/errorProps";
+import { unrefBestEffort } from "../unrefSafe";
 
 // Keep in sync with the Rust snapshot bounds where sensible.
 const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -765,7 +766,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (!signal) {
     return new Promise((resolve) => {
       const timer = setTimeout(resolve, ms);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
     });
   }
   if (signal.aborted) {
@@ -782,7 +783,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       signal.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -2195,7 +2196,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           this.flushPending = false;
         });
     }, 0);
-    (this.flushTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.flushTimer);
   }
 
   private scheduleMetaPersist(generation: number): void {
@@ -2216,7 +2217,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         // best-effort metadata persistence
       });
     }, META_PERSIST_DEBOUNCE_MS);
-    (this.metaPersistTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.metaPersistTimer);
   }
 
   private cancelPendingMetaPersist(): void {

@@ -17,6 +17,7 @@ import type { ByteSizedCacheTracker, GpuAllocationTracker } from "./memory";
 import { MemoryTelemetry } from "./memory";
 import type { PerfApi, PerfHudSnapshot, PerfTimeBreakdownMs } from "./types";
 import { ResponsivenessTracker, type ResponsivenessHudSnapshot } from "./responsiveness";
+import { unrefBestEffort } from "../unrefSafe";
 
 export type InstallPerfSessionOptions = {
   guestRamBytes?: number;
@@ -378,7 +379,7 @@ export class PerfSession implements PerfApi {
     const timer = window.setInterval(() => {
       this.aggregator.drain();
     }, 200);
-    (timer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(timer);
     this.drainTimer = timer;
   }
 

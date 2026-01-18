@@ -6,7 +6,7 @@ import {
   parseAnswerResponseJSON,
   parseOfferRequestJSON,
   parseSignalMessageJSON,
-} from "../web/src/shared/udpRelaySignaling.js";
+} from "../web/src/shared/udpRelaySignaling.ts";
 
 test("udp relay signaling v1: parses offer request", () => {
   const offer = parseOfferRequestJSON(JSON.stringify({ version: 1, offer: { type: "offer", sdp: "v=0..." } }));

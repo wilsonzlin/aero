@@ -68,7 +68,6 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
         cleanup();
         reject(new Error("Timed out waiting for io.worker import marker"));
       }, 20_000);
-      (timer as unknown as { unref?: () => void }).unref?.();
 
       const handler = (ev: MessageEvent): void => {
         const data = ev.data as { type?: unknown; message?: unknown } | undefined;

@@ -15,7 +15,8 @@ import { handleTcpMuxRelay } from "./tcpMuxRelay";
 import { handleTcpRelay } from "./tcpRelay";
 import { handleUdpRelay, handleUdpRelayMultiplexed } from "./udpRelay";
 import { TCP_MUX_SUBPROTOCOL } from "./tcpMuxProtocol";
-import { tryGetProp, tryGetStringProp } from "../../src/safe_props.cjs";
+import { tryGetProp, tryGetStringProp } from "./safeProps";
+import { sendJsonNoStore, sendTextNoStore, tryWriteResponse } from "./httpResponseSafe";
 
 export interface RunningProxyServer {
   server: http.Server;
@@ -30,34 +31,6 @@ const MAX_REQUEST_URL_LEN = 8 * 1024;
 
 // DoH endpoints are implemented in `dohHandlers.ts`.
 
-function sendJson(res: http.ServerResponse, statusCode: number, payload: unknown): void {
-  // Defensive: encoding the response body must never throw. If JSON.stringify throws
-  // (cyclic data, hostile toJSON, etc.), fall back to a stable 500 JSON body.
-  let body: string;
-  let code = statusCode;
-  try {
-    body = JSON.stringify(payload);
-  } catch {
-    code = 500;
-    body = `{"error":"internal server error"}`;
-  }
-
-  try {
-    res.writeHead(code, {
-      "content-type": "application/json; charset=utf-8",
-      "content-length": Buffer.byteLength(body),
-      "cache-control": "no-store"
-    });
-    res.end(body);
-  } catch {
-    try {
-      res.destroy();
-    } catch {
-      // ignore
-    }
-  }
-}
-
 export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Promise<RunningProxyServer> {
   const config: ProxyConfig = { ...loadConfigFromEnv(), ...overrides };
   const metrics = createProxyServerMetrics();
@@ -67,11 +40,11 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
     void (async () => {
       const rawUrl = tryGetStringProp(req, "url");
       if (!rawUrl) {
-        sendJson(res, 400, { error: "invalid url" });
+        sendJsonNoStore(res, 400, { error: "invalid url" }, {});
         return;
       }
       if (rawUrl.length > MAX_REQUEST_URL_LEN) {
-        sendJson(res, 414, { error: "url too long" });
+        sendJsonNoStore(res, 414, { error: "url too long" }, {});
         return;
       }
 
@@ -79,31 +52,17 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
       try {
         url = new URL(rawUrl, "http://localhost");
       } catch {
-        sendJson(res, 400, { error: "invalid url" });
+        sendJsonNoStore(res, 400, { error: "invalid url" }, {});
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/healthz") {
-        sendJson(res, 200, { ok: true });
+        sendJsonNoStore(res, 200, { ok: true }, {});
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/metrics") {
-        const body = metrics.prometheusText();
-        try {
-          res.writeHead(200, {
-            "content-type": "text/plain; version=0.0.4; charset=utf-8",
-            "content-length": Buffer.byteLength(body),
-            "cache-control": "no-store"
-          });
-          res.end(body);
-        } catch {
-          try {
-            res.destroy();
-          } catch {
-            // ignore
-          }
-        }
+        sendTextNoStore(res, 200, metrics.prometheusText(), { contentType: "text/plain; version=0.0.4; charset=utf-8" });
         return;
       }
 
@@ -111,16 +70,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
         const allowMethods = url.pathname === "/dns-query" ? "GET, POST, OPTIONS" : "GET, OPTIONS";
         setDohCorsHeaders(req, res, config, { allowMethods });
         if (req.method === "OPTIONS") {
-          try {
-            res.writeHead(204);
-            res.end();
-          } catch {
-            try {
-              res.destroy();
-            } catch {
-              // ignore
-            }
-          }
+          tryWriteResponse(res, 204, undefined, undefined);
           return;
         }
       }
@@ -135,13 +85,13 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
         return;
       }
 
-      sendJson(res, 404, { error: "not found" });
+      sendJsonNoStore(res, 404, { error: "not found" }, {});
     })().catch((err) => {
       log("error", "connect_error", { proto: "http", err: formatError(err) });
       // Defensive: avoid relying on response state getters (hostile/monkeypatched objects can
-      // throw). `sendJson` is already resilient to writeHead/end throwing and will destroy the
-      // response on failure.
-      sendJson(res, 500, { error: "internal server error" });
+      // throw). `sendJsonNoStore` is already resilient to writeHead/end throwing and will
+      // destroy the response on failure.
+      sendJsonNoStore(res, 500, { error: "internal server error" }, {});
     });
   });
 

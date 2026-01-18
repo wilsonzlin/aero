@@ -13,6 +13,7 @@ import {
   type RemoteDiskValidator,
 } from "./metadata";
 import type { ImportProgress } from "./import_export";
+import { unrefBestEffort } from "../unrefSafe";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -570,7 +571,7 @@ export class DiskManager {
         a.rel = "noopener";
         a.click();
         const timer = setTimeout(() => URL.revokeObjectURL(url), 1000);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
       }
     } catch (err) {
       try {

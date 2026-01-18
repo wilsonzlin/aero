@@ -29,11 +29,14 @@ class TestDuplex extends Duplex {
     callback();
   }
 
-  override end(...args: Parameters<Duplex["end"]>): this {
+  override end(cb?: () => void): this;
+  override end(chunk: any, cb?: () => void): this;
+  override end(chunk: any, encoding: BufferEncoding, cb?: () => void): this;
+  override end(...args: any[]): this {
     this.calls.push("end");
     // Simulate the underlying socket closing shortly after a graceful end.
     queueMicrotask(() => this.emit("close"));
-    return super.end(...args);
+    return super.end(...(args as any));
   }
 
   override destroy(error?: Error): this {
@@ -54,7 +57,10 @@ test("WebSocketTcpBridge: echoes close frame before ending the upgrade socket", 
   const tcpSocket = new net.Socket();
   tcpSocket.on("error", () => {});
 
-  const bridge = new WebSocketTcpBridge(wsSocket, tcpSocket, 1024);
+  const bridge = new WebSocketTcpBridge(wsSocket, tcpSocket, {
+    maxMessageBytes: 1024,
+    maxTcpBufferedBytes: 1024 * 1024,
+  });
   bridge.start(Buffer.alloc(0));
   wsSocket.resume();
 

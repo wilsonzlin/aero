@@ -5,6 +5,7 @@ import type { DirtyRect } from '../ipc/shared-layout';
 import { packRgba8RectToAlignedBuffer, type PackedRect } from './webgpu-rect-pack';
 import { computeViewport } from './viewport';
 import { formatOneLineError } from '../text';
+import { callMethodBestEffort, tryGetMethodBestEffort } from '../safeMethod';
 
 function alignUp(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
@@ -331,7 +332,7 @@ export class WebGpuPresenterBackend implements Presenter {
     const needsRealloc =
       !this.cursorTexture || !this.cursorView || this.cursorTextureWidth !== w || this.cursorTextureHeight !== h;
     if (needsRealloc) {
-      this.cursorTexture?.destroy?.();
+      callMethodBestEffort(this.cursorTexture, 'destroy');
       this.cursorTexture = this.device.createTexture({
         size: { width: w, height: h, depthOrArrayLayers: 1 },
         format: 'rgba8unorm',
@@ -411,7 +412,7 @@ export class WebGpuPresenterBackend implements Presenter {
     }
 
     readback.unmap();
-    readback.destroy?.();
+    callMethodBestEffort(readback, 'destroy');
 
     return { width: this.srcWidth, height: this.srcHeight, pixels: out.buffer };
   }
@@ -584,7 +585,7 @@ export class WebGpuPresenterBackend implements Presenter {
     }
 
     readback.unmap();
-    readback.destroy?.();
+    callMethodBestEffort(readback, 'destroy');
 
     // Convert swapchain storage order -> RGBA8 for stable hashing.
     if (isBgraFormat(this.canvasFormat as GPUTextureFormat)) {
@@ -597,18 +598,10 @@ export class WebGpuPresenterBackend implements Presenter {
   public destroy(): void {
     this.destroyed = true;
     this.uninstallUncapturedErrorHandler();
-    this.frameTexture?.destroy?.();
-    this.cursorTexture?.destroy?.();
-    try {
-      this.ctx?.unconfigure?.();
-    } catch {
-      // Ignore.
-    }
-    try {
-      this.device?.destroy?.();
-    } catch {
-      // Ignore.
-    }
+    callMethodBestEffort(this.frameTexture, 'destroy');
+    callMethodBestEffort(this.cursorTexture, 'destroy');
+    callMethodBestEffort(this.ctx, 'unconfigure');
+    callMethodBestEffort(this.device, 'destroy');
     this.frameTexture = null;
     this.frameView = null;
     this.bindGroup = null;
@@ -648,7 +641,7 @@ export class WebGpuPresenterBackend implements Presenter {
         if (this.device !== device) return;
 
         // Best-effort: avoid double-reporting (console + diagnostics) when the event is cancelable.
-        ev?.preventDefault?.();
+        callMethodBestEffort(ev, 'preventDefault');
 
         const err = (ev as { error?: unknown } | undefined)?.error;
         const ctor = err && typeof err === 'object' ? (err as { constructor?: unknown }).constructor : undefined;
@@ -694,8 +687,13 @@ export class WebGpuPresenterBackend implements Presenter {
     this.onUncapturedError = handler;
 
     try {
-      if (typeof device.addEventListener === 'function') {
-        device.addEventListener('uncapturederror', handler);
+      const addEventListener = tryGetMethodBestEffort(device, 'addEventListener');
+      if (addEventListener) {
+        (addEventListener as (type: string, listener: (ev: unknown) => void) => void).call(
+          device,
+          'uncapturederror',
+          handler,
+        );
         return;
       }
     } catch {
@@ -714,11 +712,7 @@ export class WebGpuPresenterBackend implements Presenter {
     const device = this.uncapturedErrorDevice;
     const handler = this.onUncapturedError;
     if (device && handler) {
-      try {
-        device.removeEventListener?.('uncapturederror', handler);
-      } catch {
-        // Ignore.
-      }
+      callMethodBestEffort(device, 'removeEventListener', 'uncapturederror', handler);
       try {
         const anyDevice = device as unknown as { onuncapturederror?: unknown };
         if (anyDevice.onuncapturederror === handler) {
@@ -741,11 +735,7 @@ export class WebGpuPresenterBackend implements Presenter {
 
   private configureContext(): void {
     if (!this.ctx || !this.device || !this.canvasFormat) return;
-    try {
-      this.ctx.unconfigure?.();
-    } catch {
-      // Ignore.
-    }
+    callMethodBestEffort(this.ctx, 'unconfigure');
 
     const renderUsage = webGpuGlobals.GPUTextureUsage?.RENDER_ATTACHMENT ?? 0x10;
     const copySrcUsage = webGpuGlobals.GPUTextureUsage?.COPY_SRC ?? 0x01;
@@ -857,7 +847,7 @@ export class WebGpuPresenterBackend implements Presenter {
     if (!this.device || !this.pipeline) return;
 
     // Release old resources.
-    this.frameTexture?.destroy?.();
+    callMethodBestEffort(this.frameTexture, 'destroy');
     this.frameTexture = null;
     this.frameView = null;
     this.bindGroup = null;

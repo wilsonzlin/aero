@@ -6,6 +6,7 @@ import type { ProxyConfig } from "./config";
 import { base64UrlPrefixForHeader, decodeBase64UrlToBuffer, maxBase64UrlLenForBytes } from "./base64url";
 import { headerHasMimeType } from "./contentType";
 import { withTimeout, readRequestBodyWithLimit } from "./httpUtils";
+import { sendJsonNoStore, tryWriteResponse } from "./httpResponseSafe";
 import { decodeDnsHeader, decodeFirstQuestion, encodeDnsResponse, normalizeDnsName, type DnsAnswer } from "./dnsMessage";
 import { stripIpv6ZoneIndex } from "./ipUtils";
 
@@ -14,24 +15,6 @@ const MAX_CONTENT_TYPE_LEN = 256;
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.floor(value)));
-}
-
-function tryWriteResponse(
-  res: http.ServerResponse,
-  statusCode: number,
-  headers: http.OutgoingHttpHeaders,
-  body: Buffer | string
-): void {
-  try {
-    res.writeHead(statusCode, headers);
-    res.end(body);
-  } catch {
-    try {
-      res.destroy();
-    } catch {
-      // ignore
-    }
-  }
 }
 
 function sendDnsMessage(res: http.ServerResponse, statusCode: number, message: Buffer): void {
@@ -44,36 +27,6 @@ function sendDnsMessage(res: http.ServerResponse, statusCode: number, message: B
       "content-length": message.length
     },
     message
-  );
-}
-
-function sendJson(
-  res: http.ServerResponse,
-  statusCode: number,
-  value: unknown,
-  opts: Readonly<{ contentType: string }>
-): void {
-  let code = statusCode;
-  let contentType = opts.contentType;
-  let body = "";
-  try {
-    body = JSON.stringify(value);
-  } catch {
-    code = 500;
-    contentType = "application/json; charset=utf-8";
-    // Do not call JSON.stringify again; treat it as hostile/unavailable.
-    body = `{"error":"internal server error"}`;
-  }
-
-  tryWriteResponse(
-    res,
-    code,
-    {
-      "content-type": contentType,
-      "cache-control": "no-store",
-      "content-length": Buffer.byteLength(body)
-    },
-    body
   );
 }
 
@@ -224,11 +177,11 @@ export async function handleDnsJson(
   const rawType = url.searchParams.get("type") ?? "A";
   const name = normalizeDnsName(rawName);
   if (!name) {
-    sendJson(res, 400, { error: "missing name" }, { contentType: "application/json; charset=utf-8" });
+    sendJsonNoStore(res, 400, { error: "missing name" }, { contentType: "application/json; charset=utf-8" });
     return;
   }
   if (Buffer.byteLength(name, "utf8") > config.dohMaxQnameLength) {
-    sendJson(res, 400, { error: "name too long" }, { contentType: "application/json; charset=utf-8" });
+    sendJsonNoStore(res, 400, { error: "name too long" }, { contentType: "application/json; charset=utf-8" });
     return;
   }
 
@@ -241,7 +194,7 @@ export async function handleDnsJson(
   } else if (typeNorm === "CNAME" || typeNorm === "5") {
     qtype = 5;
   } else {
-    sendJson(res, 400, { error: "unsupported type" }, { contentType: "application/json; charset=utf-8" });
+    sendJsonNoStore(res, 400, { error: "unsupported type" }, { contentType: "application/json; charset=utf-8" });
     return;
   }
 
@@ -280,7 +233,7 @@ export async function handleDnsJson(
     answer = [];
   }
 
-  sendJson(
+  sendJsonNoStore(
     res,
     200,
     {

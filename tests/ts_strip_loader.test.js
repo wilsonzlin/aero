@@ -6,13 +6,13 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const registerPath = fileURLToPath(new URL("../scripts/register-ts-strip-loader.mjs", import.meta.url));
+const REGISTER_TS_STRIP_LOADER_URL = new URL("../scripts/register-ts-strip-loader.mjs", import.meta.url);
 const entryPath = fileURLToPath(new URL("./fixtures/ts_strip_loader/entry.ts", import.meta.url));
 const entryExtensionlessPath = fileURLToPath(new URL("./fixtures/ts_strip_loader/entry_extensionless.ts", import.meta.url));
 const entryAssetUrlPath = fileURLToPath(new URL("./fixtures/ts_strip_loader/entry_asset_url.ts", import.meta.url));
 
 function runStripTypes(entry, { cwd } = {}) {
-  return execFileSync(process.execPath, ["--experimental-strip-types", "--import", registerPath, entry], {
+  return execFileSync(process.execPath, ["--experimental-strip-types", "--import", REGISTER_TS_STRIP_LOADER_URL.href, entry], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     cwd,

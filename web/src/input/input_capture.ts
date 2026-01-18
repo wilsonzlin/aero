@@ -4,6 +4,7 @@ import { PointerLock } from "./pointer_lock";
 import { keyboardCodeToConsumerUsage, keyboardCodeToHidUsage } from "./hid_usage";
 import { I32_MAX, I32_MIN, negateI32Saturating } from "./int32";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 import {
   ps2Set2ScancodeForCode,
   shouldPreventDefaultForKeyboardEvent,
@@ -1062,7 +1063,7 @@ export class InputCapture {
 
     const intervalMs = Math.max(1, Math.round(1000 / this.flushHz));
     this.flushTimer = window.setInterval(() => this.flushNow(), intervalMs);
-    (this.flushTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.flushTimer);
   }
 
   stop(): void {

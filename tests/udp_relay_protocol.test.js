@@ -16,7 +16,7 @@ import {
   decodeUdpRelayV1Datagram,
   encodeUdpRelayV2Datagram,
   encodeUdpRelayV1Datagram,
-} from "../web/src/shared/udpRelayProtocol.js";
+} from "../web/src/shared/udpRelayProtocol.ts";
 
 function decodeB64(b64) {
   return new Uint8Array(Buffer.from(b64, "base64"));

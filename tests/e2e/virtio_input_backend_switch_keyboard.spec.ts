@@ -126,7 +126,6 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
         cleanup();
         reject(new Error("Timed out waiting for io.worker import marker"));
       }, 20_000);
-      (timer as unknown as { unref?: () => void }).unref?.();
     });
 
     let ioWorkerError: string | null = null;
@@ -598,7 +597,6 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
           pending.delete(reqId);
           reject(new Error(`Timed out waiting for CPU worker response to ${cmd} after ${timeoutMs}ms.`));
         }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
 
         const wrappedResolve = (value: unknown) => {
           clearTimeout(timer);

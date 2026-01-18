@@ -18,6 +18,7 @@ import {
   snapshotCursorState,
 } from "../ipc/cursor_state";
 import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
+import { makeNodeWorkerExecArgv } from "../test_utils/worker_threads_exec_argv";
 import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
@@ -155,7 +156,7 @@ describe("runtime/shared_layout", () => {
       const worker = new Worker(new URL("./shared_layout_ring_consumer_worker.ts", import.meta.url), {
         type: "module",
         workerData: { sab: segments.control, offsetBytes: regions.command.byteOffset, count },
-        execArgv: ["--experimental-strip-types"],
+        execArgv: makeNodeWorkerExecArgv(),
       } as unknown as WorkerOptions);
 
       try {

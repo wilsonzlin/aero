@@ -3,6 +3,7 @@ import { alignUp, RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
 import {
   computeFeatureReportPayloadByteLengths,
@@ -590,7 +591,7 @@ export class WebHidBroker {
     // Drain output reports in the background. In Node (Vitest), `unref()` the timer so it doesn't
     // keep the test runner alive when a broker isn't explicitly destroyed.
     this.#outputRingDrainTimer = setInterval(() => this.#drainOutputRing(), 8);
-    (this.#outputRingDrainTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.#outputRingDrainTimer);
   }
 
   #maybeInitInputReportRing(worker: MessagePort | Worker): void {
@@ -1141,7 +1142,7 @@ export class WebHidBroker {
     }, timeoutMs);
     // In Node (Vitest), `unref()` the timer so it doesn't keep the test runner alive if
     // the broker is not explicitly destroyed.
-    (entry.timeout as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(entry.timeout);
 
     return promise;
   }
@@ -1255,7 +1256,7 @@ export class WebHidBroker {
       this.#inputReportEmitTimer = null;
       this.#emit();
     }, 100);
-    (this.#inputReportEmitTimer as unknown as { unref?: () => void }).unref?.();
+    unrefBestEffort(this.#inputReportEmitTimer);
   }
 
   #warnInputReportSizeOnce(deviceId: number, reportId: number, kind: string, message: string): void {

@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { SharedRingBuffer } from "../src/io/ipc/ring_buffer.ts";
 import { IO_MESSAGE_STRIDE_U32 } from "../src/io/ipc/io_protocol.ts";
 import { PCI_MMIO_BASE } from "../src/arch/guest_phys.ts";
+import { WORKER_EXEC_ARGV } from "./_helpers/worker_exec_argv.ts";
 
 async function stopWorker(worker: Worker, timeoutMs = 2000): Promise<void> {
   worker.unref();
@@ -35,7 +36,7 @@ test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async ()
       devices: ["pci_test"],
       tickIntervalMs: 1,
     },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   const cpuWorker = new Worker(new URL("./workers/cpu_sequence_worker.ts", import.meta.url), {
@@ -45,7 +46,7 @@ test("I/O worker: PCI config (0xCF8/0xCFC) + BAR-backed MMIO dispatch", async ()
       requestRing: req.sab,
       responseRing: resp.sab,
     },
-    execArgv: ["--experimental-strip-types"],
+    execArgv: WORKER_EXEC_ARGV,
   });
 
   try {

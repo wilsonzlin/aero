@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { wsCloseSafe, wsIsClosedSafe, wsIsOpenSafe, wsProtocolSafe, wsSendSafe } from "../web/src/net/wsSafe.ts";
+import { wsBufferedAmountSafe, wsCloseSafe, wsIsClosedSafe, wsIsOpenSafe, wsProtocolSafe, wsSendSafe } from "../web/src/net/wsSafe.ts";
 
 test("web wsSafe: wsCloseSafe formats and UTF-8 byte-limits the close reason", () => {
   const calls = [];
@@ -95,4 +95,11 @@ test("web wsSafe: wsSendSafe returns false if send throws", () => {
     },
   };
   assert.equal(wsSendSafe(ws, "hi"), false);
+});
+
+test("web wsSafe: wsBufferedAmountSafe clamps negative values to 0", () => {
+  assert.equal(wsBufferedAmountSafe(null), 0);
+  assert.equal(wsBufferedAmountSafe({ bufferedAmount: 123 }), 123);
+  assert.equal(wsBufferedAmountSafe({ bufferedAmount: -1 }), 0);
+  assert.equal(wsBufferedAmountSafe({ bufferedAmount: "nope" }), 0);
 });

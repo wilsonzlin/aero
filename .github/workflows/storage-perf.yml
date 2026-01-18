@@ -66,7 +66,7 @@ jobs:
       - name: Run storage perf (baseline)
         working-directory: base
         run: |
-          node --experimental-strip-types bench/runner.ts storage_io \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts storage_io \
             --out-dir "$GITHUB_WORKSPACE/head/storage-perf-results/base"
 
       - name: Validate perf export (baseline)
@@ -76,7 +76,7 @@ jobs:
       - name: Run storage perf (candidate)
         working-directory: head
         run: |
-          node --experimental-strip-types bench/runner.ts storage_io \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/runner.ts storage_io \
             --out-dir storage-perf-results/head
 
           cp storage-perf-results/base/storage_bench.json storage-perf-results/base.json
@@ -90,7 +90,7 @@ jobs:
         working-directory: head
         run: |
           set +e
-          node --experimental-strip-types bench/compare.ts \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/compare.ts \
             --baseline storage-perf-results/base/storage_bench.json \
             --candidate storage-perf-results/head/storage_bench.json \
             --out-dir storage-perf-results/compare \

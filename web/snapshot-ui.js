@@ -186,7 +186,6 @@ AUTOSAVE_INPUT.addEventListener("change", async () => {
   autosaveTimer = setInterval(() => {
     doSave().catch((err) => log(`Auto-save failed: ${formatOneLineError(err, 512)}`));
   }, seconds * 1000);
-  autosaveTimer?.unref?.();
   log(`Auto-save enabled: every ${seconds}s`);
 });
 

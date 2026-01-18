@@ -1,5 +1,7 @@
 import net from "node:net";
 
+import { unrefBestEffort } from "../../src/unref_safe.js";
+
 function parseHttpResponseHead(headText) {
   const lines = headText.split("\r\n");
   const statusLine = lines[0] ?? "";
@@ -44,7 +46,7 @@ export async function sendRawHttpRequest(host, port, request, opts = {}) {
       cleanup();
       reject(new Error("timeout: sendRawHttpRequest"));
     }, timeoutMs);
-    timeout.unref?.();
+    unrefBestEffort(timeout);
 
     socket.on("error", (err) => {
       clearTimeout(timeout);

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
+import { unrefBestEffort } from "../unrefSafe";
 
 test("tcp-mux upgrade rejects oversized Sec-WebSocket-Protocol headers (400)", async () => {
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
@@ -15,7 +16,7 @@ test("tcp-mux upgrade rejects oversized Sec-WebSocket-Protocol headers (400)", a
 
     const statusCode = await new Promise<number>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket rejection")), 2_000);
-      timeout.unref();
+      unrefBestEffort(timeout);
 
       ws.once("unexpected-response", (_req, res) => {
         clearTimeout(timeout);

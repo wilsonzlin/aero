@@ -2,6 +2,7 @@ import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubl
 import type { UsbBroker } from "./usb_broker";
 import { hex16 } from "./usb_hex";
 import { isUsbGuestWebUsbStatusMessage, isUsbSelectedMessage, type UsbGuestWebUsbSnapshot } from "./usb_proxy_protocol";
+import { unrefBestEffort } from "../unrefSafe";
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -268,8 +269,8 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
       // Node's MessagePort keeps the event loop alive once started. Unit tests run in
       // the `node` environment; unref to avoid leaking handles.
       try {
-        (channel.port1 as unknown as { unref?: () => void }).unref?.();
-        (channel.port2 as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(channel.port1);
+        unrefBestEffort(channel.port2);
       } catch {
         // ignore
       }

@@ -13,6 +13,7 @@ import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } fro
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 import { readTextResponseWithLimit } from "../storage/response_json";
 import {
   serializeVmSnapshotError,
@@ -272,7 +273,7 @@ function scheduleReconnect(): void {
   }, delayMs);
   // Unit tests run this worker under node/worker_threads; unref the backoff timer
   // so a leaked net worker does not keep the test runner alive.
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   l2ReconnectTimer = timer as unknown as number;
 }
 

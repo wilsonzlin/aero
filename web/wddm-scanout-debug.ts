@@ -641,7 +641,6 @@ async function main() {
   };
   updateText();
   const infoTimer = window.setInterval(updateText, 250);
-  (infoTimer as unknown as { unref?: () => void }).unref?.();
 
   // Continuous tick loop:
   //

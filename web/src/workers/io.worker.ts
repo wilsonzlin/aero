@@ -17,6 +17,8 @@ import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } fro
 import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
 import { assertWasmMemoryWiring, WasmMemoryWiringError } from "../runtime/wasm_memory_probe";
 import { serializeErrorForWorker } from "../errors/serialize";
+import { unrefBestEffort } from "../unrefSafe";
+import { destroyBestEffort } from "../safeMethod";
 import {
   layoutFromHeader,
   SHARED_FRAMEBUFFER_HEADER_U32_LEN,
@@ -1994,7 +1996,7 @@ function maybeInitUhciDevice(): void {
             const timer = setInterval(() => {
               console.debug(`[io.worker] ${label} WebUSB pending_summary()`, usbPassthroughRuntime?.pendingSummary());
             }, 1000) as unknown as number;
-            (timer as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timer);
             usbPassthroughDebugTimer = timer;
           }
         }
@@ -2059,7 +2061,7 @@ function maybeInitUhciDevice(): void {
             const timer = setInterval(() => {
               console.debug("[io.worker] UHCI runtime WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
             }, 1000) as unknown as number;
-            (timer as unknown as { unref?: () => void }).unref?.();
+            unrefBestEffort(timer);
            usbPassthroughDebugTimer = timer;
          }
        }
@@ -2116,7 +2118,7 @@ function maybeInitUhciDevice(): void {
          const timer = setInterval(() => {
            console.debug("[io.worker] UHCI WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
          }, 1000) as unknown as number;
-         (timer as unknown as { unref?: () => void }).unref?.();
+         unrefBestEffort(timer);
          usbPassthroughDebugTimer = timer;
        }
      }
@@ -2841,7 +2843,7 @@ class CompositeHidGuestBridge implements HidGuestBridge {
   }
 
   destroy(): void {
-    for (const sink of this.#sinks) sink.destroy?.();
+    for (const sink of this.#sinks) destroyBestEffort(sink);
   }
 }
 
@@ -3329,11 +3331,7 @@ function teardownGuestStateForMachineHostOnlyMode(): void {
   xhciHidTopologyBridgeSource = null;
   xhciHidTopology.setXhciBridge(null);
   const prevHidGuest = hidGuest;
-  try {
-    prevHidGuest.destroy?.();
-  } catch {
-    // ignore
-  }
+  destroyBestEffort(prevHidGuest);
   uhciRuntimeHidGuest = null;
   wasmHidGuest = null;
   hidGuest = hidGuestInMemory;
@@ -3635,7 +3633,7 @@ function startAudioOutTelemetryTimer(): void {
     const now = typeof performance?.now === "function" ? performance.now() : Date.now();
     maybePublishAudioOutTelemetry(now);
   }, AUDIO_OUT_TELEMETRY_INTERVAL_MS) as unknown as number;
-  (timer as unknown as { unref?: () => void }).unref?.();
+  unrefBestEffort(timer);
   audioOutTelemetryTimer = timer;
 
   // Publish once immediately so callers that attach the ring after the IO IPC
@@ -4672,8 +4670,8 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
                 port = channel.port1;
                 try {
                   // Node/Vitest may keep MessagePorts alive; unref so unit tests don't hang.
-                  (channel.port1 as unknown as { unref?: () => void }).unref?.();
-                  (channel.port2 as unknown as { unref?: () => void }).unref?.();
+                  unrefBestEffort(channel.port1);
+                  unrefBestEffort(channel.port2);
                 } catch {
                   // ignore
                 }
@@ -7086,7 +7084,7 @@ function shutdown(): void {
     usbPassthroughDebugTimer = undefined;
   }
 
-  hidGuest.destroy?.();
+  destroyBestEffort(hidGuest);
 
   void (async () => {
     try {

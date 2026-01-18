@@ -6,6 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { unrefBestEffort } from "../src/unrefSafe.ts";
+
 const VITE_BUILD_TIMEOUT_MS = 180_000;
 
 describe("repo-root Vite harness build outputs", () => {
@@ -36,7 +38,7 @@ describe("repo-root Vite harness build outputs", () => {
             child.kill();
             reject(new Error("vite build (harness) timed out"));
           }, VITE_BUILD_TIMEOUT_MS);
-          (timer as unknown as { unref?: () => void }).unref?.();
+          unrefBestEffort(timer);
 
           child.on("error", (err) => {
             clearTimeout(timer);

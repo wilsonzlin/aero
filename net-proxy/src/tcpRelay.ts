@@ -1,11 +1,19 @@
 import net from "node:net";
 import { createWebSocketStream, type WebSocket } from "ws";
 
-import { socketWritableLengthExceedsCap, socketWritableLengthOrOverflow } from "../../src/socket_writable_length.cjs";
+import { socketWritableLengthExceedsCap, socketWritableLengthOrOverflow } from "./socketWritableLength";
+import { unrefBestEffort } from "./unrefSafe";
 
 import type { ProxyConfig } from "./config";
 import type { ProxyServerMetrics } from "./metrics";
 import { formatError, log } from "./logger";
+import {
+  destroyBestEffort,
+  destroyWithErrorBestEffort,
+  pauseBestEffort,
+  resumeBestEffort,
+  writeCaptureErrorBestEffort,
+} from "./socketSafe";
 import { wsCloseSafe, wsIsOpenSafe } from "./wsClose";
 import { formatOneLineUtf8 } from "./text";
 
@@ -60,20 +68,12 @@ export async function handleTcpRelay(
     }
 
     if (tcpSocket) {
-      try {
-        tcpSocket.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(tcpSocket);
     }
     // Avoid destroying the wrapper stream before we've had a chance to send a close frame.
     // If the websocket isn't open, tear it down immediately to avoid leaks.
     if (!wsWasOpen) {
-      try {
-        wsStream.destroy();
-      } catch {
-        // ignore
-      }
+      destroyBestEffort(wsStream);
     }
 
     log("info", "conn_close", {
@@ -102,13 +102,9 @@ export async function handleTcpRelay(
   metrics.connectionActiveInc("tcp");
 
   connectTimer = setTimeout(() => {
-    try {
-      socket.destroy(new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
-    } catch {
-      // ignore
-    }
+    destroyWithErrorBestEffort(socket, new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
   }, config.connectTimeoutMs);
-  connectTimer.unref();
+  unrefBestEffort(connectTimer);
 
   ws.once("close", (code, reason) => {
     closeBoth("ws_close", code, formatOneLineUtf8(reason, 123));
@@ -148,41 +144,25 @@ export async function handleTcpRelay(
   const pauseWsRead = () => {
     if (pausedWsReadForTcpBackpressure) return;
     pausedWsReadForTcpBackpressure = true;
-    try {
-      wsStream.pause();
-    } catch {
-      // ignore
-    }
+    pauseBestEffort(wsStream);
   };
 
   const resumeWsRead = () => {
     if (!pausedWsReadForTcpBackpressure) return;
     pausedWsReadForTcpBackpressure = false;
-    try {
-      wsStream.resume();
-    } catch {
-      // ignore
-    }
+    resumeBestEffort(wsStream);
   };
 
   const pauseTcpRead = () => {
     if (pausedTcpReadForWsBackpressure) return;
     pausedTcpReadForWsBackpressure = true;
-    try {
-      socket.pause();
-    } catch {
-      // ignore
-    }
+    pauseBestEffort(socket);
   };
 
   const resumeTcpRead = () => {
     if (!pausedTcpReadForWsBackpressure) return;
     pausedTcpReadForWsBackpressure = false;
-    try {
-      socket.resume();
-    } catch {
-      // ignore
-    }
+    resumeBestEffort(socket);
   };
 
   const enforceTcpBackpressureCap = () => {
@@ -214,17 +194,15 @@ export async function handleTcpRelay(
     bytesIn += buf.length;
     metrics.addBytesIn("tcp", buf.length);
 
-    let ok = false;
-    try {
-      ok = socket.write(buf);
-    } catch (err) {
+    const res = writeCaptureErrorBestEffort(socket, buf);
+    if (res.err) {
       closeBoth("tcp_write_error", 1011, "TCP error");
       metrics.incConnectionError("error");
-      log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+      log("error", "connect_error", { connId, proto: "tcp", err: formatError(res.err) });
       return;
     }
     enforceTcpBackpressureCap();
-    if (!ok) pauseWsRead();
+    if (!res.ok) pauseWsRead();
   });
 
   socket.on("data", (chunk) => {
@@ -232,16 +210,14 @@ export async function handleTcpRelay(
     bytesOut += chunk.length;
     metrics.addBytesOut("tcp", chunk.length);
 
-    let ok = false;
-    try {
-      ok = wsStream.write(chunk);
-    } catch (err) {
+    const res = writeCaptureErrorBestEffort(wsStream, chunk);
+    if (res.err) {
       closeBoth("ws_stream_write_error", 1011, "WebSocket stream error");
       metrics.incConnectionError("error");
-      log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+      log("error", "connect_error", { connId, proto: "tcp", err: formatError(res.err) });
       return;
     }
-    if (!ok) pauseTcpRead();
+    if (!res.ok) pauseTcpRead();
   });
 }
 

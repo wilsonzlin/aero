@@ -4,6 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const TS_STRIP_LOADER_URL = new URL("../scripts/register-ts-strip-loader.mjs", import.meta.url);
+const COMPARE_GATEWAY_SCRIPT_PATH = fileURLToPath(new URL("../scripts/compare_gateway_benchmarks.ts", import.meta.url));
 
 function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
@@ -15,12 +20,12 @@ function runCompare(args) {
     [
       "--experimental-strip-types",
       "--import",
-      "./scripts/register-ts-strip-loader.mjs",
-      "scripts/compare_gateway_benchmarks.ts",
+      TS_STRIP_LOADER_URL.href,
+      COMPARE_GATEWAY_SCRIPT_PATH,
       ...args,
     ],
     {
-      cwd: path.resolve("."),
+      cwd: REPO_ROOT,
       encoding: "utf8",
     },
   );

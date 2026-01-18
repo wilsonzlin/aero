@@ -25,6 +25,7 @@ import { WebUsbBackend, type WebUsbBackendOptions } from "./webusb_backend";
 import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
 import { formatOneLineError } from "../text";
+import { unrefBestEffort } from "../unrefSafe";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
 
@@ -614,7 +615,7 @@ export class UsbBroker {
       this.completionRings.set(port, completionRing);
 
       const timer = setInterval(() => this.drainActionRing(port), this.ringDrainIntervalMs);
-      (timer as unknown as { unref?: () => void }).unref?.();
+      unrefBestEffort(timer);
       this.ringDrainTimers.set(port, timer);
     }
 

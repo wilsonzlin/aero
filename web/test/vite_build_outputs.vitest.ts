@@ -6,6 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { unrefBestEffort } from "../src/unrefSafe.ts";
+
 // Vite prod builds can be slow under heavy CI load (or when the full test suite
 // is running with many worker threads). Keep this generous to avoid flaky timeouts.
 const VITE_BUILD_TIMEOUT_MS = 300_000;
@@ -34,7 +36,7 @@ describe("web Vite build outputs", () => {
           child.kill();
           reject(new Error("vite build timed out"));
         }, VITE_BUILD_TIMEOUT_MS);
-        (timer as unknown as { unref?: () => void }).unref?.();
+        unrefBestEffort(timer);
 
         child.on("error", (err) => {
           clearTimeout(timer);

@@ -78,7 +78,7 @@ jobs:
       - name: Run GPU perf (baseline)
         working-directory: base
         run: |
-          node --experimental-strip-types bench/gpu_bench.ts \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/gpu_bench.ts \
             --scenarios vga_text_scroll,vbe_lfb_blit \
             --scenario-params "$GITHUB_WORKSPACE/head/gpu-perf-results/scenario_params.json" \
             --swiftshader true \
@@ -88,7 +88,7 @@ jobs:
       - name: Run GPU perf (candidate)
         working-directory: head
         run: |
-          node --experimental-strip-types bench/gpu_bench.ts \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs bench/gpu_bench.ts \
             --scenarios vga_text_scroll,vbe_lfb_blit \
             --scenario-params gpu-perf-results/scenario_params.json \
             --swiftshader true \
@@ -99,7 +99,7 @@ jobs:
         working-directory: head
         run: |
           set +e
-          node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+          node --experimental-strip-types --import ./scripts/register-ts-strip-loader.mjs scripts/compare_gpu_benchmarks.ts \
             --baseline gpu-perf-results/base/gpu_bench.json \
             --candidate gpu-perf-results/head/gpu_bench.json \
             --out-dir gpu-perf-results/compare \
