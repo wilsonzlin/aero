@@ -101,6 +101,13 @@ Troubleshooting (some agent environments lose executable bits and/or tracked fix
 - When scripting `git commit -m ...` from a shell, avoid backticks in the commit message (they trigger command substitution). Prefer single quotes:
   - `git commit -m 'chore: message with `code` formatting'` will *expand* the backticked section in most shells; use `git commit -m 'chore: message with code formatting'` or escape backticks.
 
+Pull requests (when GitHub CLI `gh` is unavailable):
+
+- Push your branch to `origin`, then open a PR via the GitHub web UI.
+- Manual PR/compare URL pattern:
+  - `https://github.com/<owner>/<repo>/compare/main...<branch>?expand=1`
+  - Example (this repo): `https://github.com/wilsonzlin/aero/compare/main...refactor/hardening-guardrails?expand=1`
+
 Or use `timeout -k` directly (always include `-k` for SIGKILL fallback!):
 
 ```bash
