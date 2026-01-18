@@ -109,7 +109,7 @@ jobs:
     steps:
       - name: Download gateway perf artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: gateway-perf-smoke-${{ github.run_id }}
           path: gateway-perf-results

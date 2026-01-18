@@ -135,7 +135,7 @@ jobs:
     steps:
       - name: Download GPU perf artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: gpu-perf-smoke-${{ github.run_id }}
           path: gpu-perf-results

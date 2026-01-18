@@ -73,7 +73,7 @@ jobs:
           NPM_CONFIG_OMIT: dev
 
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: aero-gateway-dist
           path: backend/aero-gateway/dist
