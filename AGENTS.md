@@ -111,6 +111,8 @@ Pull requests (when GitHub CLI `gh` is unavailable):
   - `bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs`
 - Optional: also print the GitHub Actions URL for the branch:
   - `bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs --actions`
+- Optional: override base branch / remote / branch ref (cross-platform flags):
+  - `bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs --base main --remote origin --branch my-branch`
 - npm shortcuts (same behavior, without safe-run):
   - `npm run pr:url`
   - `npm run pr:links`

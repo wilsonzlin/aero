@@ -83,6 +83,8 @@ npm run pr:url   # compare/PR URL
 npm run pr:links # compare/PR URL + GitHub Actions URL
 ```
 
+Tip: `scripts/print-pr-url.mjs` also supports `--base/--remote/--branch` overrides if you need non-default refs.
+
 #### Optional configuration
 
 The `justfile` is intentionally configurable so it can survive repo refactors:
