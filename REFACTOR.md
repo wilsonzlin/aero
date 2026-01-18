@@ -1210,6 +1210,16 @@ Outcomes:
 - Production sources no longer silently treat a missing/hostile `req.url` as a real `/` request.
 - Contract suite fails if the unsafe fallback pattern is reintroduced.
 
+### Phase 96: Forbid direct `new URL(req.url, base)` (done)
+Goal: prevent accidentally reintroducing implicit coercion/trimming hazards by passing request URL getters directly into the WHATWG URL constructor.
+
+Approach:
+- Add a contract test that forbids `new URL((req|_req).url, base)` in production sources (including parenthesized, optional-chain, and unicode-escaped identifier variants).
+- Add a focused parsing contract to lock down the scanner’s match behavior and avoid false positives from strings/comments.
+
+Outcomes:
+- Contract suite fails if production code starts parsing request targets via direct `req.url` getters instead of validating and threading a trusted `rawUrl` string.
+
 Some coding guidelines:
 
 ## General Principles
