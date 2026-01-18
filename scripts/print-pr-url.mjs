@@ -12,6 +12,9 @@ Prints a GitHub compare URL for the current branch (suitable for opening a PR in
 
 Options:
   --actions   Also print the GitHub Actions URL for the same branch.
+  --base <ref>    Base branch/ref (default: main)
+  --remote <name> Git remote name (default: origin)
+  --branch <ref>  Branch/ref to use instead of the current branch
 
 Environment overrides:
   AERO_PR_BASE=<ref>        Base branch/ref (default: main)
@@ -51,27 +54,75 @@ function truthyEnv(name) {
   return !["0", "false", "FALSE", "no", "NO", "off", "OFF"].includes(raw);
 }
 
+function parseArgValue(arg) {
+  const eq = arg.indexOf("=");
+  if (eq === -1) return null;
+  const key = arg.slice(0, eq);
+  const value = arg.slice(eq + 1);
+  return { key, value };
+}
+
 function main() {
   const args = process.argv.slice(2);
   let includeActionsUrl = truthyEnv("AERO_PR_INCLUDE_ACTIONS_URL");
-  for (const arg of args) {
+
+  let base = (process.env.AERO_PR_BASE || "main").trim() || "main";
+  let remote = (process.env.AERO_PR_REMOTE || "origin").trim() || "origin";
+  let branchOverride = (process.env.AERO_PR_BRANCH || "").trim();
+
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i];
+    const kv = parseArgValue(arg);
+
+    if (kv && kv.key === "--base") {
+      base = kv.value.trim() || base;
+      i += 1;
+      continue;
+    }
+    if (kv && kv.key === "--remote") {
+      remote = kv.value.trim() || remote;
+      i += 1;
+      continue;
+    }
+    if (kv && kv.key === "--branch") {
+      branchOverride = kv.value.trim() || branchOverride;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--base" || arg === "--remote" || arg === "--branch") {
+      const next = args[i + 1];
+      if (typeof next !== "string" || next.startsWith("-")) {
+        console.error(`error: ${arg} requires a value`);
+        console.error("");
+        process.stderr.write(usage());
+        process.exitCode = 1;
+        return;
+      }
+      if (arg === "--base") base = next.trim() || base;
+      if (arg === "--remote") remote = next.trim() || remote;
+      if (arg === "--branch") branchOverride = next.trim() || branchOverride;
+      i += 2;
+      continue;
+    }
+
     if (arg === "--actions" || arg === "--include-actions-url") {
       includeActionsUrl = true;
+      i += 1;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(usage());
       return;
     }
+
     console.error(`error: unknown argument: ${arg}`);
     console.error("");
     process.stderr.write(usage());
     process.exitCode = 1;
     return;
   }
-
-  const base = (process.env.AERO_PR_BASE || "main").trim() || "main";
-  const remote = (process.env.AERO_PR_REMOTE || "origin").trim() || "origin";
 
   let branch = "";
   try {
@@ -90,7 +141,6 @@ function main() {
     return;
   }
 
-  const branchOverride = (process.env.AERO_PR_BRANCH || "").trim();
   const compareBranch = branchOverride || branch;
 
   let originUrl = "";

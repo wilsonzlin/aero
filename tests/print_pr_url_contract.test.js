@@ -47,6 +47,23 @@ test("print-pr-url: prints compare URL for current branch", () => {
   }
 });
 
+test("print-pr-url: --base/--branch/--remote flags override defaults", () => {
+  const tmpRepo = initTempRepo();
+  try {
+    git(tmpRepo, ["remote", "add", "upstream", "https://github.com/example-owner/example-repo.git"]);
+    const res = spawnSync(
+      process.execPath,
+      [scriptPath, "--base", "dev", "--remote", "upstream", "--branch", "feat/custom"],
+      { cwd: tmpRepo, encoding: "utf8" },
+    );
+    assert.equal(res.status, 0, `${res.stderr ?? ""}`);
+    assert.equal(res.stderr ?? "", "");
+    assert.equal(res.stdout, "https://github.com/example-owner/example-repo/compare/dev...feat/custom?expand=1\n");
+  } finally {
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
+
 test("print-pr-url: --actions prints an Actions URL too", () => {
   const tmpRepo = initTempRepo();
   try {
