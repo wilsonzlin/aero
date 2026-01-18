@@ -1182,6 +1182,22 @@ Outcomes:
   - the canonical safe getter helper (`src/safe_props.js`)
 - `safe_props` runtime guards use the repo-standard “nullish + object/function” posture (`obj == null`) to avoid falsy-vs-nullish drift.
 
+### Phase 94: Landing polish + PR visibility (done)
+Goal: make it easy to open PRs and track CI status in environments without GitHub CLI tooling, without weakening CI enforcement or adding manual steps.
+
+Approach:
+- `scripts/safe-run.sh`: silence non-fatal Node version mismatch notes by default under Node major mismatch (opt-out via `AERO_CHECK_NODE_QUIET=0`), while keeping enforcement behavior unchanged.
+- Add a tiny repo-root helper (`scripts/print-pr-url.mjs`) to print compare/PR URLs (and optionally Actions URLs) for the current branch:
+  - support both env and cross-platform CLI flags (`--actions`, `--base`, `--remote`, `--branch`)
+  - provide repo-root `npm run pr:url` / `npm run pr:links` shortcuts
+  - contract-test the output and script wiring to prevent drift and portability regressions.
+- Docs: update `AGENTS.md`, `README.md`, and `CONTRIBUTING.md` to point developers at the canonical commands and to avoid copy/paste footguns.
+
+Outcomes:
+- Agent/local runs are quieter by default under Node major mismatch (without changing enforcement behavior).
+- PR creation + CI visibility can be done via copy/paste links even when `gh` isn’t available.
+- Cross-platform usage is guarded by contracts (no POSIX-only env assignment in npm scripts).
+
 Some coding guidelines:
 
 ## General Principles
