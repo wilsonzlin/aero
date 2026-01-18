@@ -6,7 +6,11 @@ export type WebSocketSendData = string | ArrayBuffer | ArrayBufferView | Blob;
 const MAX_WS_CLOSE_REASON_BYTES = 123;
 
 export function wsSendSafe(ws: WebSocket, data: WebSocketSendData): boolean {
-  if (ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    if (ws.readyState !== WebSocket.OPEN) return false;
+  } catch {
+    return false;
+  }
   try {
     ws.send(data);
     return true;

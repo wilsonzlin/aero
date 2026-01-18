@@ -576,7 +576,11 @@ export class WebSocketTcpMuxProxyClient {
   }
 
   private flush(): void {
-    if (this.ws.readyState !== WebSocket.OPEN) return;
+    try {
+      if (this.ws.readyState !== WebSocket.OPEN) return;
+    } catch {
+      return;
+    }
     while (this.queuedHead < this.queued.length) {
       if (wsBufferedAmountSafe(this.ws) > this.maxBufferedAmount) {
         // Let the browser drain the socket; we'll try again shortly.
