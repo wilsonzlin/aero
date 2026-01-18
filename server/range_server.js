@@ -15,6 +15,7 @@ import { pipeline } from "node:stream/promises";
 import { formatOneLineError, formatOneLineUtf8 } from "./src/text.js";
 import { isExpectedStreamAbort } from "../src/stream_abort.js";
 import { tryWriteResponse } from "../src/http_response_safe.js";
+import { tryGetProp, tryGetStringProp } from "../src/safe_props.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -45,6 +46,14 @@ function trySetHeader(res, name, value) {
   } catch {
     return false;
   }
+}
+
+function safeRequestMethod(req) {
+  return tryGetStringProp(req, "method") ?? "GET";
+}
+
+function safeHeader(req, name) {
+  return tryGetProp(tryGetProp(req, "headers"), name);
 }
 
 function finishResponse(res, statusCode, body) {
@@ -109,7 +118,8 @@ function stripWeakEtagPrefix(etag) {
 }
 
 function ifNoneMatchMatches(ifNoneMatch, currentEtag) {
-  const raw = String(ifNoneMatch).trim();
+  if (typeof ifNoneMatch !== "string") return false;
+  const raw = ifNoneMatch.trim();
   if (!raw) return false;
   if (raw === "*") return true;
 
@@ -162,13 +172,13 @@ function ifModifiedSinceMatches(ifModifiedSince, stat) {
 
 function isNotModified(req, stat) {
   const etag = computeEtag(stat);
-  const ifNoneMatch = req.headers["if-none-match"];
+  const ifNoneMatch = safeHeader(req, "if-none-match");
   if (typeof ifNoneMatch === "string") {
     if (ifNoneMatch.length > MAX_IF_NONE_MATCH_LEN) return false;
     return ifNoneMatchMatches(ifNoneMatch, etag);
   }
 
-  const ifModifiedSince = req.headers["if-modified-since"];
+  const ifModifiedSince = safeHeader(req, "if-modified-since");
   if (typeof ifModifiedSince === "string") {
     if (ifModifiedSince.length > MAX_IF_MODIFIED_SINCE_LEN) return false;
     return ifModifiedSinceMatches(ifModifiedSince, stat);
@@ -178,7 +188,7 @@ function isNotModified(req, stat) {
 }
 
 function ifRangeAllowsRange(req, stat) {
-  const ifRange = req.headers["if-range"];
+  const ifRange = safeHeader(req, "if-range");
   if (typeof ifRange !== "string") return true;
   if (ifRange.length > MAX_IF_RANGE_LEN) return false;
 
@@ -250,7 +260,7 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
 
 function requireAuth(req) {
   if (typeof args.authToken !== "string" || !args.authToken) return null;
-  const auth = req.headers["authorization"];
+  const auth = safeHeader(req, "authorization");
   if (typeof auth === "string" && auth.length > MAX_AUTH_HEADER_LEN) {
     return { expected: args.authToken, actual: null };
   }
@@ -262,7 +272,7 @@ function requireAuth(req) {
 
 function sendRequestError(req, res, { statusCode, message }) {
   const safeMessage = formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || "Error";
-  const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from(safeMessage, "utf8");
+  const body = safeRequestMethod(req) === "HEAD" ? Buffer.alloc(0) : Buffer.from(safeMessage, "utf8");
   trySetHeader(res, "Accept-Ranges", "bytes");
   trySetHeader(res, "Content-Type", "text/plain; charset=utf-8");
   trySetHeader(res, "Content-Length", String(body.length));
@@ -344,8 +354,9 @@ function parseRange(rangeHeader, size) {
 }
 
 const server = http.createServer((req, res) => {
-  const rawUrl = req.url ?? "/";
-  if (typeof rawUrl !== "string") {
+  const method = safeRequestMethod(req);
+  const rawUrl = tryGetProp(req, "url");
+  if (typeof rawUrl !== "string" || rawUrl === "") {
     sendRequestError(req, res, { statusCode: 400, message: "Bad Request" });
     return;
   }
@@ -353,8 +364,12 @@ const server = http.createServer((req, res) => {
     sendRequestError(req, res, { statusCode: 414, message: "URI Too Long" });
     return;
   }
+  if (rawUrl.trim() !== rawUrl) {
+    sendRequestError(req, res, { statusCode: 400, message: "Bad Request" });
+    return;
+  }
 
-  if (req.method === "OPTIONS") {
+  if (method === "OPTIONS") {
     // CORS preflight for cross-origin Range requests.
     trySetHeader(res, "Cross-Origin-Resource-Policy", "cross-origin");
     trySetHeader(res, "Access-Control-Allow-Origin", "*");
@@ -421,8 +436,8 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (req.method === "HEAD") {
-      const rangeHeader = req.headers["range"];
+    if (method === "HEAD") {
+      const rangeHeader = safeHeader(req, "range");
       const ifRangeOk = ifRangeAllowsRange(req, stat);
       if (typeof rangeHeader === "string" && ifRangeOk) {
         if (rangeHeader.length > MAX_RANGE_HEADER_LEN) {
@@ -458,12 +473,12 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (req.method !== "GET") {
+    if (method !== "GET") {
       sendRequestError(req, res, { statusCode: 405, message: "Method not allowed" });
       return;
     }
 
-    let rangeHeader = req.headers["range"];
+    let rangeHeader = safeHeader(req, "range");
     if (typeof rangeHeader === "string") {
       if (rangeHeader.length > MAX_RANGE_HEADER_LEN) {
         sendRequestError(req, res, { statusCode: 413, message: "Range header too large" });

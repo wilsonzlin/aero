@@ -17,7 +17,36 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatOneLineError } from "../../src/text.js";
+
+function fallbackFormatOneLineError(err, maxLen = 512) {
+    let msg = "Error";
+    try {
+        if (typeof err === "string") msg = err;
+        else if (err && typeof err === "object" && typeof err.message === "string" && err.message) msg = err.message;
+    } catch {
+        // ignore hostile getters
+    }
+    try {
+        msg = String(msg).replace(/\s+/gu, " ").trim();
+    } catch {
+        msg = "Error";
+    }
+    if (!Number.isInteger(maxLen) || maxLen <= 0) return "";
+    if (msg.length > maxLen) msg = msg.slice(0, maxLen);
+    return msg || "Error";
+}
+
+// Prefer the canonical formatter when running in the real repo, but fall back to the local
+// implementation when this script is copied into a synthetic checkout (tests do that).
+let formatOneLineError = fallbackFormatOneLineError;
+try {
+    const mod = await import(new URL("../../src/text.js", import.meta.url));
+    if (typeof mod?.formatOneLineError === "function") {
+        formatOneLineError = mod.formatOneLineError;
+    }
+} catch {
+    // ignore - fallback stays active
+}
 
 function usageAndExit() {
     console.error(

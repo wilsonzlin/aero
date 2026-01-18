@@ -7,6 +7,7 @@ import { getAuthTokenFromRequest, isOriginAllowed, isTokenAllowed } from "./auth
 import { isHostAllowed, isIpAllowed } from "./policy.js";
 import { formatOneLineError } from "./text.js";
 import { isExpectedStreamAbort } from "../../src/stream_abort.js";
+import { tryGetProp, tryGetStringProp } from "../../src/safe_props.js";
 
 const stat = promisify(fs.stat);
 const MAX_REQUEST_URL_LEN = 8 * 1024;
@@ -139,7 +140,8 @@ async function handleDnsLookup(req, res, url, { config, logger, metrics }) {
     sendText(res, 401, "Unauthorized");
     return;
   }
-  if (!isOriginAllowed(req.headers.origin, config.allowedOrigins)) {
+  const origin = tryGetProp(tryGetProp(req, "headers"), "origin");
+  if (!isOriginAllowed(origin, config.allowedOrigins)) {
     sendText(res, 403, "Forbidden");
     return;
   }
@@ -264,8 +266,9 @@ export function createHttpHandler({ config, logger, metrics }) {
       setCommonSecurityHeaders(res);
       setContentSecurityPolicy(res);
 
-      const rawUrl = req.url ?? "/";
-      if (typeof rawUrl !== "string") {
+      const method = tryGetStringProp(req, "method") ?? "GET";
+      const rawUrl = tryGetProp(req, "url");
+      if (typeof rawUrl !== "string" || rawUrl === "" || rawUrl.trim() !== rawUrl) {
         sendText(res, 400, "Bad Request");
         return;
       }
@@ -286,18 +289,18 @@ export function createHttpHandler({ config, logger, metrics }) {
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/healthz") {
+      if (method === "GET" && url.pathname === "/healthz") {
         sendText(res, 200, "ok");
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/metrics") {
+      if (method === "GET" && url.pathname === "/metrics") {
         const body = metrics.toPrometheus();
         sendText(res, 200, body);
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/dns/lookup") {
+      if (method === "GET" && url.pathname === "/api/dns/lookup") {
         await handleDnsLookup(req, res, url, { config, logger, metrics });
         return;
       }

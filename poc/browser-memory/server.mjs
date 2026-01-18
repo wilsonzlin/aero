@@ -5,6 +5,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { formatOneLineError } from "../../src/text.js";
 import { isExpectedStreamAbort } from "../../src/stream_abort.js";
+import { tryGetProp } from "../../src/safe_props.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -76,9 +77,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const rawUrl = req.url ?? "/";
-  if (typeof rawUrl !== "string") return send(res, 400, "Bad Request");
+  const rawUrl = tryGetProp(req, "url");
+  if (typeof rawUrl !== "string" || rawUrl === "") return send(res, 400, "Bad Request");
   if (rawUrl.length > MAX_REQUEST_URL_LEN) return send(res, 414, "URI Too Long");
+  if (rawUrl.trim() !== rawUrl) return send(res, 400, "Bad Request");
 
   let url;
   try {

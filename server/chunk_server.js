@@ -16,6 +16,7 @@ import { pipeline } from "node:stream/promises";
 import { formatOneLineError, formatOneLineUtf8 } from "./src/text.js";
 import { isExpectedStreamAbort } from "../src/stream_abort.js";
 import { tryWriteResponse } from "../src/http_response_safe.js";
+import { tryGetProp, tryGetStringProp } from "../src/safe_props.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -44,6 +45,14 @@ function trySetHeader(res, name, value) {
   } catch {
     return false;
   }
+}
+
+function safeRequestMethod(req) {
+  return tryGetStringProp(req, "method") ?? "GET";
+}
+
+function safeHeader(req, name) {
+  return tryGetProp(tryGetProp(req, "headers"), name);
 }
 
 function finishResponse(res, statusCode, body) {
@@ -108,7 +117,8 @@ function stripWeakEtagPrefix(etag) {
 }
 
 function ifNoneMatchMatches(ifNoneMatch, currentEtag) {
-  const raw = String(ifNoneMatch).trim();
+  if (typeof ifNoneMatch !== "string") return false;
+  const raw = ifNoneMatch.trim();
   if (!raw) return false;
   if (raw === "*") return true;
 
@@ -160,13 +170,13 @@ function ifModifiedSinceMatches(ifModifiedSince, stat) {
 
 function isNotModified(req, stat) {
   const etag = computeEtag(stat);
-  const ifNoneMatch = req.headers["if-none-match"];
+  const ifNoneMatch = safeHeader(req, "if-none-match");
   if (typeof ifNoneMatch === "string") {
     if (ifNoneMatch.length > MAX_IF_NONE_MATCH_LEN) return false;
     return ifNoneMatchMatches(ifNoneMatch, etag);
   }
 
-  const ifModifiedSince = req.headers["if-modified-since"];
+  const ifModifiedSince = safeHeader(req, "if-modified-since");
   if (typeof ifModifiedSince === "string") {
     if (ifModifiedSince.length > MAX_IF_MODIFIED_SINCE_LEN) return false;
     return ifModifiedSinceMatches(ifModifiedSince, stat);
@@ -182,7 +192,7 @@ function contentTypeFor(urlPath) {
 
 function requireAuth(req) {
   if (typeof args.authToken !== "string" || !args.authToken) return null;
-  const auth = req.headers["authorization"];
+  const auth = safeHeader(req, "authorization");
   if (typeof auth === "string" && auth.length > MAX_AUTH_HEADER_LEN) {
     return { expected: args.authToken, actual: null };
   }
@@ -242,9 +252,9 @@ function setCommonHeaders(req, res, stat, { contentLength, statusCode, urlPath }
   }
 }
 
-function sendRequestError(req, res, { statusCode, message }) {
+function sendRequestError(res, { statusCode, message, method }) {
   const safeMessage = formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || "Error";
-  const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from(safeMessage, "utf8");
+  const body = method === "HEAD" ? Buffer.alloc(0) : Buffer.from(safeMessage, "utf8");
   trySetHeader(res, "Content-Type", "text/plain; charset=utf-8");
   trySetHeader(res, "Content-Length", String(body.length));
   trySetHeader(res, "Cache-Control", "no-store, no-transform");
@@ -275,22 +285,27 @@ function sendRequestError(req, res, { statusCode, message }) {
   finishResponse(res, statusCode, body);
 }
 
-function sendAuthError(req, res, { statusCode }) {
-  sendRequestError(req, res, { statusCode, message: "Unauthorized" });
+function sendAuthError(res, { statusCode, method }) {
+  sendRequestError(res, { statusCode, message: "Unauthorized", method });
 }
 
 const server = http.createServer((req, res) => {
-  const rawUrl = req.url ?? "/";
-  if (typeof rawUrl !== "string") {
-    sendRequestError(req, res, { statusCode: 400, message: "Bad Request" });
+  const method = safeRequestMethod(req);
+  const rawUrl = tryGetProp(req, "url");
+  if (typeof rawUrl !== "string" || rawUrl === "") {
+    sendRequestError(res, { statusCode: 400, message: "Bad Request", method });
     return;
   }
   if (rawUrl.length > MAX_REQUEST_URL_LEN) {
-    sendRequestError(req, res, { statusCode: 414, message: "URI Too Long" });
+    sendRequestError(res, { statusCode: 414, message: "URI Too Long", method });
+    return;
+  }
+  if (rawUrl.trim() !== rawUrl) {
+    sendRequestError(res, { statusCode: 400, message: "Bad Request", method });
     return;
   }
 
-  if (req.method === "OPTIONS") {
+  if (method === "OPTIONS") {
     // CORS preflight for cross-origin fetches.
     trySetHeader(res, "Cross-Origin-Resource-Policy", "cross-origin");
     trySetHeader(res, "Access-Control-Allow-Origin", "*");
@@ -326,28 +341,28 @@ const server = http.createServer((req, res) => {
   try {
     url = new URL(rawUrl, "http://localhost");
   } catch {
-    sendRequestError(req, res, { statusCode: 400, message: "Bad Request" });
+    sendRequestError(res, { statusCode: 400, message: "Bad Request", method });
     return;
   }
   if (url.pathname.length > MAX_PATHNAME_LEN) {
-    sendRequestError(req, res, { statusCode: 414, message: "URI Too Long" });
+    sendRequestError(res, { statusCode: 414, message: "URI Too Long", method });
     return;
   }
   const filePath = safeJoin(root, url.pathname);
   if (!filePath) {
-    sendRequestError(req, res, { statusCode: 404, message: "Not found" });
+    sendRequestError(res, { statusCode: 404, message: "Not found", method });
     return;
   }
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) {
-      sendRequestError(req, res, { statusCode: 404, message: "Not found" });
+      sendRequestError(res, { statusCode: 404, message: "Not found", method });
       return;
     }
 
     const authError = requireAuth(req);
     if (authError) {
-      sendAuthError(req, res, { statusCode: 401 });
+      sendAuthError(res, { statusCode: 401, method });
       return;
     }
 
@@ -357,14 +372,14 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (req.method === "HEAD") {
+    if (method === "HEAD") {
       setCommonHeaders(req, res, stat, { contentLength: stat.size, statusCode: 200, urlPath: url.pathname });
       finishResponse(res, 200);
       return;
     }
 
-    if (req.method !== "GET") {
-      sendRequestError(req, res, { statusCode: 405, message: "Method not allowed" });
+    if (method !== "GET") {
+      sendRequestError(res, { statusCode: 405, message: "Method not allowed", method });
       return;
     }
 
@@ -378,7 +393,7 @@ const server = http.createServer((req, res) => {
       if (isExpectedStreamAbort(e)) return;
       logServerError("chunk_server: stream error", e);
       clearHeaders(res);
-      sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
+      sendRequestError(res, { statusCode: 500, message: "Internal server error", method });
     });
   });
 });

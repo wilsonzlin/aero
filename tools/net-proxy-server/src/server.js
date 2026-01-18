@@ -386,8 +386,8 @@ export async function createProxyServer(userConfig) {
 
   httpServer.on("upgrade", (req, socket, head) => {
     try {
-      const rawUrl = req.url ?? "/";
-      if (typeof rawUrl !== "string") {
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string" || rawUrl === "" || rawUrl.trim() !== rawUrl) {
         rejectUpgrade(socket, 400, "Bad Request");
         return;
       }
@@ -408,7 +408,7 @@ export async function createProxyServer(userConfig) {
         return;
       }
 
-      const protocolHeaderRaw = req.headers["sec-websocket-protocol"];
+      const protocolHeaderRaw = tryGetProp(tryGetProp(req, "headers"), "sec-websocket-protocol");
       const protocolHeader =
         typeof protocolHeaderRaw === "string" || Array.isArray(protocolHeaderRaw) ? protocolHeaderRaw : undefined;
       const subprotocol = hasWebSocketSubprotocol(protocolHeader, TCP_MUX_SUBPROTOCOL);
@@ -428,7 +428,7 @@ export async function createProxyServer(userConfig) {
         return;
       }
 
-      const authHeader = singleHeaderValue(req.headers.authorization);
+      const authHeader = singleHeaderValue(tryGetProp(tryGetProp(req, "headers"), "authorization"));
       if (authHeader === null) {
         stats.authFailed += 1;
         rejectUpgrade(socket, 401, "Unauthorized");

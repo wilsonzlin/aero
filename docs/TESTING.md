@@ -624,6 +624,13 @@ CI should be reproducible locally with the same top-level commands:
 - TypeScript unit tests: `npm run test:unit` (often with coverage enabled)
 - Browser E2E: `npm run test:e2e`
 
+Tip: if you need to open a PR or check CI status in an environment without GitHub CLI (`gh`), use:
+
+```bash
+npm run pr:url   # compare/PR URL
+npm run pr:links # compare/PR URL + GitHub Actions URL
+```
+
 ### Cross-browser Playwright policy (PR vs scheduled)
 
 Playwright E2E coverage is split into two workflows:

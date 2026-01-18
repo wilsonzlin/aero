@@ -19,7 +19,34 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { formatOneLineError } from "../../src/text.js";
+
+function fallbackFormatOneLineError(err, maxLen = 512) {
+    let msg = "Error";
+    try {
+        if (typeof err === "string") msg = err;
+        else if (err && typeof err === "object" && typeof err.message === "string" && err.message) msg = err.message;
+    } catch {
+        // ignore hostile getters
+    }
+    try {
+        msg = String(msg).replace(/\s+/gu, " ").trim();
+    } catch {
+        msg = "Error";
+    }
+    if (!Number.isInteger(maxLen) || maxLen <= 0) return "";
+    if (msg.length > maxLen) msg = msg.slice(0, maxLen);
+    return msg || "Error";
+}
+
+let formatOneLineError = fallbackFormatOneLineError;
+try {
+    const mod = await import(new URL("../../src/text.js", import.meta.url));
+    if (typeof mod?.formatOneLineError === "function") {
+        formatOneLineError = mod.formatOneLineError;
+    }
+} catch {
+    // ignore - fallback stays active
+}
 
 function usageAndExit() {
     console.error(
@@ -119,6 +146,9 @@ function tokenizeExpression(expr) {
 }
 
 function evaluateLicenseExpression(expr) {
+    if (typeof expr !== "string") {
+        return false;
+    }
     let normalized = expr.replaceAll(";", " OR ").replaceAll(",", " OR ").replaceAll("|", " OR ").trim();
     // `license-checker` occasionally emits a human-readable license name rather than a
     // single SPDX token (e.g. "Apache 2.0"). Normalize these before tokenizing so the

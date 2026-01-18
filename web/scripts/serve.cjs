@@ -7,6 +7,7 @@ const path = require('path');
 const esbuild = require('esbuild');
 const { formatOneLineError, formatOneLineUtf8 } = require('../../scripts/_shared/text_one_line.cjs');
 const { tryWriteResponse } = require('../../src/http_response_safe.cjs');
+const { tryGetProp } = require('../../src/safe_props.cjs');
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -129,13 +130,17 @@ async function transpileTs(absPath) {
 
 const server = http.createServer((req, res) => {
   (async () => {
-    const rawUrl = req.url ?? '/';
-    if (typeof rawUrl !== 'string') {
+    const rawUrl = tryGetProp(req, 'url');
+    if (typeof rawUrl !== 'string' || rawUrl === '') {
       sendText(res, 400, 'Bad Request');
       return;
     }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       sendText(res, 414, 'URI Too Long');
+      return;
+    }
+    if (rawUrl.trim() !== rawUrl) {
+      sendText(res, 400, 'Bad Request');
       return;
     }
 

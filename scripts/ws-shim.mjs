@@ -23,6 +23,7 @@ import {
   destroyBestEffort,
   endBestEffort,
 } from "../src/socket_safe.js";
+import { tryGetProp } from "../src/safe_props.js";
 import { wsCloseSafe, wsSendSafe } from "../src/ws_safe.js";
 import { encodeWebSocketHandshakeResponse } from "../src/ws_handshake_response.js";
 
@@ -675,14 +676,16 @@ export class WebSocketServer extends EventEmitter {
     this.#upgradeListener = (req, socket, head) => {
       try {
         if (this.#options.path) {
-          let rawUrl;
-          try {
-            rawUrl = req.url ?? "/";
-          } catch {
+          const rawUrl = tryGetProp(req, "url");
+          if (typeof rawUrl !== "string" || rawUrl === "") {
             destroyBestEffort(socket);
             return;
           }
-          if (typeof rawUrl !== "string" || rawUrl.length > MAX_UPGRADE_URL_LEN) {
+          if (rawUrl.length > MAX_UPGRADE_URL_LEN) {
+            destroyBestEffort(socket);
+            return;
+          }
+          if (rawUrl.trim() !== rawUrl) {
             destroyBestEffort(socket);
             return;
           }
@@ -726,13 +729,13 @@ export class WebSocketServer extends EventEmitter {
 
   handleUpgrade(req, socket, head, cb) {
     try {
-      const key = req.headers["sec-websocket-key"];
+      const key = tryGetProp(tryGetProp(req, "headers"), "sec-websocket-key");
       if (typeof key !== "string" || key === "" || key.length > MAX_WS_KEY_LEN) {
         rejectHttpUpgrade(socket, 400, "Bad Request");
         return;
       }
 
-      const offered = parseProtocolsHeader(req.headers["sec-websocket-protocol"]);
+      const offered = parseProtocolsHeader(tryGetProp(tryGetProp(req, "headers"), "sec-websocket-protocol"));
       if (offered === null) {
         rejectHttpUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol header");
         return;

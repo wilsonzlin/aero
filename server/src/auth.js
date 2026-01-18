@@ -1,3 +1,5 @@
+import { tryGetProp } from "../../src/safe_props.js";
+
 const MAX_ORIGIN_LEN = 4 * 1024;
 const MAX_AUTH_HEADER_LEN = 4 * 1024;
 const MAX_TOKEN_LEN = 4 * 1024;
@@ -16,7 +18,7 @@ export function extractBearerToken(headerValue) {
 export function getAuthTokenFromRequest(req, urlSearchParams) {
   const fromQuery = urlSearchParams?.get?.("token");
   if (fromQuery && fromQuery.length <= MAX_TOKEN_LEN) return fromQuery;
-  const fromAuthz = extractBearerToken(req.headers.authorization);
+  const fromAuthz = extractBearerToken(tryGetProp(tryGetProp(req, "headers"), "authorization"));
   if (fromAuthz) return fromAuthz;
   return null;
 }

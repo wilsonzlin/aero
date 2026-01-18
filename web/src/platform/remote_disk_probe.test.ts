@@ -52,7 +52,8 @@ describe("probeRemoteDisk", () => {
     let probeResponseDone: Promise<void> | null = null;
 
     const { baseUrl, close } = await withServer((req, res) => {
-      if ((req.url ?? "") !== "/image.bin") {
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string" || rawUrl !== "/image.bin") {
         res.statusCode = 404;
         res.end("not found");
         return;
@@ -134,7 +135,8 @@ describe("probeRemoteDisk", () => {
 
   it("rejects Range probes with non-identity Content-Encoding", async () => {
     const { baseUrl, close } = await withServer((req, res) => {
-      if ((req.url ?? "") !== "/image.bin") {
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string" || rawUrl !== "/image.bin") {
         res.statusCode = 404;
         res.end("not found");
         return;
@@ -184,7 +186,8 @@ describe("probeRemoteDisk", () => {
 
   it("falls back to Content-Range when HEAD Content-Length is not a safe integer", async () => {
     const { baseUrl, close } = await withServer((req, res) => {
-      if ((req.url ?? "") !== "/image.bin") {
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string" || rawUrl !== "/image.bin") {
         res.statusCode = 404;
         res.end("not found");
         return;
@@ -226,7 +229,8 @@ describe("probeRemoteDisk", () => {
 
   it("rejects Range probes without Cache-Control: no-transform", async () => {
     const { baseUrl, close } = await withServer((req, res) => {
-      if ((req.url ?? "") !== "/image.bin") {
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string" || rawUrl !== "/image.bin") {
         res.statusCode = 404;
         res.end("not found");
         return;

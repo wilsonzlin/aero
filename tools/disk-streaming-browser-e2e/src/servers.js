@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { formatOneLineError, formatOneLineUtf8 } = require('../../../scripts/_shared/text_one_line.cjs');
 const { tryWriteResponse } = require('../../../src/http_response_safe.cjs');
+const { tryGetProp, tryGetStringProp } = require('../../../src/safe_props.cjs');
 const { unrefBestEffort } = require('../../../src/unref_safe.cjs');
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
@@ -339,8 +340,9 @@ function sendText(res, statusCode, text) {
 
 async function startAppServer() {
   const server = http.createServer((req, res) => {
-    const rawUrl = req.url ?? '/';
-    if (typeof rawUrl !== 'string') {
+    const method = tryGetStringProp(req, 'method') ?? 'GET';
+    const rawUrl = tryGetProp(req, 'url');
+    if (typeof rawUrl !== 'string' || rawUrl === '') {
       sendText(res, 400, 'Bad Request');
       return;
     }
@@ -362,7 +364,7 @@ async function startAppServer() {
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/') {
+    if (method === 'GET' && url.pathname === '/') {
       const html = renderIndexHtml();
       tryWriteResponse(
         res,

@@ -16,7 +16,11 @@ function startRangeServer(opts: {
   const totalSize = 1024;
 
   const server = http.createServer((req, res) => {
-    const rawUrl = req.url ?? "/";
+    const rawUrl = req.url;
+    if (typeof rawUrl !== "string" || rawUrl === "" || rawUrl.trim() !== rawUrl) {
+      sendText(res, 400, "bad request");
+      return;
+    }
     let url: URL;
     try {
       url = new URL(rawUrl, "http://localhost");

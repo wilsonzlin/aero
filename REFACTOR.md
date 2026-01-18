@@ -1198,6 +1198,18 @@ Outcomes:
 - PR creation + CI visibility can be done via copy/paste links even when `gh` isn’t available.
 - Cross-platform usage is guarded by contracts (no POSIX-only env assignment in npm scripts).
 
+### Phase 95: URL fallback drift guard (done)
+Goal: prevent accidental reintroduction of “missing request URL defaults to `/`” patterns that can mask hostile/malformed request objects and silently change routing behavior.
+
+Approach:
+- Remove `tryGetProp(req, "url") ?? "/"` / `tryGetStringProp(req, "url") ?? "/"` style fallbacks in request handlers; instead require a real string URL and treat missing/invalid values as a 400.
+- Keep upgrade paths that need to differentiate “getter threw” vs “invalid/missing url” using a direct `req.url` read inside an outer `try/catch`, so getter throws remain deterministic 500s where tests expect it.
+- Add a contract test that forbids `tryGetProp(<req-ish>, "url") (??| ||) "/"`, `tryGetStringProp(<req-ish>, "url") (??| ||) "/"`, and `(req|_req).url (??| ||) "/"` in production sources.
+
+Outcomes:
+- Production sources no longer silently treat a missing/hostile `req.url` as a real `/` request.
+- Contract suite fails if the unsafe fallback pattern is reintroduced.
+
 Some coding guidelines:
 
 ## General Principles

@@ -39,7 +39,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   const server = http.createServer((req, res) => {
     void (async () => {
       const rawUrl = tryGetStringProp(req, "url");
-      if (!rawUrl) {
+      if (!rawUrl || rawUrl.trim() !== rawUrl) {
         sendJsonNoStore(res, 400, { error: "invalid url" }, {});
         return;
       }
@@ -106,7 +106,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
   server.on("upgrade", (req, socket, head) => {
     try {
       const rawUrl = req.url;
-      if (typeof rawUrl !== "string") {
+      if (typeof rawUrl !== "string" || rawUrl === "" || rawUrl.trim() !== rawUrl) {
         rejectWsUpgrade(socket, 400, "Invalid URL");
         return;
       }
@@ -132,11 +132,10 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
       }
 
       if (url.pathname === "/tcp-mux") {
-        const protocolHeader = req.headers["sec-websocket-protocol"];
-        const decision = hasWebSocketSubprotocol(
-          typeof protocolHeader === "string" || Array.isArray(protocolHeader) ? protocolHeader : undefined,
-          TCP_MUX_SUBPROTOCOL
-        );
+        const protocolHeaderRaw = tryGetProp(tryGetProp(req, "headers"), "sec-websocket-protocol");
+        const protocolHeader =
+          typeof protocolHeaderRaw === "string" || Array.isArray(protocolHeaderRaw) ? protocolHeaderRaw : undefined;
+        const decision = hasWebSocketSubprotocol(protocolHeader, TCP_MUX_SUBPROTOCOL);
         if (!decision.ok) {
           rejectWsUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol header");
           return;
@@ -188,7 +187,7 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
       parsedUrl = storedUrl;
     } else {
       const rawUrl = tryGetStringProp(req, "url");
-      if (!rawUrl) {
+      if (!rawUrl || rawUrl.trim() !== rawUrl) {
         wsCloseSafe(ws, 1002, "Invalid URL");
         return;
       }

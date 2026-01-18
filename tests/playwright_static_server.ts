@@ -38,13 +38,17 @@ export async function startStaticServer(
       return;
     }
 
-    const rawUrl = req.url ?? "/";
-    if (typeof rawUrl !== "string") {
+    const rawUrl = req.url;
+    if (typeof rawUrl !== "string" || rawUrl === "") {
       sendText(res, 400, "Bad Request");
       return;
     }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       sendText(res, 414, "URI Too Long");
+      return;
+    }
+    if (rawUrl.trim() !== rawUrl) {
+      sendText(res, 400, "Bad Request");
       return;
     }
 

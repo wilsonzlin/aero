@@ -4,7 +4,30 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { canonicalSecurityHeaders } from '../security_headers.mjs';
-import { formatOneLineError } from '../../src/text.js';
+
+function fallbackFormatOneLineError(err, maxLen = 512) {
+  let msg = 'Error';
+  try {
+    if (typeof err === 'string') msg = err;
+    else if (err && typeof err === 'object' && typeof err.message === 'string' && err.message) msg = err.message;
+  } catch {
+    // ignore hostile getters
+  }
+  msg = msg.replace(/\s+/gu, ' ').trim();
+  if (!Number.isInteger(maxLen) || maxLen <= 0) return '';
+  if (msg.length > maxLen) msg = msg.slice(0, maxLen);
+  return msg || 'Error';
+}
+
+let formatOneLineError = fallbackFormatOneLineError;
+try {
+  const mod = await import(new URL('../../src/text.js', import.meta.url));
+  if (typeof mod?.formatOneLineError === 'function') {
+    formatOneLineError = mod.formatOneLineError;
+  }
+} catch {
+  // ignore - fallback stays active
+}
 
 const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '../..');
 
@@ -24,8 +47,9 @@ function normalizeCsp(value) {
 }
 
 function normalizeHeaderValue(key, value) {
+  if (typeof value !== 'string') return '';
   if (normalizeHeaderKey(key) === 'content-security-policy') return normalizeCsp(value);
-  return String(value).trim();
+  return value.trim();
 }
 
 function toLowerHeaderMap(headers) {

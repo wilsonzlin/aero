@@ -5,6 +5,7 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatOneLineUtf8 } from "../src/text.js";
 import { tryWriteResponse } from "../src/http_response_safe.js";
+import { tryGetProp } from "../src/safe_props.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -78,13 +79,17 @@ function isMissingFileError(err) {
 }
 
 const server = createServer(async (req, res) => {
-  const rawUrl = req.url ?? "/";
-  if (typeof rawUrl !== "string") {
+  const rawUrl = tryGetProp(req, "url");
+  if (typeof rawUrl !== "string" || rawUrl === "") {
     sendText(res, 400, "Bad Request");
     return;
   }
   if (rawUrl.length > MAX_REQUEST_URL_LEN) {
     sendText(res, 414, "URI Too Long");
+    return;
+  }
+  if (rawUrl.trim() !== rawUrl) {
+    sendText(res, 400, "Bad Request");
     return;
   }
 

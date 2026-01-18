@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { formatOneLineError, formatOneLineUtf8 } from './src/text.js';
 import { isExpectedStreamAbort } from '../src/stream_abort.js';
+import { tryGetProp } from '../src/safe_props.js';
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -225,8 +226,8 @@ function sendText(res, statusCode, message) {
 
 const server = http.createServer(async (req, res) => {
   try {
-    const rawUrl = req.url ?? '/';
-    if (typeof rawUrl !== 'string') {
+    const rawUrl = tryGetProp(req, 'url');
+    if (typeof rawUrl !== 'string' || rawUrl === '') {
       sendText(res, 400, 'Bad Request');
       return;
     }

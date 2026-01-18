@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ProxyConfig } from "./config";
 import { asciiLowerEqualsSpan } from "./ascii";
 import { isTchar } from "./httpTokens";
+import { tryGetProp } from "./safeProps";
 
 const MAX_CORS_REQUEST_HEADERS_LEN = 4096;
 
@@ -64,7 +65,7 @@ export function setDohCorsHeaders(
 ): void {
   if (config.dohCorsAllowOrigins.length === 0) return;
 
-  const requestOrigin = req.headers.origin;
+  const requestOrigin = tryGetProp(tryGetProp(req, "headers"), "origin");
   if (config.dohCorsAllowOrigins.includes("*")) {
     if (!trySetHeader(res, "Access-Control-Allow-Origin", "*")) return;
   } else if (typeof requestOrigin === "string" && config.dohCorsAllowOrigins.includes(requestOrigin)) {
@@ -78,7 +79,9 @@ export function setDohCorsHeaders(
     trySetHeader(res, "Access-Control-Allow-Methods", opts.allowMethods);
   }
 
-  const requestedHeadersValue = sanitizeCorsRequestHeaders(req.headers["access-control-request-headers"]);
+  const requestedHeadersValue = sanitizeCorsRequestHeaders(
+    tryGetProp(tryGetProp(req, "headers"), "access-control-request-headers")
+  );
   // Always allow Content-Type for RFC8484 POST, even if the client didn't send a preflight header.
   const allowHeaders = requestedHeadersValue
     ? corsHeaderListHasToken(requestedHeadersValue, "content-type")
@@ -96,7 +99,7 @@ export function setDohCorsHeaders(
 
   // Private Network Access (PNA) support: some browsers require an explicit opt-in response when a
   // secure context fetches a private-network target (e.g. localhost).
-  const reqPrivateNetwork = req.headers["access-control-request-private-network"];
+  const reqPrivateNetwork = tryGetProp(tryGetProp(req, "headers"), "access-control-request-private-network");
   const privateNetworkValue = typeof reqPrivateNetwork === "string" ? reqPrivateNetwork : "";
   if (privateNetworkValue.trim().toLowerCase() === "true") {
     trySetHeader(res, "Access-Control-Allow-Private-Network", "true");

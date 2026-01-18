@@ -50,8 +50,8 @@ export function createAeroServer(config, { logger = createLogger({ level: config
 
   httpServer.on("upgrade", (req, socket, head) => {
     try {
-      const rawUrl = req.url ?? "/";
-      if (typeof rawUrl !== "string") {
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string" || rawUrl === "" || rawUrl.trim() !== rawUrl) {
         rejectHttpUpgrade(socket, 400, "Bad Request");
         return;
       }
@@ -72,7 +72,8 @@ export function createAeroServer(config, { logger = createLogger({ level: config
         return;
       }
 
-      if (!isOriginAllowed(req.headers.origin, config.allowedOrigins)) {
+      const origin = tryGetProp(tryGetProp(req, "headers"), "origin");
+      if (!isOriginAllowed(origin, config.allowedOrigins)) {
         rejectHttpUpgrade(socket, 403, "Forbidden");
         return;
       }

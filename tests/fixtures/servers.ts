@@ -287,11 +287,13 @@ export async function startDiskImageServer(opts: {
   // close enough to our Range cap that large requests can be rejected as 431
   // before reaching this handler).
   const server = http.createServer({ maxHeaderSize: 64 * 1024 }, (req, res) => {
-    requests.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers });
+    const method = typeof req.method === "string" ? req.method : "";
+    const rawUrlForLog = typeof req.url === "string" ? req.url : "";
+    requests.push({ method, url: rawUrlForLog, headers: req.headers });
     if (opts.enableCors) setCorsHeaders(res, req);
 
-    const rawUrl = req.url ?? "/";
-    if (typeof rawUrl !== "string") {
+    const rawUrl = req.url;
+    if (typeof rawUrl !== "string" || rawUrl === "") {
       res.statusCode = 400;
       res.end("Bad Request");
       return;
@@ -299,6 +301,11 @@ export async function startDiskImageServer(opts: {
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       res.statusCode = 414;
       res.end("URI Too Long");
+      return;
+    }
+    if (rawUrl.trim() !== rawUrl) {
+      res.statusCode = 400;
+      res.end("Bad Request");
       return;
     }
 
@@ -436,13 +443,17 @@ export async function startPageServer({ coopCoep = false }: { coopCoep?: boolean
       return;
     }
 
-    const rawUrl = req.url ?? "/";
-    if (typeof rawUrl !== "string") {
+    const rawUrl = req.url;
+    if (typeof rawUrl !== "string" || rawUrl === "") {
       sendText(res, 400, "Bad Request");
       return;
     }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       sendText(res, 414, "URI Too Long");
+      return;
+    }
+    if (rawUrl.trim() !== rawUrl) {
+      sendText(res, 400, "Bad Request");
       return;
     }
 

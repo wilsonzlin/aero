@@ -24,3 +24,12 @@ test("npm license allowlist: normalizes common Apache 2.0 aliases", () => {
     assert.equal(evaluateLicenseExpression("Apache License 2.0 OR GPL-3.0"), true);
 });
 
+test("npm license allowlist: does not throw on non-string inputs", () => {
+    const hostile = {
+        toString() {
+            throw new Error("boom");
+        },
+    };
+    assert.equal(evaluateLicenseExpression(hostile), false);
+});
+

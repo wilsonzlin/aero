@@ -27,10 +27,18 @@ function olderVersion(version) {
 }
 
 function runCheck(overriddenVersion, { env = {} } = {}) {
+  // Tests should be deterministic even if the outer environment sets opt-in knobs.
+  // In particular, `AERO_CHECK_NODE_QUIET` suppresses the "newer major" note output.
+  const baseEnv = { ...process.env };
+  delete baseEnv.AERO_ALLOW_UNSUPPORTED_NODE;
+  delete baseEnv.AERO_CHECK_NODE_QUIET;
+  delete baseEnv.AERO_ENFORCE_NODE_MAJOR;
+  delete baseEnv.AERO_NODE_VERSION_OVERRIDE;
+
   return spawnSync("node", [scriptPath], {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...baseEnv,
       AERO_NODE_VERSION_OVERRIDE: overriddenVersion,
       ...env,
     },

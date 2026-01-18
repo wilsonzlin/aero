@@ -5,7 +5,15 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { unrefBestEffort } from "../../src/unref_safe.js";
+
+function unrefBestEffort(obj) {
+  try {
+    const fn = obj && obj.unref;
+    if (typeof fn === "function") fn.call(obj);
+  } catch {
+    // ignore
+  }
+}
 
 function usage(exitCode) {
   const msg = `
@@ -119,7 +127,7 @@ function parseArgs(argv) {
           // eslint-disable-next-line no-console
           console.error(`Unknown option: ${arg}`);
           usage(1);
-        } else if (arg && String(arg).trim() !== "") {
+        } else if (typeof arg === "string" && arg.trim() !== "") {
           // eslint-disable-next-line no-console
           console.error(`Unexpected argument: ${arg}`);
           usage(1);
@@ -158,7 +166,8 @@ function parseArgs(argv) {
 
   const parseBool = (value) => {
     if (value == null) return null;
-    const v = String(value).trim().toLowerCase();
+    if (typeof value !== "string") return null;
+    const v = value.trim().toLowerCase();
     if (!v) return null;
     if (["1", "true", "yes", "y", "on"].includes(v)) return true;
     if (["0", "false", "no", "n", "off"].includes(v)) return false;
@@ -250,12 +259,12 @@ async function sleep(ms) {
 
 async function waitForHttpReady(url, { timeoutMs, intervalMs, serverProcess, getServerError }) {
   function formatUrlForError(u) {
+    if (typeof u !== "string") return "<invalid url>";
     try {
-      const parsed = new URL(String(u));
+      const parsed = new URL(u);
       return `${parsed.origin}${parsed.pathname}`;
     } catch {
-      const s = String(u);
-      return s.length > 128 ? `${s.slice(0, 128)}…(${s.length} chars)` : s;
+      return u.length > 128 ? `${u.slice(0, 128)}…(${u.length} chars)` : u;
     }
   }
 

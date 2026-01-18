@@ -9,6 +9,7 @@ import { rejectHttpUpgrade } from "../src/http_upgrade_reject.js";
 import { computeWebSocketAccept, encodeWebSocketHandshakeResponse } from "../src/ws_handshake_response.js";
 import { endThenDestroyQuietly } from "../src/socket_end_then_destroy.js";
 import { destroyBestEffort, writeCaptureErrorBestEffort } from "../src/socket_safe.js";
+import { tryGetProp } from "../src/safe_props.js";
 
 const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
 
@@ -564,13 +565,13 @@ class WebSocketServer extends EventEmitter {
 
   handleUpgrade(req, socket, head, cb) {
     try {
-      const key = req.headers["sec-websocket-key"];
+      const key = tryGetProp(tryGetProp(req, "headers"), "sec-websocket-key");
       if (typeof key !== "string" || key.length === 0 || key.length > MAX_WS_KEY_LEN) {
         trySocketDestroy(socket);
         return;
       }
 
-      const offered = parseProtocolsHeader(req.headers["sec-websocket-protocol"]);
+      const offered = parseProtocolsHeader(tryGetProp(tryGetProp(req, "headers"), "sec-websocket-protocol"));
       if (offered === null) {
         rejectHttpUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol header");
         return;

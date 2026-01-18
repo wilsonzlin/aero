@@ -75,6 +75,31 @@ test("upgrade: returns 500 when req.url getter throws (and server stays alive)",
   }
 });
 
+test("upgrade: rejects whitespace-padded request URLs with 400", async () => {
+  const token = "test-token";
+  const config = resolveConfig({
+    host: "127.0.0.1",
+    port: 0,
+    tokens: [token],
+  });
+
+  const { httpServer } = createAeroServer(config);
+  await listen(httpServer);
+
+  try {
+    const req = {
+      url: " /ws/tcp?token=" + encodeURIComponent(token),
+      headers: {},
+      socket: { remoteAddress: "127.0.0.1" },
+    };
+
+    const res = await captureUpgradeResponse(httpServer, req);
+    assert.ok(res.startsWith("HTTP/1.1 400 Bad Request\r\n"), res);
+  } finally {
+    await closeServer(httpServer);
+  }
+});
+
 test("upgrade: returns 500 when ws handleUpgrade throws (and server stays alive)", async (t) => {
   const token = "test-token";
   const config = resolveConfig({
