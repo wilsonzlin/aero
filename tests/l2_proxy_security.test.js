@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 
+import { wsCloseSafe, wsSendSafe } from "../scripts/_shared/ws_safe.js";
 import { WebSocket } from "../tools/minimal_ws.js";
 import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX } from "../web/src/shared/l2TunnelProtocol.js";
 
@@ -145,7 +146,7 @@ test("l2 proxy requires Origin by default", { timeout: L2_PROXY_TEST_TIMEOUT_MS 
       headers: { origin: "https://app.example.com" },
     });
     assert.equal(allowed.ok, true);
-    allowed.ws.close(1000, "done");
+    wsCloseSafe(allowed.ws, 1000, "done");
     await waitForClose(allowed.ws);
   } finally {
     await proxy.close();
@@ -178,7 +179,7 @@ test("l2 proxy supports ALLOWED_ORIGINS fallback", { timeout: L2_PROXY_TEST_TIME
       headers: { origin: "https://app.example.com" },
     });
     assert.equal(allowed.ok, true);
-    allowed.ws.close(1000, "done");
+    wsCloseSafe(allowed.ws, 1000, "done");
     await waitForClose(allowed.ws);
   } finally {
     await proxy.close();
@@ -211,7 +212,7 @@ test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TI
       headers: { origin: "https://app.example.com" },
     });
     assert.equal(ok.ok, true);
-    ok.ws.close(1000, "done");
+    wsCloseSafe(ok.ws, 1000, "done");
     await waitForClose(ok.ws);
 
     const protoOk = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
@@ -219,7 +220,7 @@ test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TI
       headers: { origin: "https://app.example.com" },
     });
     assert.equal(protoOk.ok, true);
-    protoOk.ws.close(1000, "done");
+    wsCloseSafe(protoOk.ws, 1000, "done");
     await waitForClose(protoOk.ws);
   } finally {
     await proxy.close();
@@ -264,7 +265,7 @@ test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", { timeout:
 
     const ok = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2?token=sekrit`);
     assert.equal(ok.ok, true);
-    ok.ws.close(1000, "done");
+    wsCloseSafe(ok.ws, 1000, "done");
     await waitForClose(ok.ws);
   } finally {
     await proxy.close();
@@ -295,7 +296,7 @@ test("cookie auth requires a valid aero_session cookie", { timeout: L2_PROXY_TES
       headers: { cookie },
     });
     assert.equal(ok.ok, true);
-    ok.ws.close(1000, "done");
+    wsCloseSafe(ok.ws, 1000, "done");
     await waitForClose(ok.ws);
 
     const expiredCookie = makeSessionCookie({
@@ -334,14 +335,14 @@ test("token auth mode accepts ?apiKey= and subprotocol credentials", { timeout: 
 
     const ok = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2?apiKey=sekrit`);
     assert.equal(ok.ok, true);
-    ok.ws.close(1000, "done");
+    wsCloseSafe(ok.ws, 1000, "done");
     await waitForClose(ok.ws);
 
     const protoOk = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
       protocols: [L2_TUNNEL_SUBPROTOCOL, `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}sekrit`],
     });
     assert.equal(protoOk.ok, true);
-    protoOk.ws.close(1000, "done");
+    wsCloseSafe(protoOk.ws, 1000, "done");
     await waitForClose(protoOk.ws);
   } finally {
     await proxy.close();
@@ -383,7 +384,7 @@ test("jwt auth mode accepts Authorization: Bearer tokens", { timeout: L2_PROXY_T
       headers: { authorization: `Bearer ${jwt}` },
     });
     assert.equal(ok.ok, true);
-    ok.ws.close(1000, "done");
+    wsCloseSafe(ok.ws, 1000, "done");
     await waitForClose(ok.ws);
   } finally {
     await proxy.close();
@@ -407,7 +408,7 @@ test("l2 proxy enforces max connection quota at upgrade time", { timeout: L2_PRO
     assert.equal(second.ok, false);
     assert.equal(second.status, 429);
 
-    first.ws.close(1000, "done");
+    wsCloseSafe(first.ws, 1000, "done");
     await waitForClose(first.ws);
   } finally {
     await proxy.close();
@@ -443,7 +444,7 @@ test("l2 proxy enforces per-session tunnel quota (cookie auth)", { timeout: L2_P
     assert.equal(second.ok, false);
     assert.equal(second.status, 429);
 
-    first.ws.close(1000, "done");
+    wsCloseSafe(first.ws, 1000, "done");
     await waitForClose(first.ws);
     // The per-session tunnel permit is released when the session task exits. Avoid a fixed sleep
     // here; under CI load the permit release can lag slightly behind the client observing the
@@ -466,7 +467,7 @@ test("l2 proxy enforces per-session tunnel quota (cookie auth)", { timeout: L2_P
     assert.ok(third && third.ok, "expected tunnel permit to be released after closing the first session");
 
     assert.equal(third.ok, true);
-    third.ws.close(1000, "done");
+    wsCloseSafe(third.ws, 1000, "done");
     await waitForClose(third.ws);
   } finally {
     await proxy.close();
@@ -490,7 +491,7 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", { tim
 
     // Byte quota is enforced on total WebSocket bytes (rx + tx), so send a single oversized tunnel
     // message (wire header + payload) that exceeds the configured limit.
-    conn.ws.send(encodeL2Frame(Buffer.alloc(61)));
+    wsSendSafe(conn.ws, encodeL2Frame(Buffer.alloc(61)));
     const closedBytes = await waitForClose(conn.ws);
     assert.equal(closedBytes.code, 1008);
     assert.match(closedBytes.reason, /byte quota exceeded/i);
@@ -498,9 +499,9 @@ test("l2 proxy closes the socket when per-connection quotas are exceeded", { tim
     const conn2 = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
     assert.equal(conn2.ok, true);
     // Use zero-length text frames to exercise the FPS limiter without consuming the byte quota.
-    conn2.ws.send("");
-    conn2.ws.send("");
-    conn2.ws.send("");
+    wsSendSafe(conn2.ws, "");
+    wsSendSafe(conn2.ws, "");
+    wsSendSafe(conn2.ws, "");
     const closedFps = await waitForClose(conn2.ws);
     assert.equal(closedFps.code, 1008);
     assert.match(closedFps.reason, /frame rate quota exceeded/i);

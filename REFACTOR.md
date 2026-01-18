@@ -672,14 +672,61 @@ Approach:
   - Centralize safe wrappers in `web/src/net/wsSafe.ts` (`wsSendSafe`, `wsCloseSafe`).
   - Use these helpers across the web networking clients so `WebSocket.send()` / `WebSocket.close()` cannot throw and abort the worker/UI.
 - **WebRTC DataChannel**:
-  - Treat `RTCDataChannel.send()` as a potentially-throwing operation; guard it and surface errors via the existing tunnel/proxy error channels.
+  - Centralize best-effort wrappers in `web/src/net/rtcSafe.ts` (`dcSendSafe`, `dcCloseSafe`, `pcCloseSafe`).
+  - Treat `RTCDataChannel.send()` as a potentially-throwing operation; use `dcSendSafe` in WebRTC transports and surface failures via existing tunnel/proxy error channels (then close deterministically).
 - **Node WebSocket + sockets**:
   - Wrap `ws.send(...)`, `socket.write(...)`, `socket.end(...)`, and `socket.destroy()` in `try/catch` where close races can occur.
   - On sync send/write failure, prefer deterministic teardown (`destroy`) and stable, byte-bounded logging rather than reflecting raw error details to clients.
+  - Prefer the shared best-effort helpers in `src/ws_safe.js` (`wsSendSafe`, `wsCloseSafe`) to avoid duplicating close-race guards. (`wsCloseSafe` formats close reasons as one-line UTF-8 and caps them to 123 bytes by default per RFC6455.) For convenience, `scripts/_shared/ws_safe.js` re-exports these helpers.
+  - When using `wsSendSafe(ws, data, cb)`, be careful with API differences: browser `WebSocket.send(data)` does **not** accept a callback argument. The shared helper must not pass `cb` to 1-arg `send()` implementations (treat callback as a post-send notification only).
+    - Note: some ws-style implementations accept callbacks but expose a rest-arg `send(data, ...args)` signature (arity 1). Don’t key solely off `send.length`; use a ws-style indicator (e.g. `.terminate()`) and lock in the heuristic with a contract test.
+  - When using stream wrappers like `ws.createWebSocketStream(...)`, do **not** destroy the wrapper stream before sending a close frame (it can prevent the close control frame/code from reaching the peer). Prefer: send close → then destroy on `close`/`error` events (best-effort, try/catch).
+  - When implementing raw-upgrade WebSocket protocols (writing frames directly to a `Duplex`), avoid destroying the upgrade socket immediately after writing/echoing a close frame: use `end()` and only `destroy()` after a short timeout so the close response has a chance to flush.
+- For raw HTTP upgrade **rejections** (writing `HTTP/1.1 <status>` to a `Duplex`), prefer:
+  - `encodeHttpTextResponse` from `src/http_text_response.js` to build the response bytes with a correct `Content-Length` + single `\r\n\r\n` delimiter (and to reject CR/LF in header fields).
+  - `endThenDestroyQuietly` from `src/socket_end_then_destroy.js` to ensure the rejection response flushes and the socket doesn’t linger forever.
 
 Outcomes:
 - Network relay/upgrade paths and supporting scripts are resilient to close-race sync throws across Node and browser runtimes.
 - The contract suite and targeted package test suites were used to validate refactor slices as they landed.
+
+### Phase 59: HTTP streaming pipeline hygiene sweep (done)
+Goal: avoid brittle `Readable.pipe(res)` error/teardown behavior by using `pipeline(...)` and making abort/disconnect handling deterministic and non-noisy.
+
+Approach:
+- Use `pipeline(stream, res)` (from `node:stream/promises`) for file-to-response streaming paths so backpressure and errors are handled consistently.
+- Avoid writing response headers before the stream has actually opened when we need `Content-Length` / `Content-Type` (wait for the stream `open` event first).
+- Treat common client abort errors as expected (`ERR_STREAM_PREMATURE_CLOSE`, `ECONNRESET`, `EPIPE`) and suppress them from error logs while still logging real stream failures.
+
+Outcomes:
+- Production server static file streaming uses `pipeline(...)` with best-effort teardown and reduced log noise on client disconnects.
+- Dev helper servers that stream files over HTTP were updated to use `pipeline(...)`, best-effort `res.destroy()` in error paths, and to suppress noisy expected client abort errors.
+
+### Phase 60: Node WebSocket send helper arity hardening (done)
+Goal: avoid accidental callback misuse across ws-style and browser-style WebSocket implementations while preserving error reporting for ws-style `send(..., cb)` APIs.
+
+Approach:
+- Keep a shared Node-only helper in `src/ws_safe.js` (`wsSendSafe`, `wsCloseSafe`) for tools/tests/prototypes (re-exported by `scripts/_shared/ws_safe.js`).
+- For `wsSendSafe(ws, data, cb)`:
+  - Do **not** pass callbacks into browser-style `WebSocket.send(data)` (no callback parameter).
+  - Do pass callbacks into ws-style implementations, including those that expose rest-arg `send(data, ...args)` signatures (arity 1) while still accepting callbacks.
+- Lock in the behavior with a small contract test (`tests/ws_safe_contract.test.js`).
+
+Outcomes:
+- Callback behavior is deterministic across ws-style (`ws`, `tools/minimal_ws.js`) and browser-style WebSocket surfaces.
+- Contract suite prevents regressions in the callback arity heuristics.
+- The Node-side helpers are robust to `null` / invalid inputs (no “safe helper crashed” footguns); contract tests lock in the behavior.
+- `wsCloseSafe` avoids sending empty close reasons and bounds/sanitizes close reasons by default (one-line, UTF-8, 123 bytes).
+
+### Phase 61: ws-shim close-race hardening (done)
+Goal: prevent close-race synchronous throws in the `ws` fallback shim from crashing contract tests / tools (especially when exceptions occur inside `socket.write(...)` completion callbacks).
+
+Approach:
+- Wrap upgrade handshake `socket.write(...)` in best-effort `try/catch` and bail out on sync failure.
+- Ensure `end()` / `destroy()` calls made from inside `socket.write(..., cb)` callbacks are also best-effort (`try/catch`) so exceptions in completion handlers cannot abort the process.
+
+Outcomes:
+- `scripts/ws-shim.mjs` is resilient to close races during handshake and close-control-frame mirroring, matching the broader “no sync-throw on send/close” posture.
 
 Some coding guidelines:
 

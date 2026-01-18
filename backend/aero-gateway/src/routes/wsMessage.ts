@@ -42,6 +42,13 @@ export class WsMessageReceiver {
   }
 
   private handleFrame(frame: WsFrame): void {
+    // RFC 6455: control frames (close/ping/pong) must not be fragmented and must have payload <= 125 bytes.
+    if ((frame.opcode === 0x8 || frame.opcode === 0x9 || frame.opcode === 0xA) && (!frame.fin || frame.payload.length > 125)) {
+      this.closed = true;
+      this.opts.closeWithProtocolError();
+      return;
+    }
+
     switch (frame.opcode) {
       case 0x0: {
         // Continuation

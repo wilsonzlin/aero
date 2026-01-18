@@ -12,7 +12,9 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { formatOneLineError, formatOneLineUtf8 } from "./src/text.js";
+import { isExpectedStreamAbort } from "../src/stream_abort.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -282,6 +284,9 @@ const server = http.createServer((req, res) => {
       res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
       res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
     }
+    res.setHeader("Content-Encoding", "identity");
+    res.setHeader("Cache-Control", "no-store, no-transform");
+    res.setHeader("Content-Length", "0");
     res.end();
     return;
   }
@@ -333,22 +338,26 @@ const server = http.createServer((req, res) => {
     }
 
     const stream = fs.createReadStream(filePath);
-    stream.once("error", (e) => {
-      logServerError("chunk_server: stream error", e);
-      if (res.headersSent) {
-        res.destroy();
-        return;
-      }
-      clearHeaders(res);
-      sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
-    });
-
     setCommonHeaders(req, res, stat, {
       contentLength: stat.size,
       statusCode: 200,
       urlPath: url.pathname,
     });
-    stream.pipe(res);
+    void pipeline(stream, res).catch((e) => {
+      if (isExpectedStreamAbort(e)) return;
+      logServerError("chunk_server: stream error", e);
+      if (res.writableEnded) return;
+      if (res.headersSent) {
+        try {
+          res.destroy();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      clearHeaders(res);
+      sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
+    });
   });
 });
 

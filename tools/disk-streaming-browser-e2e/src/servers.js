@@ -323,10 +323,18 @@ function renderIndexHtml() {
 }
 
 function sendText(res, statusCode, text) {
-  res.statusCode = statusCode;
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   const safeText = formatOneLineUtf8(text, MAX_ERROR_BODY_BYTES) || 'Error';
-  res.end(safeText);
+  try {
+    res.statusCode = statusCode;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.end(safeText);
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 async function startAppServer() {
@@ -358,9 +366,17 @@ async function startAppServer() {
 
     if (req.method === 'GET' && url.pathname === '/') {
       const html = renderIndexHtml();
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(html);
+      try {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(html);
+      } catch {
+        try {
+          res.destroy();
+        } catch {
+          // ignore
+        }
+      }
       return;
     }
 

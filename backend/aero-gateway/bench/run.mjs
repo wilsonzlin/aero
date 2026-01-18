@@ -8,14 +8,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import autocannon from 'autocannon';
 import dnsPacket from 'dns-packet';
 import WebSocket from 'ws';
+import { wsCloseSafe, wsIsOpenSafe, wsSendSafe } from '../../../scripts/_shared/ws_safe.js';
 
-function wsCloseSafe(ws) {
-  try {
-    ws.close();
-  } catch {
-    // ignore
-  }
-}
+// Avoid unbounded memory usage if the socket can't keep up.
+const TCP_BENCH_MAX_WS_BUFFERED_AMOUNT_BYTES = 8 * 1024 * 1024;
 
 function socketWriteSafe(socket, data) {
   try {
@@ -316,7 +312,7 @@ function createWsByteReader(ws) {
 
   const readExact = async (n) => {
     while (buffered.length < n) {
-      if (ws.readyState !== ws.OPEN) {
+      if (!wsIsOpenSafe(ws)) {
         throw new Error('WebSocket closed while waiting for data');
       }
       await new Promise((resolve) => pending.push(resolve));
@@ -332,13 +328,19 @@ function createWsByteReader(ws) {
 }
 
 async function wsSend(ws, buf) {
-  if (ws.readyState !== ws.OPEN) throw new Error('WebSocket not open');
+  if (!wsIsOpenSafe(ws)) throw new Error('WebSocket not open');
   await new Promise((resolve, reject) => {
-    try {
-      ws.send(buf, { binary: true }, (err) => (err ? reject(err) : resolve()));
-    } catch (err) {
-      reject(err);
-    }
+    let settled = false;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    const ok = wsSendSafe(ws, buf, (err) => {
+      finish(() => (err ? reject(err) : resolve()));
+    });
+    if (!ok) finish(() => reject(new Error('WebSocket send failed')));
   });
 }
 
@@ -404,8 +406,7 @@ async function benchTcpThroughputMiBps({
     await wsSend(ws, Buffer.alloc(size));
     sent += size;
 
-    // Avoid unbounded memory usage if the socket can't keep up.
-    while (ws.bufferedAmount > 8 * 1024 * 1024) {
+    while (ws.bufferedAmount > TCP_BENCH_MAX_WS_BUFFERED_AMOUNT_BYTES) {
       await delay(1);
     }
   }

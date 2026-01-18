@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getCookieValue, getCookieValueFromRequest, isRequestSecure } from "../src/cookies.js";
+import { appendSetCookieHeader, getCookieValue, getCookieValueFromRequest, isRequestSecure } from "../src/cookies.js";
 
 function makeReq(
   opts: Readonly<{
@@ -119,4 +119,30 @@ test("getCookieValueFromRequest: non-string headers.cookie array element is inva
   } as unknown as import("node:http").IncomingMessage;
 
   assert.equal(getCookieValueFromRequest(req, "aero_session"), "");
+});
+
+test("appendSetCookieHeader does not throw if getHeader throws", () => {
+  const res = {
+    getHeader() {
+      throw new Error("boom");
+    },
+    setHeader() {
+      // ignore
+    },
+  } as unknown as import("node:http").ServerResponse;
+
+  assert.doesNotThrow(() => appendSetCookieHeader(res, "a=b"));
+});
+
+test("appendSetCookieHeader does not throw if setHeader throws", () => {
+  const res = {
+    getHeader() {
+      return undefined;
+    },
+    setHeader() {
+      throw new Error("boom");
+    },
+  } as unknown as import("node:http").ServerResponse;
+
+  assert.doesNotThrow(() => appendSetCookieHeader(res, "a=b"));
 });

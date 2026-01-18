@@ -1,18 +1,11 @@
 import { formatBytes } from './utils.js';
+import { isInstanceOfSafe } from './instanceof_safe.js';
+import { tryGetStringProp } from './safe_props.js';
 import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from './text.js';
 
 const MAX_ERROR_NAME_BYTES = 128;
 const MAX_ERROR_MESSAGE_BYTES = 512;
 const MAX_ERROR_STACK_BYTES = 8 * 1024;
-
-function tryGetStringProp(obj, key) {
-  try {
-    const v = obj?.[key];
-    return typeof v === 'string' ? v : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 export const ErrorCode = Object.freeze({
   WatchdogTimeout: 'WatchdogTimeout',
@@ -35,7 +28,7 @@ export class EmulatorError extends Error {
 }
 
 export function serializeError(err, fallback = {}) {
-  if (err instanceof EmulatorError) {
+  if (isInstanceOfSafe(err, EmulatorError)) {
     const name = formatOneLineUtf8(tryGetStringProp(err, 'name') ?? 'EmulatorError', MAX_ERROR_NAME_BYTES) || 'Error';
     const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
     const stackRaw = tryGetStringProp(err, 'stack');
@@ -50,7 +43,7 @@ export function serializeError(err, fallback = {}) {
     };
   }
 
-  if (err instanceof Error) {
+  if (isInstanceOfSafe(err, Error)) {
     const name = formatOneLineUtf8(tryGetStringProp(err, 'name') ?? 'Error', MAX_ERROR_NAME_BYTES) || 'Error';
     const message =
       typeof fallback.message === 'string'

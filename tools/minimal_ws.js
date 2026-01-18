@@ -2,11 +2,12 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { EventEmitter } from "node:events";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { formatOneLineUtf8 } from "../src/text.js";
 import { isValidHttpToken } from "../src/httpTokens.js";
+import { rejectHttpUpgrade } from "../src/http_upgrade_reject.js";
+import { computeWebSocketAccept, encodeWebSocketHandshakeResponse } from "../src/ws_handshake_response.js";
 
-const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
 
 const MAX_SUBPROTOCOL_HEADER_LEN = 4 * 1024;
@@ -15,12 +16,6 @@ const MAX_WS_KEY_LEN = 256;
 const MAX_WS_URL_LEN = 8 * 1024;
 // RFC 6455 close reason is limited to 123 bytes (125 total payload bytes incl. 2-byte code).
 const MAX_WS_CLOSE_REASON_BYTES = 123;
-
-function computeAccept(key) {
-  return createHash("sha1")
-    .update(`${key}${WS_GUID}`, "utf8")
-    .digest("base64");
-}
 
 function trySocketWrite(socket, data, cb) {
   try {
@@ -262,7 +257,7 @@ class WebSocket extends EventEmitter {
     }
 
     const key = randomBytes(16).toString("base64");
-    const expectedAccept = computeAccept(key);
+    const expectedAccept = computeWebSocketAccept(key);
 
     const headers = {
       Connection: "Upgrade",
@@ -529,7 +524,15 @@ class WebSocketServer extends EventEmitter {
       this._server = server;
 
       server.on("upgrade", (req, socket, head) => {
-        this.handleUpgrade(req, socket, head, (ws) => this.emit("connection", ws, req));
+        try {
+          this.handleUpgrade(req, socket, head, (ws) => this.emit("connection", ws, req));
+        } catch {
+          try {
+            rejectHttpUpgrade(socket, 500, "WebSocket upgrade failed");
+          } catch {
+            trySocketDestroy(socket);
+          }
+        }
       });
       server.on("listening", () => this.emit("listening"));
       server.on("error", (err) => this.emit("error", err));
@@ -562,7 +565,7 @@ class WebSocketServer extends EventEmitter {
 
       const offered = parseProtocolsHeader(req.headers["sec-websocket-protocol"]);
       if (offered === null) {
-        trySocketEnd(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        rejectHttpUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol header");
         return;
       }
       const offeredSet = new Set(offered);
@@ -570,28 +573,18 @@ class WebSocketServer extends EventEmitter {
       if (this._handleProtocols) {
         const res = this._handleProtocols(offeredSet, req);
         if (res === false || typeof res !== "string") {
-          trySocketEnd(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          rejectHttpUpgrade(socket, 400, "Bad Request");
           return;
         }
         const trimmed = res.trim();
         if (trimmed === "" || !offeredSet.has(trimmed)) {
-          trySocketEnd(socket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          rejectHttpUpgrade(socket, 400, "Bad Request");
           return;
         }
         selected = trimmed;
       }
 
-      const accept = computeAccept(key);
-      const lines = [
-        "HTTP/1.1 101 Switching Protocols",
-        "Upgrade: websocket",
-        "Connection: Upgrade",
-        `Sec-WebSocket-Accept: ${accept}`,
-        ...(selected ? [`Sec-WebSocket-Protocol: ${selected}`] : []),
-        "",
-        "",
-      ];
-      const ok = trySocketWrite(socket, lines.join("\r\n"));
+      const ok = trySocketWrite(socket, encodeWebSocketHandshakeResponse({ key, protocol: selected }));
       if (!ok) {
         trySocketDestroy(socket);
         return;

@@ -3,6 +3,11 @@ import { lookup } from "node:dns/promises";
 import net from "node:net";
 import WebSocket, { WebSocketServer } from "ws";
 import { formatOneLineError, formatOneLineUtf8 } from "./text.js";
+import { rejectHttpUpgrade } from "../../../src/http_upgrade_reject.js";
+import { wsCloseSafe, wsIsOpenSafe } from "../../../scripts/_shared/ws_safe.js";
+import { createWsSendQueue } from "../../../src/ws_backpressure.js";
+import { socketWritableLengthOrOverflow } from "../../../src/socket_writable_length.js";
+import { tryGetProp, tryGetStringProp } from "../../../src/safe_props.js";
 import { hasWebSocketSubprotocol } from "./wsSubprotocol.js";
 import {
   TCP_MUX_HEADER_BYTES,
@@ -22,28 +27,16 @@ const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_AUTH_HEADER_LEN = 4 * 1024;
 const MAX_TOKEN_LEN = 4 * 1024;
 
-// RFC6455 close reason is limited to 123 bytes. Sanitize to avoid log/client injection.
-const MAX_WS_CLOSE_REASON_BYTES = 123;
 // tcp-mux error payload strings can be attacker-influenced; keep messages small and single-line.
 // Match the protocol cap (`encodeTcpMuxErrorPayload`).
 const MAX_TCP_MUX_ERROR_MESSAGE_BYTES = 1024;
-// HTTP status line text should never be attacker-controlled; keep it tiny and single-line.
-const MAX_UPGRADE_STATUS_MESSAGE_BYTES = 64;
-
-function wsCloseSafe(ws, code, reason) {
-  try {
-    ws.close(code, formatOneLineUtf8(reason, MAX_WS_CLOSE_REASON_BYTES));
-  } catch {
-    // ignore best-effort close failures
-  }
-}
 
 function formatTcpMuxErrorMessage(err) {
   return formatOneLineError(err, MAX_TCP_MUX_ERROR_MESSAGE_BYTES);
 }
 
 function normalizeRemoteAddress(remoteAddress) {
-  if (!remoteAddress) return "unknown";
+  if (typeof remoteAddress !== "string" || remoteAddress.length === 0) return "unknown";
   // "::ffff:127.0.0.1" -> "127.0.0.1"
   if (remoteAddress.startsWith("::ffff:")) return remoteAddress.slice("::ffff:".length);
   return remoteAddress;
@@ -281,8 +274,20 @@ class TokenBucket {
 }
 
 function defaultLogger(obj) {
+  // Defensive: logging must never throw (poisoned JSON.stringify, hostile objects, closed stdout).
+  const time = new Date().toISOString();
+  let line = "";
+  try {
+    line = JSON.stringify({ time, ...obj });
+  } catch (err) {
+    line = `time=${time} level=error event=logger_stringify_failed message=${formatOneLineError(err, 512, "Error")}`;
+  }
   // eslint-disable-next-line no-console
-  console.log(JSON.stringify({ time: new Date().toISOString(), ...obj }));
+  try {
+    console.log(line);
+  } catch {
+    // ignore
+  }
 }
 
 function normalizeOpenHost(host) {
@@ -319,6 +324,9 @@ export async function createProxyServer(userConfig) {
     // Rate limits (per WebSocket session).
     maxOpenRequestsPerMinute: 120,
     maxClientBytesPerSecond: 5 * 1024 * 1024,
+    // Test/embedding hook. Production uses Node's `net.createConnection` by default.
+    // Allows deterministic tests without relying on OS-level socket buffering behavior.
+    createTcpConnection: net.createConnection,
     logger: defaultLogger,
     metricsIntervalMs: 10_000,
     ...userConfig,
@@ -347,8 +355,16 @@ export async function createProxyServer(userConfig) {
   const log = config.logger ?? defaultLogger;
 
   const httpServer = http.createServer((req, res) => {
-    res.statusCode = 404;
-    res.end();
+    try {
+      res.statusCode = 404;
+      res.end();
+    } catch {
+      try {
+        res.destroy();
+      } catch {
+        // ignore
+      }
+    }
   });
 
   const wss = new WebSocketServer({
@@ -361,17 +377,7 @@ export async function createProxyServer(userConfig) {
   });
 
   function rejectUpgrade(socket, statusCode, message) {
-    const safeMessage = formatOneLineUtf8(message, MAX_UPGRADE_STATUS_MESSAGE_BYTES) || "Error";
-    try {
-      socket.write(`HTTP/1.1 ${statusCode} ${safeMessage}\r\n\r\n`);
-    } catch {
-      // ignore
-    }
-    try {
-      socket.destroy();
-    } catch {
-      // ignore
-    }
+    rejectHttpUpgrade(socket, statusCode, message);
   }
 
   httpServer.on("upgrade", (req, socket, head) => {
@@ -448,11 +454,25 @@ export async function createProxyServer(userConfig) {
         return;
       }
 
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit("connection", ws, req);
+      try {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          wss.emit("connection", ws, req);
+        });
+      } catch (err) {
+        log({
+          level: "warn",
+          event: "ws_upgrade_failed",
+          message: formatOneLineError(err, 512, "Error"),
+        });
+        rejectUpgrade(socket, 500, "WebSocket upgrade failed");
+      }
+    } catch (err) {
+      log({
+        level: "warn",
+        event: "ws_upgrade_failed",
+        message: formatOneLineError(err, 512, "Error"),
       });
-    } catch {
-      rejectUpgrade(socket, 400, "Bad Request");
+      rejectUpgrade(socket, 500, "WebSocket upgrade failed");
     }
   });
 
@@ -460,10 +480,11 @@ export async function createProxyServer(userConfig) {
     stats.wsConnectionsTotal += 1;
     stats.wsConnectionsActive += 1;
 
-    const remoteIp = normalizeRemoteAddress(req.socket.remoteAddress);
+    const remoteIp = normalizeRemoteAddress(tryGetStringProp(tryGetProp(req, "socket"), "remoteAddress"));
     const sessionId = `${remoteIp}-${Math.random().toString(16).slice(2, 10)}`;
 
-    log({ level: "info", event: "ws_connected", sessionId, remoteIp, protocol: ws.protocol });
+    const protocol = tryGetStringProp(ws, "protocol") ?? "unknown";
+    log({ level: "info", event: "ws_connected", sessionId, remoteIp, protocol });
 
     const openBucket = new TokenBucket({
       refillPerSecond: config.maxOpenRequestsPerMinute / 60,
@@ -480,118 +501,46 @@ export async function createProxyServer(userConfig) {
 
     const muxParser = new TcpMuxFrameParser(config.maxFramePayloadBytes);
 
-    /** @type {Buffer[]} */
-    const wsSendQueue = [];
-    let wsSendQueueBytes = 0;
-    let wsSendFlushScheduled = false;
-    let wsBackpressureActive = false;
-    /** @type {ReturnType<typeof setTimeout> | null} */
-    let wsBackpressurePollTimer = null;
-
-    function backlogBytes() {
-      // We track the queue we control (wsSendQueueBytes) and also include the
-      // ws library's own internal buffer measurement for extra safety.
-      return wsSendQueueBytes + (ws.bufferedAmount ?? 0);
-    }
-
-    function scheduleWsBackpressurePoll() {
-      if (wsBackpressurePollTimer) return;
-      wsBackpressurePollTimer = setTimeout(() => {
-        wsBackpressurePollTimer = null;
-        if (ws.readyState !== WebSocket.OPEN) return;
-        maybeResumeTcpForWsBackpressure();
-        if (wsBackpressureActive) scheduleWsBackpressurePoll();
-      }, 10);
-      wsBackpressurePollTimer.unref?.();
-    }
-
-    function maybePauseTcpForWsBackpressure() {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      if (wsBackpressureActive) return;
-      if (backlogBytes() <= config.wsBackpressureHighWatermarkBytes) return;
-
-      let didPauseAny = false;
-      for (const stream of streams.values()) {
-        if (stream.pausedForWsBackpressure) continue;
-        stream.socket.pause();
-        stream.pausedForWsBackpressure = true;
-        didPauseAny = true;
-      }
-
-      if (!didPauseAny) return;
-      wsBackpressureActive = true;
-      stats.wsBackpressurePauses += 1;
-      scheduleWsBackpressurePoll();
-    }
-
-    function maybeResumeTcpForWsBackpressure() {
-      if (!wsBackpressureActive) return;
-      if (ws.readyState !== WebSocket.OPEN) return;
-      if (backlogBytes() > config.wsBackpressureLowWatermarkBytes) return;
-
-      let didResumeAny = false;
-      for (const stream of streams.values()) {
-        if (!stream.pausedForWsBackpressure) continue;
-        stream.socket.resume();
-        stream.pausedForWsBackpressure = false;
-        didResumeAny = true;
-      }
-
-      wsBackpressureActive = false;
-      if (didResumeAny) stats.wsBackpressureResumes += 1;
-    }
-
-    function flushWsSendQueue() {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      while (wsSendQueue.length > 0) {
-        const frame = wsSendQueue.shift();
-        wsSendQueueBytes -= frame.byteLength;
-        try {
-          ws.send(frame, { binary: true }, () => {});
-        } catch (err) {
-          log({
-            level: "warn",
-            event: "ws_send_failed",
-            sessionId,
-            message: formatOneLineError(err, 512, "Error"),
-          });
-          try {
-            ws.terminate();
-          } catch {
-            // ignore
-          }
-          return;
+    const wsSend = createWsSendQueue({
+      ws,
+      highWatermarkBytes: config.wsBackpressureHighWatermarkBytes,
+      lowWatermarkBytes: config.wsBackpressureLowWatermarkBytes,
+      onPauseSources: () => {
+        let didPauseAny = false;
+        for (const stream of streams.values()) {
+          if (stream.pausedForWsBackpressure) continue;
+          stream.socket.pause();
+          stream.pausedForWsBackpressure = true;
+          didPauseAny = true;
         }
-        // Yield if the ws library is starting to buffer; we'll retry on the
-        // next immediate.
-        if (ws.bufferedAmount > config.wsBackpressureHighWatermarkBytes) break;
-      }
-      maybeResumeTcpForWsBackpressure();
-      if (wsSendQueue.length > 0) {
-        const delayMs = ws.bufferedAmount > config.wsBackpressureHighWatermarkBytes ? 10 : 0;
-        scheduleWsFlush(delayMs);
-      }
-    }
-
-    function scheduleWsFlush(delayMs = 0) {
-      if (wsSendFlushScheduled) return;
-      wsSendFlushScheduled = true;
-      const run = () => {
-        wsSendFlushScheduled = false;
-        flushWsSendQueue();
-      };
-      if (delayMs > 0) setTimeout(run, delayMs);
-      else setImmediate(run);
-    }
+        if (didPauseAny) stats.wsBackpressurePauses += 1;
+      },
+      onResumeSources: () => {
+        let didResumeAny = false;
+        for (const stream of streams.values()) {
+          if (!stream.pausedForWsBackpressure) continue;
+          stream.socket.resume();
+          stream.pausedForWsBackpressure = false;
+          didResumeAny = true;
+        }
+        if (didResumeAny) stats.wsBackpressureResumes += 1;
+      },
+      onSendError: (err) => {
+        log({
+          level: "warn",
+          event: "ws_send_failed",
+          sessionId,
+          message: formatOneLineError(err, 512, "Error"),
+        });
+        wsCloseSafe(ws, 1011, "WebSocket error");
+      },
+    });
 
     function sendFrame(frame) {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!wsIsOpenSafe(ws)) return;
       stats.framesToClient += 1;
       stats.bytesToClient += frame.byteLength;
-      wsSendQueue.push(frame);
-      wsSendQueueBytes += frame.byteLength;
-      maybePauseTcpForWsBackpressure();
-      scheduleWsFlush();
+      wsSend.enqueue(frame);
     }
 
     function sendMuxFrame(msgType, streamId, payload) {
@@ -625,17 +574,23 @@ export async function createProxyServer(userConfig) {
       }
     }
 
+    function enforceTcpBackpressure(streamId, stream) {
+      const socketBuffered = socketWritableLengthOrOverflow(stream.socket, config.maxStreamBufferedBytes);
+      const totalBuffered = stream.pendingWriteBytes + socketBuffered;
+      if (totalBuffered <= config.maxStreamBufferedBytes) return true;
+      sendStreamError(streamId, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "stream buffered too much data");
+      destroyStream(streamId);
+      return false;
+    }
+
     function enqueueStreamWrite(streamId, stream, data) {
       stream.pendingWrites.push(data);
       stream.pendingWriteBytes += data.length;
-      if (stream.pendingWriteBytes <= config.maxStreamBufferedBytes) return;
-
-      sendStreamError(streamId, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "stream buffered too much data");
-      destroyStream(streamId);
+      enforceTcpBackpressure(streamId, stream);
     }
 
     function flushStreamWrites(streamId, stream) {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!wsIsOpenSafe(ws)) return;
       if (!stream.connected) return;
       if (stream.writePaused) return;
 
@@ -657,6 +612,7 @@ export async function createProxyServer(userConfig) {
           destroyStream(streamId);
           return;
         }
+        if (!enforceTcpBackpressure(streamId, stream)) return;
         if (!ok) {
           stream.writePaused = true;
           return;
@@ -746,34 +702,60 @@ export async function createProxyServer(userConfig) {
 
       if (hostFamily === 0) {
         dialLookup = (_hostname, _options, cb) => {
+          let cbDone = false;
+          const cbOnce = (err, address, family) => {
+            if (cbDone) return;
+            cbDone = true;
+            cb(err, address, family);
+          };
+
           void (async () => {
             let addresses;
             try {
               addresses = await lookup(dialHost, { all: true, verbatim: true });
             } catch (err) {
-              cb(err, "", 4);
+              cbOnce(err, "", 4);
               return;
             }
 
             for (const { address, family } of addresses) {
               if (isAllowedIpAddress(address, allowCidrs, config.allowPrivateIps)) {
-                cb(null, address, family);
+                cbOnce(null, address, family);
                 return;
               }
             }
 
-            cb(new TcpMuxIpPolicyDeniedError("Target IP is blocked by IP egress policy"), "", 4);
-          })();
+            cbOnce(new TcpMuxIpPolicyDeniedError("Target IP is blocked by IP egress policy"), "", 4);
+          })().catch((err) => {
+            cbOnce(err, "", 4);
+          });
         };
+      }
+
+      log({ level: "info", event: "tcp_connect_start", sessionId, streamId: frame.streamId, host, port });
+
+      let socket;
+      try {
+        const dial = typeof config.createTcpConnection === "function" ? config.createTcpConnection : net.createConnection;
+        socket = dial({ host: dialHost, port, allowHalfOpen: true, lookup: dialLookup });
+        socket.setNoDelay(true);
+      } catch (err) {
+        stats.tcpErrors += 1;
+        log({
+          level: "warn",
+          event: "tcp_error",
+          sessionId,
+          streamId: frame.streamId,
+          host,
+          port,
+          message: formatTcpMuxErrorMessage(err),
+        });
+        sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+        return;
       }
 
       stats.tcpConnectionsTotal += 1;
       stats.tcpConnectionsActive += 1;
-
-      log({ level: "info", event: "tcp_connect_start", sessionId, streamId: frame.streamId, host, port });
-
-      const socket = net.createConnection({ host: dialHost, port, allowHalfOpen: true, lookup: dialLookup });
-      socket.setNoDelay(true);
 
       const stream = {
         socket,
@@ -788,7 +770,7 @@ export async function createProxyServer(userConfig) {
       };
       streams.set(frame.streamId, stream);
 
-      if (wsBackpressureActive) {
+      if (wsSend.isBackpressured()) {
         stream.pausedForWsBackpressure = true;
         socket.pause();
       }
@@ -881,6 +863,7 @@ export async function createProxyServer(userConfig) {
         destroyStream(frame.streamId);
         return;
       }
+      if (!enforceTcpBackpressure(frame.streamId, stream)) return;
       if (!ok) {
         stream.writePaused = true;
       }
@@ -976,10 +959,7 @@ export async function createProxyServer(userConfig) {
     ws.on("close", () => {
       stats.wsConnectionsActive = Math.max(0, stats.wsConnectionsActive - 1);
       log({ level: "info", event: "ws_closed", sessionId });
-      if (wsBackpressurePollTimer) {
-        clearTimeout(wsBackpressurePollTimer);
-        wsBackpressurePollTimer = null;
-      }
+      wsSend.close();
       for (const id of streams.keys()) destroyStream(id);
     });
 

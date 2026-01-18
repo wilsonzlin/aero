@@ -2,6 +2,8 @@ import http from "node:http";
 import { once } from "node:events";
 import type { IncomingHttpHeaders, IncomingMessage, Server, ServerResponse } from "node:http";
 
+import { sendEmpty, sendText } from "../helpers/http_test_response.js";
+
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
 const MAX_ORIGIN_LEN = 4 * 1024;
@@ -314,29 +316,44 @@ export async function startDiskImageServer(opts: {
       return;
     }
 
-    if (opts.serveTestPage && req.method === "GET" && url.pathname === "/") {
+    if (opts.serveTestPage && url.pathname === "/") {
+      const method = req.method ?? "GET";
+      const allow = "GET, HEAD, OPTIONS";
+      if (method === "OPTIONS") {
+        sendEmpty(res, 204, { allow });
+        return;
+      }
+      if (method !== "GET" && method !== "HEAD") {
+        sendEmpty(res, 405, { allow });
+        return;
+      }
+
+      const body = Buffer.from(rangeTestPageHtml(), "utf8");
       res.statusCode = 200;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.end(rangeTestPageHtml());
+      res.setHeader("Content-Length", String(body.byteLength));
+      res.setHeader("Cache-Control", "no-store");
+      if (method === "HEAD") {
+        res.end();
+        return;
+      }
+      res.end(body);
       return;
     }
 
     if (url.pathname !== "/disk.img") {
-      res.statusCode = 404;
-      res.end("Not found");
+      sendText(res, 404, "Not found");
       return;
     }
 
+    const allow = "GET, HEAD, OPTIONS";
     if (req.method === "OPTIONS") {
-      res.statusCode = 204;
-      res.end();
+      sendEmpty(res, 204, { allow });
       return;
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
-      res.statusCode = 405;
-      res.setHeader("Allow", "GET, HEAD, OPTIONS");
-      res.end();
+      sendEmpty(res, 405, { allow });
       return;
     }
 
@@ -349,6 +366,7 @@ export async function startDiskImageServer(opts: {
     if (typeof rangeHeader === "string") {
       if (rangeHeader.length > MAX_RANGE_HEADER_LEN) {
         res.statusCode = 413;
+        res.setHeader("Content-Length", "0");
         res.end();
         return;
       }
@@ -356,6 +374,7 @@ export async function startDiskImageServer(opts: {
       if (!parsedRange) {
         res.statusCode = 416;
         res.setHeader("Content-Range", `bytes */${opts.data.length}`);
+        res.setHeader("Content-Length", "0");
         res.end();
         return;
       }
@@ -406,15 +425,24 @@ export type PageServer = { origin: string; port: number; close: () => Promise<vo
 
 export async function startPageServer({ coopCoep = false }: { coopCoep?: boolean } = {}): Promise<PageServer> {
   const server = http.createServer((req, res) => {
+    const method = req.method ?? "GET";
+    const allow = "GET, HEAD, OPTIONS";
+    if (method === "OPTIONS") {
+      sendEmpty(res, 204, { allow });
+      return;
+    }
+    if (method !== "GET" && method !== "HEAD") {
+      sendText(res, 405, "Method Not Allowed", { allow });
+      return;
+    }
+
     const rawUrl = req.url ?? "/";
     if (typeof rawUrl !== "string") {
-      res.statusCode = 400;
-      res.end("Bad Request");
+      sendText(res, 400, "Bad Request");
       return;
     }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
-      res.statusCode = 414;
-      res.end("URI Too Long");
+      sendText(res, 414, "URI Too Long");
       return;
     }
 
@@ -422,18 +450,15 @@ export async function startPageServer({ coopCoep = false }: { coopCoep?: boolean
     try {
       url = new URL(rawUrl, "http://localhost");
     } catch {
-      res.statusCode = 400;
-      res.end("Bad Request");
+      sendText(res, 400, "Bad Request");
       return;
     }
     if (url.pathname.length > MAX_PATHNAME_LEN) {
-      res.statusCode = 414;
-      res.end("URI Too Long");
+      sendText(res, 414, "URI Too Long");
       return;
     }
     if (url.pathname !== "/") {
-      res.statusCode = 404;
-      res.end("Not found");
+      sendText(res, 404, "Not found");
       return;
     }
 
@@ -442,9 +467,16 @@ export async function startPageServer({ coopCoep = false }: { coopCoep?: boolean
       res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
     }
 
+    const body = Buffer.from(rangeTestPageHtml(), "utf8");
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(rangeTestPageHtml());
+    res.setHeader("Content-Length", String(body.byteLength));
+    res.setHeader("Cache-Control", "no-store");
+    if (method === "HEAD") {
+      res.end();
+      return;
+    }
+    res.end(body);
   });
 
   return await listen(server);

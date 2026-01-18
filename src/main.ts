@@ -5,7 +5,7 @@
 // entrypoint (`web/index.html`) is legacy/experimental.
 import './style.css';
 
-import { formatOneLineError, formatOneLineUtf8 } from './text.js';
+import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from './text.js';
 
 import { installPerfHud } from '../web/src/perf/hud_entry';
 import { perf } from '../web/src/perf/perf';
@@ -41,6 +41,7 @@ import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webus
 
 const MAX_UI_ERROR_NAME_BYTES = 128;
 const MAX_UI_ERROR_MESSAGE_BYTES = 512;
+const MAX_UI_DEBUG_JSON_BYTES = 256 * 1024;
 
 const formatUiErrorMessage = (err: unknown): string => formatOneLineError(err, MAX_UI_ERROR_MESSAGE_BYTES);
 
@@ -104,6 +105,85 @@ declare global {
   interface Window {
     __jit_smoke_result?: CpuWorkerToMainMessage;
   }
+}
+
+function stringifyDebug(
+  value: unknown,
+  {
+    space = 2,
+    maxBytes = MAX_UI_DEBUG_JSON_BYTES,
+  }: {
+    space?: number;
+    maxBytes?: number;
+  } = {},
+): string {
+  try {
+    const seen = new WeakSet<object>();
+    const json = JSON.stringify(
+      value,
+      (_key, v) => {
+        if (typeof v === 'bigint') return v.toString();
+        if (v && typeof v === 'object') {
+          if (seen.has(v)) return '[Circular]';
+          seen.add(v);
+        }
+        return v;
+      },
+      space,
+    );
+    return maxBytes >= 0 ? truncateUtf8(json, maxBytes) : json;
+  } catch (err) {
+    return `[unserializable: ${formatUiErrorMessage(err)}]`;
+  }
+}
+
+function safeDomString(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return '';
+  }
+}
+
+function toFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+  try {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function formatFixed(value: unknown, digits: number, fallback = 0): string {
+  const n = toFiniteNumber(value, fallback);
+  return n.toFixed(digits);
+}
+
+function formatLocaleInt(value: unknown, fallback = 0): string {
+  const n = Math.trunc(toFiniteNumber(value, fallback));
+  try {
+    return n.toLocaleString();
+  } catch {
+    return String(n);
+  }
+}
+
+function formatHex(value: unknown, { minWidth = 0 }: { minWidth?: number } = {}): string {
+  const n = toFiniteNumber(value, 0);
+  const neg = n < 0;
+  const abs = Math.trunc(Math.abs(n));
+  let hex = abs.toString(16);
+  if (minWidth > 0) hex = hex.padStart(minWidth, '0');
+  return neg ? `-${hex}` : hex;
+}
+
+function formatHexU32(value: unknown, { minWidth = 0 }: { minWidth?: number } = {}): string {
+  // eslint-disable-next-line no-bitwise
+  const u = toFiniteNumber(value, 0) >>> 0;
+  let hex = u.toString(16);
+  if (minWidth > 0) hex = hex.padStart(minWidth, '0');
+  return hex;
 }
 
 function formatByteSize(bytes: number): string {
@@ -177,7 +257,7 @@ async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {
 
   window.__jit_smoke_result = result;
 
-  output.textContent = JSON.stringify(result, null, 2);
+  output.textContent = stringifyDebug(result);
 }
 
 type WebUsbProbePending = {
@@ -199,13 +279,13 @@ function el<K extends keyof HTMLElementTagNameMap>(
   for (const [key, value] of Object.entries(props)) {
     if (value === undefined) continue;
     if (key === "class") {
-      node.className = String(value);
+      node.className = safeDomString(value);
     } else if (key === "text") {
-      node.textContent = String(value);
+      node.textContent = safeDomString(value);
     } else if (key.startsWith("on") && typeof value === "function") {
       (node as unknown as Record<string, unknown>)[key.toLowerCase()] = value;
     } else {
-      node.setAttribute(key, String(value));
+      node.setAttribute(key, safeDomString(value));
     }
   }
   for (const child of children) {
@@ -249,15 +329,11 @@ function renderWebGpuPanel(): HTMLElement {
       output.textContent = "";
       try {
         const { adapter, preferredFormat } = await requestWebGpuDevice({ powerPreference: "high-performance" });
-        output.textContent = JSON.stringify(
-          {
-            adapterInfo: "requestAdapter succeeded",
-            features: Array.from(adapter.features.values()),
-            preferredFormat,
-          },
-          null,
-          2,
-        );
+        output.textContent = stringifyDebug({
+          adapterInfo: "requestAdapter succeeded",
+          features: Array.from(adapter.features.values()),
+          preferredFormat,
+        });
       } catch (err) {
         output.textContent = formatUiErrorMessage(err);
       }
@@ -439,14 +515,18 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
   function renderJson(pre: HTMLPreElement, value: unknown): void {
     try {
-      pre.textContent = JSON.stringify(value, null, 2);
+      pre.textContent = stringifyDebug(value);
     } catch (err) {
       pre.textContent = formatWebUsbError(err);
     }
   }
 
+  function safeJsonInline(value: unknown): string {
+    return stringifyDebug(value, { space: 0, maxBytes: 4 * 1024 });
+  }
+
   function runWorkerGetDevicesSnapshot(target: HTMLPreElement, label: string): void {
-    target.textContent = `Probing worker getDevices() (${label})…`;
+    target.textContent = `Probing worker getDevices() (${safeDomString(label)})…`;
     void runWebUsbProbeWorker({ type: 'probe' })
       .then((resp) => renderJson(target, resp))
       .catch((err) => {
@@ -528,7 +608,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       `workerProbeError=${workerProbeError ? `${workerProbeError.name}: ${workerProbeError.message}` : 'none'}\n` +
       `userActivation.isActive=${userActivation?.isActive ?? 'n/a'}\n` +
       `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? 'n/a'}\n` +
-      `selectedDevice=${liveSummary ? JSON.stringify(liveSummary) : 'none'}\n`;
+      `selectedDevice=${liveSummary ? safeJsonInline(liveSummary) : 'none'}\n`;
 
     const hasSelected = !!selectedDevice;
     const enabled = report.webusb && hasSelected;
@@ -563,16 +643,16 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
           const errObj = msg.error as { name?: unknown; message?: unknown };
           workerProbeError = {
             name: typeof errObj.name === 'string' ? errObj.name : 'Error',
-            message: typeof errObj.message === 'string' ? errObj.message : String(errObj),
+            message: typeof errObj.message === 'string' ? errObj.message : formatUiErrorMessage(errObj),
           };
         }
       }
-      output.textContent = JSON.stringify(resp, null, 2);
+      output.textContent = stringifyDebug(resp);
       updateInfo();
     } catch (err) {
       workerProbeError = serializeError(err);
       showError(err);
-      output.textContent = JSON.stringify({ ok: false, error: serializeError(err) }, null, 2);
+      output.textContent = stringifyDebug({ ok: false, error: serializeError(err) });
       updateInfo();
     }
   }
@@ -695,7 +775,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         }
 
         updateInfo();
-        output.textContent = JSON.stringify(results, null, 2);
+        output.textContent = stringifyDebug(results);
       } catch (err) {
         showError(err);
       }
@@ -719,14 +799,10 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
       try {
         const devices = await usb.getDevices();
-        output.textContent = JSON.stringify(
-          {
-            count: Array.isArray(devices) ? devices.length : null,
-            devices: Array.isArray(devices) ? devices.map(summarizeUsbDevice) : null,
-          },
-          null,
-          2,
-        );
+        output.textContent = stringifyDebug({
+          count: Array.isArray(devices) ? devices.length : null,
+          devices: Array.isArray(devices) ? devices.map(summarizeUsbDevice) : null,
+        });
       } catch (err) {
         showError(err);
       }
@@ -813,7 +889,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
       try {
         await selectedDevice.claimInterface(ifaceNum);
-        output.textContent = `Claimed interface ${ifaceNum}.`;
+        output.textContent = `Claimed interface ${formatLocaleInt(ifaceNum)}.`;
       } catch (err) {
         showError(err);
       }
@@ -896,10 +972,12 @@ function renderOpfsPanel(): HTMLElement {
 
       try {
         await importFileToOpfs(file, destPath, ({ writtenBytes, totalBytes }) => {
-          progress.value = totalBytes ? writtenBytes / totalBytes : 0;
-          status.textContent = `Writing ${writtenBytes.toLocaleString()} / ${totalBytes.toLocaleString()} bytes…`;
+          const written = toFiniteNumber(writtenBytes, 0);
+          const total = toFiniteNumber(totalBytes, 0);
+          progress.value = total > 0 ? written / total : 0;
+          status.textContent = `Writing ${formatLocaleInt(written)} / ${formatLocaleInt(total)} bytes…`;
         });
-        status.textContent = `Imported to OPFS: ${destPath}`;
+        status.textContent = `Imported to OPFS: ${safeDomString(destPath)}`;
       } catch (err) {
         status.textContent = formatUiErrorMessage(err);
       }
@@ -1651,7 +1729,10 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
 
-      status.textContent = `Audio initialized and HDA PCI device started (bus=${initInfo.pci.bus} dev=${initInfo.pci.device}).`;
+      const pciBus = toFiniteNumber(initInfo.pci.bus, 0);
+      const pciDev = toFiniteNumber(initInfo.pci.device, 0);
+      const pciFn = toFiniteNumber(initInfo.pci.function, 0);
+      status.textContent = `Audio initialized and HDA PCI device started (bus=${formatLocaleInt(pciBus)} dev=${formatLocaleInt(pciDev)}).`;
       const timer = window.setInterval(() => {
         const metrics = output.getMetrics();
         const read = Atomics.load(output.ringBuffer.readIndex, 0) >>> 0;
@@ -1667,8 +1748,8 @@ function renderAudioPanel(): HTMLElement {
           `overrunFrames: ${metrics.overrunCount}\n` +
           `ring.readFrameIndex: ${read}\n` +
           `ring.writeFrameIndex: ${write}\n` +
-          `pci: ${initInfo.pci.bus}:${initInfo.pci.device}.${initInfo.pci.function}\n` +
-          `bar0: 0x${initInfo.bar0.toString(16)}`;
+          `pci: ${formatLocaleInt(pciBus)}:${formatLocaleInt(pciDev)}.${formatLocaleInt(pciFn)}\n` +
+          `bar0: 0x${formatHex(initInfo.bar0)}`;
       }, 50);
       (timer as unknown as { unref?: () => void }).unref?.();
       hdaPciDeviceTimer = timer as unknown as number;
@@ -2132,7 +2213,7 @@ function renderInputBackendHudPanel(): HTMLElement {
         `mouse backend: ${mouseBackend}\n` +
         `virtio driver_ok: keyboard=${virtioKbOk} mouse=${virtioMouseOk}\n` +
         `usb configured: keyboard=${usbKbOk} mouse=${usbMouseOk}\n` +
-        `held: keys=${keysHeld} mouseButtons=${buttonsHeld} mask=0x${(buttonsMask & 0x1f).toString(16)}`;
+        `held: keys=${formatLocaleInt(keysHeld)} mouseButtons=${formatLocaleInt(buttonsHeld)} mask=0x${formatHexU32(buttonsMask & 0x1f)}`;
     } catch (err) {
       output.textContent = formatUiErrorMessage(err);
     }
@@ -2473,7 +2554,10 @@ function renderRemoteDiskPanel(): HTMLElement {
       if (handle !== cur) return;
       const remote = res.remote;
       if (!remote) {
-        stats.textContent = `disk: ${formatByteSize(res.capacityBytes)}\nreads=${res.io.reads} writes=${res.io.writes}`;
+        const capacityBytes = toFiniteNumber(res.capacityBytes, 0);
+        const reads = toFiniteNumber(res.io.reads, 0);
+        const writes = toFiniteNumber(res.io.writes, 0);
+        stats.textContent = `disk: ${formatByteSize(capacityBytes)}\nreads=${formatLocaleInt(reads)} writes=${formatLocaleInt(writes)}`;
         return;
       }
 
@@ -2488,30 +2572,49 @@ function renderRemoteDiskPanel(): HTMLElement {
       const baseIoReads = baselineIo?.reads ?? 0;
       const baseIoBytesRead = baselineIo?.bytesRead ?? 0;
 
-      const deltaCacheHits = remote.cacheHits - baseCacheHits;
-      const deltaCacheMisses = remote.cacheMisses - baseCacheMisses;
+      const remoteTotalSize = toFiniteNumber(remote.totalSize, 0);
+      const remoteCachedBytes = toFiniteNumber(remote.cachedBytes, 0);
+      const remoteCacheHits = toFiniteNumber(remote.cacheHits, 0);
+      const remoteCacheMisses = toFiniteNumber(remote.cacheMisses, 0);
+      const remoteCacheLimitBytes = remote.cacheLimitBytes;
+      const remoteBlockSize = toFiniteNumber(remote.blockSize, 0);
+      const remoteRequests = toFiniteNumber(remote.requests, 0);
+      const remoteBytesDownloaded = toFiniteNumber(remote.bytesDownloaded, 0);
+      const remoteBlockRequests = toFiniteNumber(remote.blockRequests, 0);
+      const remoteInflightJoins = toFiniteNumber(remote.inflightJoins, 0);
+      const remoteInflightFetches = toFiniteNumber(remote.inflightFetches, 0);
+      const remoteLastFetchMs = toFiniteNumber(remote.lastFetchMs, 0);
+
+      const deltaCacheHits = remoteCacheHits - baseCacheHits;
+      const deltaCacheMisses = remoteCacheMisses - baseCacheMisses;
       const hitRateDenom = deltaCacheHits + deltaCacheMisses;
       const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
-      const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
+      const cacheCoverage = remoteTotalSize > 0 ? remoteCachedBytes / remoteTotalSize : 0;
       const deltaIoBytesRead = res.io.bytesRead - baseIoBytesRead;
-      const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
+      const deltaBytesDownloaded = remoteBytesDownloaded - baseBytesDownloaded;
       const downloadAmplification = deltaIoBytesRead > 0 ? deltaBytesDownloaded / deltaIoBytesRead : 0;
-      const lastFetchRangeText = remote.lastFetchRange
-        ? `${formatByteSize(remote.lastFetchRange.start)}-${formatByteSize(remote.lastFetchRange.end - 1)}`
-        : '—';
-      const lastFetchAtText = remote.lastFetchAtMs === null ? '—' : new Date(remote.lastFetchAtMs).toLocaleTimeString();
+      const lastFetchRangeText = (() => {
+        const r = remote.lastFetchRange;
+        if (!r || typeof r !== 'object') return '—';
+        const start = toFiniteNumber((r as { start?: unknown }).start, 0);
+        const end = toFiniteNumber((r as { end?: unknown }).end, 0);
+        if (!(end > start)) return '—';
+        return `${formatByteSize(start)}-${formatByteSize(end - 1)}`;
+      })();
+      const lastFetchAtText =
+        remote.lastFetchAtMs === null ? '—' : new Date(toFiniteNumber(remote.lastFetchAtMs, 0)).toLocaleTimeString();
       const sinceText = statsBaselineAtMs === null ? '—' : new Date(statsBaselineAtMs).toLocaleTimeString();
 
       stats.textContent =
-        `imageSize=${formatByteSize(remote.totalSize)}\n` +
-        `cache=${formatByteSize(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${formatMaybeBytes(remote.cacheLimitBytes)}\n` +
-        `blockSize=${formatByteSize(remote.blockSize)}\n` +
+        `imageSize=${formatByteSize(remoteTotalSize)}\n` +
+        `cache=${formatByteSize(remoteCachedBytes)} (${formatFixed(cacheCoverage * 100, 2)}%) limit=${formatMaybeBytes(remoteCacheLimitBytes)}\n` +
+        `blockSize=${formatByteSize(remoteBlockSize)}\n` +
         `since=${sinceText}\n` +
         `ioReads=${res.io.reads - baseIoReads} inflightReads=${res.io.inflightReads} lastReadMs=${res.io.lastReadMs === null ? '—' : res.io.lastReadMs.toFixed(1)}\n` +
-        `ioBytesRead=${formatByteSize(deltaIoBytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
-        `requests=${remote.requests - baseRequests} bytesDownloaded=${formatByteSize(deltaBytesDownloaded)}\n` +
-        `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
-        `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? '—' : remote.lastFetchMs.toFixed(1)}ms)\n`;
+        `ioBytesRead=${formatByteSize(deltaIoBytesRead)} downloadAmp=${formatFixed(downloadAmplification, 2)}x\n` +
+        `requests=${formatLocaleInt(remoteRequests - baseRequests)} bytesDownloaded=${formatByteSize(deltaBytesDownloaded)}\n` +
+        `blockRequests=${formatLocaleInt(remoteBlockRequests - baseBlockRequests)} hits=${formatLocaleInt(deltaCacheHits)} misses=${formatLocaleInt(deltaCacheMisses)} inflightJoins=${formatLocaleInt(remoteInflightJoins - baseInflightJoins)} hitRate=${formatFixed(hitRate * 100, 1)}%\n` +
+        `inflightFetches=${formatLocaleInt(remoteInflightFetches)} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? '—' : formatFixed(remoteLastFetchMs, 1)}ms)\n`;
     } catch (err) {
       stats.textContent = formatUiErrorMessage(err);
     } finally {
@@ -2532,7 +2635,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       output.textContent = 'Probing… (this will make HTTP requests)\n';
       const openedHandle = await ensureOpen();
       const res = await client.stats(openedHandle);
-      output.textContent = JSON.stringify(res.remote, null, 2);
+      output.textContent = stringifyDebug(res.remote);
       updateButtons();
     } catch (err) {
       output.textContent = formatUiErrorMessage(err);
@@ -2550,11 +2653,10 @@ function renderRemoteDiskPanel(): HTMLElement {
       const bytes = await client.read(openedHandle, 2, 512);
 
       const res = await client.stats(openedHandle);
-      output.textContent = JSON.stringify(
-        { read: { lba: 2, byteLength: 512, first16: Array.from(bytes.slice(0, 16)) }, stats: res.remote },
-        null,
-        2,
-      );
+      output.textContent = stringifyDebug({
+        read: { lba: 2, byteLength: 512, first16: Array.from(bytes.slice(0, 16)) },
+        stats: res.remote,
+      });
       progress.value = 1;
     } catch (err) {
       output.textContent = formatUiErrorMessage(err);
@@ -2763,13 +2865,13 @@ function renderMicrophonePanel(): HTMLElement {
 
   function update(): void {
     const state = mic?.state ?? 'inactive';
-    stateLine.textContent = `state=${state}`;
+    stateLine.textContent = `state=${safeDomString(state)}`;
 
-    const buffered = lastWorkletStats.buffered ?? 0;
-    const dropped = lastWorkletStats.dropped ?? 0;
+    const buffered = toFiniteNumber(lastWorkletStats.buffered, 0);
+    const dropped = toFiniteNumber(lastWorkletStats.dropped, 0);
 
     statsLine.textContent =
-      `bufferedSamples=${buffered} droppedSamples=${dropped} ` +
+      `bufferedSamples=${formatLocaleInt(buffered)} droppedSamples=${formatLocaleInt(dropped)} ` +
       `device=${deviceSelect.value ? deviceSelect.value.slice(0, 8) + '…' : 'default'}`;
   }
 
@@ -2963,18 +3065,25 @@ function renderEmulatorSafetyPanel(): HTMLElement {
   let vm: VmCoordinator | null = null;
   let visibilityListenerInstalled = false;
 
+  function safeJson(value: unknown): string {
+    return stringifyDebug(value);
+  }
+
   function update(): void {
     const state = vm?.state ?? 'stopped';
-    stateLine.textContent = `state=${state}`;
+    stateLine.textContent = `state=${safeDomString(state)}`;
     const lastHeartbeat = vm?.lastHeartbeat as { totalInstructions?: number; mic?: unknown } | null | undefined;
-    const totalInstructions = lastHeartbeat?.totalInstructions ?? 0;
+    const totalInstructions = toFiniteNumber(lastHeartbeat?.totalInstructions, 0);
     const mic =
-      lastHeartbeat && typeof lastHeartbeat.mic === 'object'
+      lastHeartbeat && lastHeartbeat.mic !== null && typeof lastHeartbeat.mic === 'object'
         ? (lastHeartbeat.mic as { rms?: number; dropped?: number })
         : null;
-    const micText = mic ? ` micRms=${(mic.rms ?? 0).toFixed(3)} micDropped=${mic.dropped ?? 0}` : '';
-    heartbeatLine.textContent = `lastHeartbeatAt=${vm?.lastHeartbeatAt ?? 0} totalInstructions=${totalInstructions}${micText}`;
-    tickLine.textContent = `uiTicks=${window.__aeroUiTicks ?? 0}`;
+    const micText = mic
+      ? ` micRms=${formatFixed(mic.rms, 3, 0)} micDropped=${formatLocaleInt(mic.dropped, 0)}`
+      : '';
+    const lastHeartbeatAt = toFiniteNumber(vm?.lastHeartbeatAt, 0);
+    heartbeatLine.textContent = `lastHeartbeatAt=${lastHeartbeatAt} totalInstructions=${formatLocaleInt(totalInstructions)}${micText}`;
+    tickLine.textContent = `uiTicks=${formatLocaleInt(toFiniteNumber(window.__aeroUiTicks, 0))}`;
     let persistedSavedTo = 'none';
     try {
       if (typeof localStorage !== 'undefined' && localStorage.getItem('aero:lastCrashSnapshot')) {
@@ -2983,20 +3092,20 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     } catch {
       // ignore
     }
-    snapshotSavedLine.textContent = `snapshotSavedTo=${vm?.lastSnapshotSavedTo ?? persistedSavedTo}`;
+    snapshotSavedLine.textContent = `snapshotSavedTo=${safeDomString(vm?.lastSnapshotSavedTo ?? persistedSavedTo)}`;
 
     const resources = (vm?.lastHeartbeat as { resources?: { guestRamBytes?: number; diskCacheBytes?: number; shaderCacheBytes?: number } } | null)
       ?.resources;
-    const guestRamBytes = resources?.guestRamBytes ?? 0;
-    const diskCacheBytes = resources?.diskCacheBytes ?? 0;
-    const shaderCacheBytes = resources?.shaderCacheBytes ?? 0;
+    const guestRamBytes = toFiniteNumber(resources?.guestRamBytes, 0);
+    const diskCacheBytes = toFiniteNumber(resources?.diskCacheBytes, 0);
+    const shaderCacheBytes = toFiniteNumber(resources?.shaderCacheBytes, 0);
     resourcesLine.textContent =
-      `guestRamMiB=${(guestRamBytes / (1024 * 1024)).toFixed(1)} ` +
-      `diskCacheMiB=${(diskCacheBytes / (1024 * 1024)).toFixed(1)} ` +
-      `shaderCacheMiB=${(shaderCacheBytes / (1024 * 1024)).toFixed(1)}`;
+      `guestRamMiB=${formatFixed(guestRamBytes / (1024 * 1024), 1)} ` +
+      `diskCacheMiB=${formatFixed(diskCacheBytes / (1024 * 1024), 1)} ` +
+      `shaderCacheMiB=${formatFixed(shaderCacheBytes / (1024 * 1024), 1)}`;
 
     if (vm?.lastSnapshot) {
-      snapshotOut.textContent = JSON.stringify(vm.lastSnapshot, null, 2);
+      snapshotOut.textContent = safeJson(vm.lastSnapshot);
     }
   }
 
@@ -3032,7 +3141,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     vm.addEventListener('snapshotSaved', update);
     vm.addEventListener('error', (event) => {
       const detail = (event as CustomEvent).detail as unknown;
-      errorOut.textContent = JSON.stringify(detail, null, 2);
+      errorOut.textContent = safeJson(detail);
       update();
     });
 
@@ -3159,7 +3268,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         const sizeBytes = Math.max(0, Number(cacheWriteMiB.value || 0)) * 1024 * 1024;
         const result = await vm.writeCacheEntry({ cache: 'disk', sizeBytes });
         if (!result.ok) {
-          errorOut.textContent = JSON.stringify(result.error, null, 2);
+          errorOut.textContent = safeJson(result.error);
         }
         update();
       } catch (err) {
@@ -3180,7 +3289,7 @@ function renderEmulatorSafetyPanel(): HTMLElement {
         const sizeBytes = Math.max(0, Number(cacheWriteMiB.value || 0)) * 1024 * 1024;
         const result = await vm.writeCacheEntry({ cache: 'shader', sizeBytes });
         if (!result.ok) {
-          errorOut.textContent = JSON.stringify(result.error, null, 2);
+          errorOut.textContent = safeJson(result.error);
         }
         update();
       } catch (err) {
@@ -3199,8 +3308,8 @@ function renderEmulatorSafetyPanel(): HTMLElement {
           errorOut.textContent = 'No saved crash snapshot found.';
           return;
         }
-        errorOut.textContent = `Loaded snapshot from ${saved.savedTo}`;
-        snapshotOut.textContent = JSON.stringify(saved.snapshot, null, 2);
+        errorOut.textContent = `Loaded snapshot from ${safeDomString(saved.savedTo)}`;
+        snapshotOut.textContent = safeJson(saved.snapshot);
         update();
       } catch (err) {
         errorOut.textContent = formatUiErrorMessage(err);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
 import { once } from "node:events";
+import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 
@@ -72,9 +73,32 @@ function nextMessage(ws: WebSocket): Promise<ArrayBuffer> {
   });
 }
 
+function nextClose(ws: WebSocket, timeoutMs = 2_000): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket close")), timeoutMs);
+    timeout.unref?.();
+    ws.addEventListener(
+      "close",
+      (event) => {
+        clearTimeout(timeout);
+        const e = event as unknown as { code?: unknown; reason?: unknown };
+        resolve({
+          code: typeof e.code === "number" ? e.code : 0,
+          reason: typeof e.reason === "string" ? e.reason : "",
+        });
+      },
+      { once: true },
+    );
+  });
+}
+
 async function closeWebSocket(ws: WebSocket): Promise<void> {
   if (ws.readyState === WebSocket.CLOSED) return;
-  ws.close();
+  try {
+    ws.close();
+  } catch {
+    // ignore close races
+  }
   await new Promise<void>((resolve) => ws.addEventListener("close", () => resolve(), { once: true }));
 }
 
@@ -107,7 +131,22 @@ describe("tcpProxy route", () => {
   });
 
   it("proxies TCP using host+port query parameters", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const proxyServer = http.createServer();
     let ws: WebSocket | null = null;
 
@@ -136,8 +175,119 @@ describe("tcpProxy route", () => {
     }
   });
 
+  it("closes with 1003 (unsupported data) on WebSocket text messages", async () => {
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
+    const proxyServer = http.createServer();
+    let ws: WebSocket | null = null;
+
+    try {
+      const echoPort = await listen(echoServer, "127.0.0.1");
+
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpProxyUpgrade(req, socket, head, {
+          createConnection: (() => net.createConnection({ host: "127.0.0.1", port: echoPort })) as typeof net.createConnection,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      // Use a public-looking host to satisfy default policy; the test overrides createConnection.
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp?v=1&host=8.8.8.8&port=${echoPort}`);
+
+      const closed = nextClose(ws);
+      ws.send("hello");
+      const { code } = await closed;
+      assert.equal(code, 1003);
+    } finally {
+      if (ws) await closeWebSocket(ws);
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
+
+  it("closes with 1011 when the TCP write buffer exceeds the configured cap", async () => {
+    const proxyServer = http.createServer();
+    let ws: WebSocket | null = null;
+
+    const createConnection = (() => {
+      class FakeTcpSocket extends EventEmitter {
+        writableLength = 0;
+
+        setNoDelay() {}
+        setTimeout() {}
+
+        write(chunk: unknown) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any);
+          this.writableLength += buf.length;
+          return true;
+        }
+
+        destroy() {
+          queueMicrotask(() => this.emit("close"));
+        }
+
+        end() {
+          this.destroy();
+        }
+      }
+
+      const socket = new FakeTcpSocket();
+      queueMicrotask(() => socket.emit("connect"));
+      return () => socket as unknown as net.Socket;
+    })();
+
+    try {
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpProxyUpgrade(req, socket, head, {
+          createConnection: createConnection as unknown as typeof net.createConnection,
+          maxTcpBufferedBytes: 32,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp?v=1&host=8.8.8.8&port=1`);
+
+      const closed = nextClose(ws);
+      ws.send(new Uint8Array(1024));
+      const { code } = await closed;
+      assert.equal(code, 1011);
+    } finally {
+      if (ws) await closeWebSocket(ws);
+      await closeServer(proxyServer);
+    }
+  });
+
   it("proxies TCP using target query parameter (and prefers it when both forms are present)", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const proxyServer = http.createServer();
     let ws: WebSocket | null = null;
 
@@ -186,7 +336,22 @@ describe("tcpProxy route", () => {
   });
 
   it("allows dialing loopback targets when allowPrivateIps is enabled", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const proxyServer = http.createServer();
     let ws: WebSocket | null = null;
 

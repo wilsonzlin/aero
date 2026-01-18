@@ -6,6 +6,15 @@ import { isTchar } from "./httpTokens";
 
 const MAX_CORS_REQUEST_HEADERS_LEN = 4096;
 
+function trySetHeader(res: ServerResponse, name: string, value: string): boolean {
+  try {
+    res.setHeader(name, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isAsciiWhitespace(code: number): boolean {
   // Treat all ASCII control chars + space as “trim”.
   return code <= 0x20;
@@ -57,16 +66,16 @@ export function setDohCorsHeaders(
 
   const requestOrigin = req.headers.origin;
   if (config.dohCorsAllowOrigins.includes("*")) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    if (!trySetHeader(res, "Access-Control-Allow-Origin", "*")) return;
   } else if (typeof requestOrigin === "string" && config.dohCorsAllowOrigins.includes(requestOrigin)) {
-    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
-    res.setHeader("Vary", "Origin");
+    if (!trySetHeader(res, "Access-Control-Allow-Origin", requestOrigin)) return;
+    trySetHeader(res, "Vary", "Origin");
   } else {
     return;
   }
 
   if (opts.allowMethods) {
-    res.setHeader("Access-Control-Allow-Methods", opts.allowMethods);
+    trySetHeader(res, "Access-Control-Allow-Methods", opts.allowMethods);
   }
 
   const requestedHeadersValue = sanitizeCorsRequestHeaders(req.headers["access-control-request-headers"]);
@@ -76,21 +85,21 @@ export function setDohCorsHeaders(
       ? requestedHeadersValue
       : `Content-Type, ${requestedHeadersValue}`
     : "Content-Type";
-  res.setHeader("Access-Control-Allow-Headers", allowHeaders);
+  trySetHeader(res, "Access-Control-Allow-Headers", allowHeaders);
 
   // Allow browsers to read Content-Length cross-origin (useful for client-side size enforcement).
-  res.setHeader("Access-Control-Expose-Headers", "Content-Length");
+  trySetHeader(res, "Access-Control-Expose-Headers", "Content-Length");
 
   // Cache preflight results in the browser to avoid an extra roundtrip for each DNS query during
   // local development.
-  res.setHeader("Access-Control-Max-Age", "600");
+  trySetHeader(res, "Access-Control-Max-Age", "600");
 
   // Private Network Access (PNA) support: some browsers require an explicit opt-in response when a
   // secure context fetches a private-network target (e.g. localhost).
   const reqPrivateNetwork = req.headers["access-control-request-private-network"];
   const privateNetworkValue = typeof reqPrivateNetwork === "string" ? reqPrivateNetwork : "";
   if (privateNetworkValue.trim().toLowerCase() === "true") {
-    res.setHeader("Access-Control-Allow-Private-Network", "true");
+    trySetHeader(res, "Access-Control-Allow-Private-Network", "true");
   }
 }
 

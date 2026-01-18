@@ -6,6 +6,7 @@ import {
   type L2TunnelSink,
 } from "./l2Tunnel";
 import { connectRelaySignaling, type ConnectRelaySignalingOptions } from "./webrtcRelaySignalingClient";
+import { pcCloseSafe } from "./rtcSafe";
 
 export type ConnectL2RelaySignalingOptions = ConnectRelaySignalingOptions & {
   /**
@@ -57,7 +58,7 @@ export async function connectL2Relay(
       } catch {
         // Ignore.
       }
-      pc.close();
+      pcCloseSafe(pc);
     },
   };
 }

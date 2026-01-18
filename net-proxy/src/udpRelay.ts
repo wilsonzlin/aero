@@ -6,9 +6,11 @@ import type { ProxyConfig } from "./config";
 import type { ProxyServerMetrics } from "./metrics";
 import { formatError, log } from "./logger";
 import { resolveAndAuthorizeTarget } from "./security";
-import { wsCloseSafe } from "./wsClose";
+import { wsCloseSafe, wsIsOpenSafe, wsSendSafe } from "./wsClose";
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "./udpRelayProtocol";
 import { stripIpv6ZoneIndex } from "./ipUtils";
+import { formatOneLineUtf8 } from "./text";
+import { wsBufferedAmountSafe } from "./wsBufferedAmount";
 
 export async function handleUdpRelay(
   ws: WebSocket,
@@ -19,10 +21,30 @@ export async function handleUdpRelay(
   config: ProxyConfig,
   metrics: ProxyServerMetrics
 ): Promise<void> {
-  if (ws.readyState !== ws.OPEN) return;
+  if (!wsIsOpenSafe(ws)) return;
 
-  const socket = dgram.createSocket(family === 6 ? "udp6" : "udp4");
-  socket.connect(port, address);
+  let socket: dgram.Socket;
+  try {
+    socket = dgram.createSocket(family === 6 ? "udp6" : "udp4");
+  } catch (err) {
+    metrics.incConnectionError("error");
+    wsCloseSafe(ws, 1011, "UDP error");
+    log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
+    return;
+  }
+  try {
+    socket.connect(port, address);
+  } catch (err) {
+    metrics.incConnectionError("error");
+    wsCloseSafe(ws, 1011, "UDP error");
+    log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
+    try {
+      socket.close();
+    } catch {
+      // ignore
+    }
+    return;
+  }
 
   metrics.connectionActiveInc("udp");
 
@@ -40,7 +62,7 @@ export async function handleUdpRelay(
       // ignore
     }
 
-    if (ws.readyState === ws.OPEN) {
+    if (wsIsOpenSafe(ws)) {
       wsCloseSafe(ws, wsCode, wsReason);
     }
 
@@ -72,7 +94,7 @@ export async function handleUdpRelay(
       bytesIn,
       bytesOut,
       wsCode: code,
-      wsReason: reason.toString()
+      wsReason: formatOneLineUtf8(reason, 123)
     });
   });
 
@@ -91,25 +113,25 @@ export async function handleUdpRelay(
   socket.on("message", (msg) => {
     bytesOut += msg.length;
     metrics.addBytesOut("udp", msg.length);
-    if (ws.readyState !== ws.OPEN) return;
+    if (!wsIsOpenSafe(ws)) return;
 
-    if (ws.bufferedAmount > config.udpWsBufferedAmountLimitBytes) {
+    const bufferedAmount = wsBufferedAmountSafe(ws);
+    if (bufferedAmount > config.udpWsBufferedAmountLimitBytes) {
       log("warn", "udp_drop_backpressure", {
         connId,
-        bufferedAmount: ws.bufferedAmount,
+        bufferedAmount,
         limit: config.udpWsBufferedAmountLimitBytes,
         droppedBytes: msg.length
       });
       return;
     }
 
-    try {
-      ws.send(msg);
-    } catch (err) {
+    wsSendSafe(ws, msg, (err) => {
+      if (!err) return;
       closeBoth("ws_send_error", 1011, "WebSocket error");
       metrics.incConnectionError("error");
       log("error", "connect_error", { connId, proto: "udp", err: formatError(err) });
-    }
+    });
   });
 
   ws.on("message", (data, isBinary) => {
@@ -237,7 +259,7 @@ export async function handleUdpRelayMultiplexed(
     }
     bindings.clear();
 
-    if (ws.readyState === ws.OPEN) {
+    if (wsIsOpenSafe(ws)) {
       wsCloseSafe(ws, wsCode, wsReason);
     }
 
@@ -284,7 +306,7 @@ export async function handleUdpRelayMultiplexed(
       bytesIn,
       bytesOut,
       wsCode: code,
-      wsReason: reason.toString()
+      wsReason: formatOneLineUtf8(reason, 123)
     });
   });
 
@@ -324,7 +346,15 @@ export async function handleUdpRelayMultiplexed(
       return null;
     }
 
-    const socket = dgram.createSocket(addressFamily === 6 ? "udp6" : "udp4");
+    let socket: dgram.Socket;
+    try {
+      socket = dgram.createSocket(addressFamily === 6 ? "udp6" : "udp4");
+    } catch (err) {
+      metrics.incConnectionError("error");
+      log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err), guestPort, addressFamily });
+      closeAll("udp_socket_create_error", 1011, "UDP error");
+      return null;
+    }
     const binding: UdpRelayBinding = {
       key,
       guestPort,
@@ -354,7 +384,7 @@ export async function handleUdpRelayMultiplexed(
       binding.lastActiveMs = now;
 
       if (msg.length > config.udpRelayMaxPayloadBytes) return;
-      if (ws.readyState !== ws.OPEN) return;
+      if (!wsIsOpenSafe(ws)) return;
 
       let frame: Uint8Array;
       try {
@@ -406,23 +436,23 @@ export async function handleUdpRelayMultiplexed(
       bytesOut += msg.length;
       metrics.addBytesOut("udp", msg.length);
 
-      if (ws.bufferedAmount > config.udpWsBufferedAmountLimitBytes) {
+      const bufferedAmount = wsBufferedAmountSafe(ws);
+      if (bufferedAmount > config.udpWsBufferedAmountLimitBytes) {
         log("warn", "udp_drop_backpressure", {
           connId,
-          bufferedAmount: ws.bufferedAmount,
+          bufferedAmount,
           limit: config.udpWsBufferedAmountLimitBytes,
           droppedBytes: frame.length
         });
         return;
       }
 
-      try {
-        ws.send(frame);
-      } catch (err) {
+      wsSendSafe(ws, frame, (err) => {
+        if (!err) return;
         closeAll("ws_send_error", 1011, "WebSocket error");
         metrics.incConnectionError("error");
         log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err) });
-      }
+      });
     });
 
     bindings.set(key, binding);
@@ -518,7 +548,11 @@ export async function handleUdpRelayMultiplexed(
       } catch {
         // ignore
       }
-    })();
+    })().catch((err) => {
+      metrics.incConnectionError("error");
+      log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err) });
+      closeAll("handler_error", 1011, "Proxy error");
+    });
   });
 }
 

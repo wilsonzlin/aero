@@ -1,5 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { ErrorCode, serializeError } from './errors.js';
+import { createCustomEvent } from './custom_event.js';
+import { tryGetNumberProp, tryGetProp, tryGetStringProp } from './safe_props.js';
 import { formatOneLineError, formatOneLineUtf8 } from './text.js';
 
 const DEFAULT_CONFIG = Object.freeze({
@@ -11,6 +13,7 @@ const DEFAULT_CONFIG = Object.freeze({
 });
 
 const MAX_COORDINATOR_ERROR_MESSAGE_BYTES = 512;
+const MAX_COORDINATOR_ERROR_NAME_BYTES = 128;
 
 function mergeConfig(base, overrides) {
   return {
@@ -164,30 +167,54 @@ export class VmCoordinator extends EventTarget {
   _onWorkerMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
 
-    if (msg.type === 'heartbeat') {
+    const type = tryGetStringProp(msg, 'type');
+    if (!type) return;
+
+    if (type === 'heartbeat') {
       this.lastHeartbeatAt = Date.now();
-      this.lastHeartbeat = msg;
+      const resources = tryGetProp(msg, 'resources');
+      const safeResources =
+        resources && typeof resources === 'object'
+          ? {
+              guestRamBytes: tryGetNumberProp(resources, 'guestRamBytes') ?? 0,
+              diskCacheBytes: tryGetNumberProp(resources, 'diskCacheBytes') ?? 0,
+              shaderCacheBytes: tryGetNumberProp(resources, 'shaderCacheBytes') ?? 0,
+            }
+          : { guestRamBytes: 0, diskCacheBytes: 0, shaderCacheBytes: 0 };
+
+      const safeHeartbeat = {
+        type: 'heartbeat',
+        at: tryGetNumberProp(msg, 'at') ?? Date.now(),
+        executed: tryGetNumberProp(msg, 'executed') ?? 0,
+        totalInstructions: tryGetNumberProp(msg, 'totalInstructions') ?? 0,
+        pc: tryGetNumberProp(msg, 'pc') ?? 0,
+        resources: safeResources,
+      };
+
+      this.lastHeartbeat = safeHeartbeat;
       this.lastSnapshot = {
         reason: 'heartbeat',
-        capturedAt: msg.at,
-        cpu: { pc: msg.pc, totalInstructions: msg.totalInstructions },
-        resources: msg.resources,
+        capturedAt: safeHeartbeat.at,
+        cpu: { pc: safeHeartbeat.pc, totalInstructions: safeHeartbeat.totalInstructions },
+        resources: safeResources,
       };
-      this.dispatchEvent(new CustomEvent('heartbeat', { detail: msg }));
+      this.dispatchEvent(createCustomEvent('heartbeat', safeHeartbeat));
       return;
     }
 
-    if (msg.type === 'error') {
-      if (msg.snapshot) this.lastSnapshot = msg.snapshot;
-      this._emitError(msg.error, { snapshot: msg.snapshot });
+    if (type === 'error') {
+      const snapshot = tryGetProp(msg, 'snapshot');
+      if (snapshot) this.lastSnapshot = snapshot;
+      this._emitError(tryGetProp(msg, 'error'), { snapshot });
       return;
     }
 
-    if (msg.type === 'snapshot') {
-      this.lastSnapshot = msg.snapshot;
+    if (type === 'snapshot') {
+      const snapshot = tryGetProp(msg, 'snapshot');
+      if (snapshot) this.lastSnapshot = snapshot;
     }
 
-    const queue = this._ackQueues.get(msg.type);
+    const queue = this._ackQueues.get(type);
     if (queue && queue.length > 0) {
       const next = queue.shift();
       next.resolve(msg);
@@ -320,27 +347,40 @@ export class VmCoordinator extends EventTarget {
   }
 
   _emitError(error, { snapshot } = {}) {
-    let structured = error && typeof error === 'object' ? error : null;
-    let safeMessage = formatOneLineError(error, MAX_COORDINATOR_ERROR_MESSAGE_BYTES);
-    if (structured) {
-      try {
-        const msg = (structured).message;
-        if (typeof msg === 'string') {
-          safeMessage = formatOneLineUtf8(msg, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || 'Error';
-        }
-      } catch {
-        // ignore hostile getters
+    const errObj = error && typeof error === 'object' ? error : null;
+
+    let code = ErrorCode.InternalError;
+    let name = 'Error';
+    let message = formatOneLineError(error, MAX_COORDINATOR_ERROR_MESSAGE_BYTES);
+    let details = undefined;
+    let suggestion = undefined;
+
+    if (errObj) {
+      const maybeCode = tryGetStringProp(errObj, 'code');
+      if (maybeCode) code = maybeCode;
+      const maybeName = tryGetStringProp(errObj, 'name');
+      if (maybeName) name = maybeName;
+      const maybeMessage = tryGetStringProp(errObj, 'message');
+      if (maybeMessage) {
+        message = formatOneLineUtf8(maybeMessage, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || 'Error';
       }
-      try {
-        (structured).message = safeMessage;
-      } catch {
-        // ignore non-writable messages
-      }
-    } else {
-      structured = { code: ErrorCode.InternalError, message: safeMessage };
+
+      details = tryGetProp(errObj, 'details');
+      suggestion = tryGetProp(errObj, 'suggestion');
     }
+
+    const safeMessage = formatOneLineUtf8(message, MAX_COORDINATOR_ERROR_MESSAGE_BYTES) || 'Error';
+    const safeName = formatOneLineUtf8(name, MAX_COORDINATOR_ERROR_NAME_BYTES) || 'Error';
+
+    const structured = {
+      name: safeName,
+      code,
+      message: safeMessage,
+      ...(details !== undefined ? { details } : {}),
+      ...(suggestion !== undefined ? { suggestion } : {}),
+    };
     if (this.config.autoSaveSnapshotOnCrash) this.lastSnapshot = snapshot ?? this.lastSnapshot;
-    this.dispatchEvent(new CustomEvent('error', { detail: { error: structured, snapshot } }));
+    this.dispatchEvent(createCustomEvent('error', { error: structured, snapshot }));
     this._rejectAllAcks(new Error(safeMessage));
     this._stopWatchdog();
     const worker = this.worker;
@@ -362,6 +402,6 @@ export class VmCoordinator extends EventTarget {
   _setState(next) {
     if (this.state === next) return;
     this.state = next;
-    this.dispatchEvent(new CustomEvent('statechange', { detail: { state: next } }));
+    this.dispatchEvent(createCustomEvent('statechange', { state: next }));
   }
 }

@@ -7,7 +7,7 @@
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
 import { formatOneLineError, formatOneLineUtf8 } from "../text.ts";
-import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
+import { wsBufferedAmountSafe, wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
@@ -578,7 +578,7 @@ export class WebSocketTcpMuxProxyClient {
   private flush(): void {
     if (this.ws.readyState !== WebSocket.OPEN) return;
     while (this.queuedHead < this.queued.length) {
-      if (this.ws.bufferedAmount > this.maxBufferedAmount) {
+      if (wsBufferedAmountSafe(this.ws) > this.maxBufferedAmount) {
         // Let the browser drain the socket; we'll try again shortly.
         this.scheduleFlush(this.bufferedAmountPollMs);
         return;

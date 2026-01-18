@@ -40,9 +40,16 @@ const server = await createProxyServer({
 // eslint-disable-next-line no-console
 console.log(`Aero net proxy listening on ${server.url}`);
 
-process.on("SIGINT", async () => {
-  // eslint-disable-next-line no-console
-  console.log("Shutting down...");
-  await server.close();
-  process.exit(0);
+let shuttingDown = false;
+process.on("SIGINT", () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void (async () => {
+    // eslint-disable-next-line no-console
+    console.log("Shutting down...");
+    await server.close();
+    process.exit(0);
+  })().catch(() => {
+    process.exit(1);
+  });
 });

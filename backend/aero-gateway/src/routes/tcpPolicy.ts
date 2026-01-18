@@ -1,6 +1,7 @@
 import type http from "node:http";
 
 import { isOriginAllowed } from "../middleware/originGuard.js";
+import { tryGetProp, tryGetStringProp } from "../../../../src/safe_props.js";
 import {
   classifyTargetHost,
   parseHostnamePattern,
@@ -91,7 +92,7 @@ export function validateWsUpgradePolicy(
 ): PolicyDecision {
   if (policy.blockedClientIps && policy.blockedClientIps.length > 0) {
     // Be defensive: some unit/property tests use minimal `IncomingMessage` shapes.
-    const clientIp = (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress;
+    const clientIp = tryGetStringProp(tryGetProp(req, "socket"), "remoteAddress");
     if (clientIp && policy.blockedClientIps.includes(clientIp)) {
       return { ok: false, status: 403, message: "Client IP blocked" };
     }

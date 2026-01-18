@@ -58,7 +58,14 @@ function decodeUtf8Exact(bytes: Buffer): string | null {
 }
 
 export function mintSessionToken(payload: SessionTokenPayload, secret: Buffer): string {
-  const payloadJson = JSON.stringify(payload);
+  let payloadJson = '';
+  try {
+    payloadJson = JSON.stringify(payload);
+  } catch {
+    // Defensive: token minting must not depend on a non-throwing JSON.stringify
+    // (poisoned globals, hostile toJSON getters, etc.).
+    throw new Error('Session token encoding failed');
+  }
   const payloadB64 = encodeBase64Url(Buffer.from(payloadJson, 'utf8'));
   if (payloadB64.length > MAX_SESSION_TOKEN_PAYLOAD_B64_LEN) {
     throw new Error('Session token payload too long');

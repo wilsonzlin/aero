@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { formatOneLineError, formatOneLineUtf8 } from '../text.js';
+import { serializeWebUsbProbeError } from './webusb_probe_error_utils';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -18,31 +18,6 @@ type ProbeResponse =
   | { id: number; type: 'match_and_open_result'; report: unknown }
   | { id: number; type: 'device-result'; report: unknown }
   | { id: number; type: 'error'; error: { name: string; message: string } };
-
-const MAX_ERROR_NAME_BYTES = 128;
-const MAX_ERROR_MESSAGE_BYTES = 512;
-
-function serializeError(err: unknown): { name: string; message: string } {
-  if (err instanceof DOMException) {
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
-    return { name, message };
-  }
-  if (err instanceof Error) {
-    const name = formatOneLineUtf8(err.name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
-    return { name, message };
-  }
-  if (err && typeof err === 'object') {
-    const maybe = err as { name?: unknown; message?: unknown };
-    const name = typeof maybe.name === 'string' ? maybe.name : 'Error';
-    const safeName = formatOneLineUtf8(name, MAX_ERROR_NAME_BYTES) || 'Error';
-    const safeMessage = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
-    return { name: safeName, message: safeMessage };
-  }
-  const message = formatOneLineError(err, MAX_ERROR_MESSAGE_BYTES);
-  return { name: 'Error', message };
-}
 
 type RequestDeviceProbeResult = {
   ok: boolean;
@@ -65,7 +40,7 @@ function summarizeUsbDevice(
     try {
       out[field] = (device as Record<string, unknown>)[field];
     } catch (err) {
-      fieldErrors[field] = serializeError(err);
+      fieldErrors[field] = serializeWebUsbProbeError(err);
     }
   };
 
@@ -93,7 +68,7 @@ async function runRequestDeviceProbe(
     const settle = Promise.resolve()
       .then(() => usb.requestDevice({ filters: [{ vendorId: 0 }] }))
       .then((device: unknown) => ({ ok: true, device: summarizeUsbDevice(device) } as RequestDeviceProbeResult))
-      .catch((err: unknown) => ({ ok: false, error: serializeError(err) } as RequestDeviceProbeResult));
+      .catch((err: unknown) => ({ ok: false, error: serializeWebUsbProbeError(err) } as RequestDeviceProbeResult));
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<RequestDeviceProbeResult>((resolve) => {
@@ -150,7 +125,7 @@ async function probe(): Promise<unknown> {
     } catch (err) {
       report.getDevices = {
         ok: false,
-        error: serializeError(err),
+        error: serializeWebUsbProbeError(err),
       };
     }
   }
@@ -200,7 +175,7 @@ async function matchAndOpen(criteria: {
     }
     devices = res;
   } catch (err) {
-    report.getDevices = { ok: false, error: serializeError(err) };
+    report.getDevices = { ok: false, error: serializeWebUsbProbeError(err) };
     return report;
   }
 
@@ -267,7 +242,7 @@ async function matchAndOpen(criteria: {
     await (device.open as () => Promise<void>)();
     openOk = true;
   } catch (err) {
-    openError = serializeError(err);
+    openError = serializeWebUsbProbeError(err);
   }
 
   try {
@@ -275,7 +250,7 @@ async function matchAndOpen(criteria: {
     await (device.close as () => Promise<void>)();
     closeOk = true;
   } catch (err) {
-    closeError = serializeError(err);
+    closeError = serializeWebUsbProbeError(err);
   }
 
   const openedAfter = typeof device.opened === 'boolean' ? (device.opened as boolean) : null;
@@ -312,7 +287,7 @@ async function probeDevice(
     await (dev.open as () => Promise<void>)();
     openOk = true;
   } catch (err) {
-    openError = serializeError(err);
+    openError = serializeWebUsbProbeError(err);
   }
 
   try {
@@ -320,7 +295,7 @@ async function probeDevice(
     await (dev.close as () => Promise<void>)();
     closeOk = true;
   } catch (err) {
-    closeError = serializeError(err);
+    closeError = serializeWebUsbProbeError(err);
   }
 
   const openedAfter = typeof dev?.opened === 'boolean' ? (dev.opened as boolean) : null;
@@ -347,7 +322,7 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
           ctx.postMessage(resp);
         })
         .catch((err) => {
-          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeError(err) };
+          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeWebUsbProbeError(err) };
           ctx.postMessage(resp);
         });
       break;
@@ -359,7 +334,7 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
           ctx.postMessage(resp);
         })
         .catch((err) => {
-          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeError(err) };
+          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeWebUsbProbeError(err) };
           ctx.postMessage(resp);
         });
       break;
@@ -371,7 +346,7 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
           ctx.postMessage(resp);
         })
         .catch((err) => {
-          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeError(err) };
+          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeWebUsbProbeError(err) };
           ctx.postMessage(resp);
         });
       break;

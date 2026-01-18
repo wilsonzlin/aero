@@ -50,6 +50,7 @@ import {
 import { linearizeSrgbRgba8InPlace } from "../utils/srgb";
 import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from "../text";
 import { serializeErrorForProtocol } from "../errors/serialize";
+import { isInstanceOf, tryGetErrorCause, tryGetErrorCode } from "../errors/errorProps";
 
 const MAX_UI_ERROR_NAME_BYTES = 128;
 const MAX_UI_ERROR_MESSAGE_BYTES = 512;
@@ -1915,7 +1916,7 @@ function serializeErrorForPostMessage(err: Error): { name: string; message: stri
     maxMessageBytes: MAX_UI_ERROR_MESSAGE_BYTES,
     maxStackBytes: MAX_UI_ERROR_STACK_BYTES,
   });
-  const cause = (err as Error & { cause?: unknown }).cause;
+  const cause = tryGetErrorCause(err);
   return { ...base, ...(cause === undefined ? {} : { cause: sanitizeForPostMessage(cause) }) };
 }
 
@@ -2511,12 +2512,13 @@ function uninstallContextLossHandlers(): void {
 function getDeviceLostCode(
   err: unknown,
 ): "webgl_context_lost" | "webgl_context_restore_failed" | "webgpu_device_lost" | null {
-  if (!(err instanceof PresenterError)) return null;
-  switch (err.code) {
+  if (!isInstanceOf(err, PresenterError)) return null;
+  const code = tryGetErrorCode(err);
+  switch (code) {
     case "webgl_context_lost":
     case "webgl_context_restore_failed":
     case "webgpu_device_lost":
-      return err.code;
+      return code;
     default:
       return null;
   }
@@ -3671,13 +3673,19 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
 
   // WebGPU validation errors can surface asynchronously as `GPUUncapturedErrorEvent`s.
   // Surface these as structured diagnostics events instead of treating them as fatal worker errors.
-  if (err instanceof PresenterError && err.code === "webgpu_uncaptured_error") {
-    const cause = err.cause as unknown as { name?: unknown; message?: unknown } | null;
+  const presenterCode = isInstanceOf(err, PresenterError) ? tryGetErrorCode(err) : undefined;
+  if (presenterCode === "webgpu_uncaptured_error") {
+    const presenterErr = err as PresenterError;
+    const causeRaw = tryGetErrorCause(presenterErr);
+    const cause =
+      causeRaw && typeof causeRaw === "object"
+        ? (causeRaw as { name?: unknown; message?: unknown } | null)
+        : null;
     const causeNameRaw = typeof cause?.name === "string" ? cause.name : "";
     const causeMessageRaw = typeof cause?.message === "string" ? cause.message : "";
     const causeName = formatOneLineUtf8(causeNameRaw, MAX_UI_ERROR_NAME_BYTES) || "";
     const causeMessage = formatOneLineUtf8(causeMessageRaw, MAX_UI_ERROR_MESSAGE_BYTES) || "";
-    const errMessageForScan = truncateUtf8(err.message, MAX_GPU_ERROR_SCAN_BYTES);
+    const errMessageForScan = truncateUtf8(presenterErr.message, MAX_GPU_ERROR_SCAN_BYTES);
     const haystack = `${causeName} ${causeMessage} ${errMessageForScan}`.toLowerCase();
 
     let category = "Unknown";
@@ -3695,11 +3703,12 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
       category = "Validation";
     }
 
-    const severity = presenterErrorToSeverity(err.code, category, { isInitFailure });
+    const severity = presenterErrorToSeverity(presenterCode, category, { isInitFailure });
     // Dedupe by the error message so distinct uncaptured errors are still surfaced.
-    const safeMessage = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
-    const dedupeKey = `${backend_kind}:${err.code}:${causeName}:${safeMessage}`;
+    const safeMessage = formatOneLineUtf8(presenterErr.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+    const dedupeKey = `${backend_kind}:${presenterCode}:${causeName}:${safeMessage}`;
     if (shouldEmitPresenterErrorEvent(dedupeKey)) {
+      const causeDetail = tryGetErrorCause(presenterErr);
       emitGpuEvent({
         time_ms: performance.now(),
         backend_kind,
@@ -3707,10 +3716,11 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
         category,
         message: safeMessage,
         details: {
-          code: err.code,
+          code: presenterCode,
           message: safeMessage,
-          stack: typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined,
-          ...(err.cause !== undefined ? { cause: serializeUiErrorCause(err.cause) } : {}),
+          stack:
+            typeof presenterErr.stack === "string" ? truncateUtf8(presenterErr.stack, MAX_UI_ERROR_STACK_BYTES) : undefined,
+          ...(causeDetail !== undefined ? { cause: serializeUiErrorCause(causeDetail) } : {}),
         },
       });
     }
@@ -3722,38 +3732,36 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
   let category = isInitFailure ? "Init" : "Unknown";
   let details: unknown | undefined = undefined;
 
-  if (err instanceof PresenterError) {
-    message = formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
-    code = err.code;
-    category = presenterErrorCodeToCategory(err.code);
+  const isPresenterError = isInstanceOf(err, PresenterError);
+  if (isPresenterError) {
+    const presenterErr = err as PresenterError;
+    const presenterErrCode = tryGetErrorCode(presenterErr) ?? "unknown";
+    message = formatOneLineUtf8(presenterErr.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
+    code = presenterErrCode;
+    category = presenterErrorCodeToCategory(presenterErrCode);
+    const cause = tryGetErrorCause(presenterErr);
     details = {
-      code: err.code,
+      code: presenterErrCode,
       message,
-      stack: typeof err.stack === "string" ? truncateUtf8(err.stack, MAX_UI_ERROR_STACK_BYTES) : undefined,
-      ...(err.cause !== undefined ? { cause: serializeUiErrorCause(err.cause) } : {}),
+      stack:
+        typeof presenterErr.stack === "string" ? truncateUtf8(presenterErr.stack, MAX_UI_ERROR_STACK_BYTES) : undefined,
+      ...(cause !== undefined ? { cause: serializeUiErrorCause(cause) } : {}),
     };
-  } else if (err instanceof Error) {
-    const anyErr = err as Error & { cause?: unknown };
-    const name = formatOneLineUtf8(anyErr.name, MAX_UI_ERROR_NAME_BYTES) || "Error";
-    const msg = formatOneLineUtf8(anyErr.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error";
-    const stack = typeof anyErr.stack === "string" ? truncateUtf8(anyErr.stack, MAX_UI_ERROR_STACK_BYTES) : undefined;
-    details = {
-      name,
-      message: msg,
-      ...(stack ? { stack } : {}),
-      ...(anyErr.cause !== undefined ? { cause: serializeUiErrorCause(anyErr.cause) } : {}),
-    };
+  } else if (isInstanceOf(err, Error)) {
+    details = serializeErrorForPostMessage(err as Error);
   } else {
     details = serializeUiErrorDetails(err);
   }
 
   const severity = presenterErrorToSeverity(code, category, { isInitFailure });
-  const dedupeKey =
-    err instanceof PresenterError
-      ? `${backend_kind}:${err.code}`
-      : err instanceof Error
-        ? `${backend_kind}:${formatOneLineUtf8(err.name, MAX_UI_ERROR_NAME_BYTES) || "Error"}:${formatOneLineUtf8(err.message, MAX_UI_ERROR_MESSAGE_BYTES) || "Error"}`
-        : `${backend_kind}:${message}`;
+  const dedupeKey = (() => {
+    if (isPresenterError) return `${backend_kind}:${code ?? "unknown"}`;
+    if (isInstanceOf(err, Error)) {
+      const serialized = serializeErrorForPostMessage(err as Error);
+      return `${backend_kind}:${serialized.name ?? "Error"}:${serialized.message}`;
+    }
+    return `${backend_kind}:${message}`;
+  })();
 
   if (shouldEmitPresenterErrorEvent(dedupeKey)) {
     emitGpuEvent({
@@ -3766,8 +3774,8 @@ function postPresenterError(err: unknown, backend?: PresenterBackendKind): void 
     });
   }
 
-  if (err instanceof PresenterError) {
-    postToMain({ type: "error", message, code: err.code, backend: backend ?? presenter?.backend });
+  if (isPresenterError) {
+    postToMain({ type: "error", message, code: code ?? "unknown", backend: backend ?? presenter?.backend });
     postRuntimeError(message);
     return;
   }

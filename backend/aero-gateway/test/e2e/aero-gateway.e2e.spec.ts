@@ -119,7 +119,15 @@ async function getFreePort(): Promise<number> {
 async function startTcpEchoServer(): Promise<{ port: number; close: () => Promise<void> }> {
   const server = net.createServer((socket) => {
     socket.on('data', (data) => {
-      socket.write(data);
+      try {
+        socket.write(data);
+      } catch {
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+      }
     });
   });
 
@@ -153,9 +161,14 @@ async function startHttpsProxy(targetPort: number, listenPort: number): Promise<
       },
       (upstreamRes) => {
         res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
-        pipeline(upstreamRes, res, () => {
+        pipeline(upstreamRes, res, (err) => {
+          if (!err) return;
           // If we fail mid-stream, it's too late to send a clean 502; just terminate.
-          res.destroy();
+          try {
+            res.destroy();
+          } catch {
+            // ignore
+          }
         });
       },
     );
@@ -165,9 +178,7 @@ async function startHttpsProxy(targetPort: number, listenPort: number): Promise<
       res.end('Bad gateway\n');
     });
 
-    pipeline(req, upstreamReq, () => {
-      // Errors here are usually client aborts; upstreamReq will be closed by pipeline.
-    });
+    pipeline(req, upstreamReq, () => {});
   });
 
   server.on('upgrade', (req, socket, head) => {
@@ -180,15 +191,54 @@ async function startHttpsProxy(targetPort: number, listenPort: number): Promise<
         requestHeader += `${key}: ${value}\r\n`;
       }
       requestHeader += `Host: localhost:${targetPort}\r\n\r\n`;
-      upstream.write(requestHeader);
-      if (head.length > 0) upstream.write(head);
+      try {
+        upstream.write(requestHeader);
+        if (head.length > 0) upstream.write(head);
+      } catch {
+        try {
+          upstream.destroy();
+        } catch {
+          // ignore
+        }
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+        return;
+      }
 
-      socket.pipe(upstream);
-      upstream.pipe(socket);
+      try {
+        socket.pipe(upstream);
+        upstream.pipe(socket);
+      } catch {
+        try {
+          upstream.destroy();
+        } catch {
+          // ignore
+        }
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+      }
     });
 
-    upstream.on('error', () => socket.destroy());
-    socket.on('error', () => upstream.destroy());
+    upstream.on('error', () => {
+      try {
+        socket.destroy();
+      } catch {
+        // ignore
+      }
+    });
+    socket.on('error', () => {
+      try {
+        upstream.destroy();
+      } catch {
+        // ignore
+      }
+    });
   });
 
   await new Promise<void>((resolve, reject) => {

@@ -412,3 +412,38 @@ test("udp multiplexed relay: supports IPv6 via v2 framing", async (t) => {
     await udpServer.close();
   }
 });
+
+test("udp multiplexed relay: closes with 1011 if UDP socket creation throws", async (t) => {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+  let ws: WebSocket | null = null;
+
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/udp`);
+
+    t.mock.method(dgram, "createSocket", () => {
+      throw new Error("boom");
+    });
+
+    const frame = encodeUdpRelayV1Datagram({
+      guestPort: 12345,
+      remoteIpv4: [127, 0, 0, 1],
+      remotePort: 9,
+      payload: Buffer.from([1])
+    });
+
+    try {
+      ws.send(frame);
+    } catch {
+      // ignore close races
+    }
+
+    const closed = await waitForClose(ws);
+    assert.equal(closed.code, 1011);
+    ws = null;
+  } finally {
+    ws?.terminate();
+    await proxy.close();
+  }
+});

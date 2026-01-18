@@ -1,5 +1,6 @@
 import { splitCommaSeparatedList } from "./csv";
 import { formatOneLineError } from "./text";
+import type net from "node:net";
 
 export interface ProxyConfig {
   listenHost: string;
@@ -17,6 +18,13 @@ export interface ProxyConfig {
   wsMaxPayloadBytes: number;
   wsStreamHighWaterMarkBytes: number;
   udpWsBufferedAmountLimitBytes: number;
+  /**
+   * Maximum buffered bytes allowed in a single TCP relay connection (client -> TCP).
+   * This is enforced using `net.Socket.writableLength` after each write to avoid
+   * unbounded memory growth if the TCP peer stops reading (or a custom socket ignores
+   * backpressure).
+   */
+  maxTcpBufferedBytesPerConn: number;
   tcpMuxMaxStreams: number;
   tcpMuxMaxStreamBufferedBytes: number;
   tcpMuxMaxFramePayloadBytes: number;
@@ -25,6 +33,11 @@ export interface ProxyConfig {
   udpRelayBindingIdleTimeoutMs: number;
   udpRelayPreferV2: boolean;
   udpRelayInboundFilterMode: "any" | "address_and_port";
+  /**
+   * Test/embedding hook. Production uses Node's `net.createConnection` by default.
+   * Allows deterministic tests without relying on OS-level socket buffering behavior.
+   */
+  createTcpConnection?: typeof net.createConnection;
 }
 
 const MAX_ENV_INT_LEN = 64;
@@ -170,6 +183,10 @@ export function loadConfigFromEnv(): ProxyConfig {
     wsMaxPayloadBytes: readEnvInt("AERO_PROXY_WS_MAX_PAYLOAD_BYTES", 1 * 1024 * 1024),
     wsStreamHighWaterMarkBytes: readEnvInt("AERO_PROXY_WS_STREAM_HWM_BYTES", 64 * 1024),
     udpWsBufferedAmountLimitBytes: readEnvInt("AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES", 1 * 1024 * 1024),
+    maxTcpBufferedBytesPerConn: readEnvInt("AERO_PROXY_MAX_TCP_BUFFER_BYTES", 10 * 1024 * 1024, {
+      min: 1,
+      max: 256 * 1024 * 1024
+    }),
     tcpMuxMaxStreams,
     tcpMuxMaxStreamBufferedBytes: readEnvInt("AERO_PROXY_TCP_MUX_MAX_STREAM_BUFFER_BYTES", 1024 * 1024),
     tcpMuxMaxFramePayloadBytes: readEnvInt("AERO_PROXY_TCP_MUX_MAX_FRAME_PAYLOAD_BYTES", 16 * 1024 * 1024),

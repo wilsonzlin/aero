@@ -1,11 +1,13 @@
 import net from "node:net";
-import { PassThrough } from "node:stream";
 import { createWebSocketStream, type WebSocket } from "ws";
+
+import { socketWritableLengthExceedsCap, socketWritableLengthOrOverflow } from "../../src/socket_writable_length.cjs";
 
 import type { ProxyConfig } from "./config";
 import type { ProxyServerMetrics } from "./metrics";
 import { formatError, log } from "./logger";
-import { wsCloseSafe } from "./wsClose";
+import { wsCloseSafe, wsIsOpenSafe } from "./wsClose";
+import { formatOneLineUtf8 } from "./text";
 
 export async function handleTcpRelay(
   ws: WebSocket,
@@ -16,37 +18,63 @@ export async function handleTcpRelay(
   config: ProxyConfig,
   metrics: ProxyServerMetrics
 ): Promise<void> {
-  if (ws.readyState !== ws.OPEN) return;
-
-  const wsStream = createWebSocketStream(ws, { highWaterMark: config.wsStreamHighWaterMarkBytes });
-
-  metrics.connectionActiveInc("tcp");
+  if (!wsIsOpenSafe(ws)) return;
 
   let bytesIn = 0;
   let bytesOut = 0;
   let closed = false;
+  let active = false;
+  let pausedWsReadForTcpBackpressure = false;
+  let pausedTcpReadForWsBackpressure = false;
 
-  const tcpSocket = net.createConnection({ host: address, port, family });
-  tcpSocket.setNoDelay(true);
+  const createConnection = config.createTcpConnection ?? net.createConnection;
+  let wsStream: ReturnType<typeof createWebSocketStream>;
+  try {
+    wsStream = createWebSocketStream(ws, { highWaterMark: config.wsStreamHighWaterMarkBytes });
+  } catch (err) {
+    metrics.incConnectionError("error");
+    wsCloseSafe(ws, 1011, "WebSocket stream error");
+    log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+    return;
+  }
 
-  const connectTimer = setTimeout(() => {
-    tcpSocket.destroy(new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
-  }, config.connectTimeoutMs);
-  connectTimer.unref();
+  let tcpSocket: net.Socket | null = null;
+  let connectTimer: NodeJS.Timeout | null = null;
 
   const closeBoth = (why: string, wsCode: number, wsReason: string) => {
     if (closed) return;
     closed = true;
-    metrics.connectionActiveDec("tcp");
+    if (active) {
+      active = false;
+      metrics.connectionActiveDec("tcp");
+    }
 
-    clearTimeout(connectTimer);
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+    }
 
-    if (ws.readyState === ws.OPEN) {
+    const wsWasOpen = wsIsOpenSafe(ws);
+    if (wsWasOpen) {
       wsCloseSafe(ws, wsCode, wsReason);
     }
 
-    tcpSocket.destroy();
-    wsStream.destroy();
+    if (tcpSocket) {
+      try {
+        tcpSocket.destroy();
+      } catch {
+        // ignore
+      }
+    }
+    // Avoid destroying the wrapper stream before we've had a chance to send a close frame.
+    // If the websocket isn't open, tear it down immediately to avoid leaks.
+    if (!wsWasOpen) {
+      try {
+        wsStream.destroy();
+      } catch {
+        // ignore
+      }
+    }
 
     log("info", "conn_close", {
       connId,
@@ -59,23 +87,31 @@ export async function handleTcpRelay(
     });
   };
 
-  ws.once("close", (code, reason) => {
-    if (closed) return;
-    closed = true;
-    metrics.connectionActiveDec("tcp");
-    clearTimeout(connectTimer);
-    tcpSocket.destroy();
-    wsStream.destroy();
+  try {
+    tcpSocket = createConnection({ host: address, port, family });
+    tcpSocket.setNoDelay(true);
+  } catch (err) {
+    closeBoth("tcp_create_error", 1011, "TCP error");
+    metrics.incConnectionError("error");
+    log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+    return;
+  }
 
-    log("info", "conn_close", {
-      connId,
-      proto: "tcp",
-      why: "ws_close",
-      bytesIn,
-      bytesOut,
-      wsCode: code,
-      wsReason: reason.toString()
-    });
+  const socket = tcpSocket;
+  active = true;
+  metrics.connectionActiveInc("tcp");
+
+  connectTimer = setTimeout(() => {
+    try {
+      socket.destroy(new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
+    } catch {
+      // ignore
+    }
+  }, config.connectTimeoutMs);
+  connectTimer.unref();
+
+  ws.once("close", (code, reason) => {
+    closeBoth("ws_close", code, formatOneLineUtf8(reason, 123));
   });
 
   ws.once("error", (err) => {
@@ -84,24 +120,24 @@ export async function handleTcpRelay(
     log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
   });
 
-  tcpSocket.once("connect", () => {
-    clearTimeout(connectTimer);
+  socket.once("connect", () => {
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+    }
   });
 
-  tcpSocket.once("error", (err) => {
+  socket.once("error", (err) => {
     closeBoth("tcp_error", 1011, "TCP error");
     metrics.incConnectionError("error");
     log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
   });
 
-  tcpSocket.once("close", () => {
+  socket.once("close", () => {
     if (!closed) {
       closeBoth("tcp_close", 1000, "TCP closed");
     }
   });
-
-  const fromWs = new PassThrough();
-  const fromTcp = new PassThrough();
 
   wsStream.once("error", (err) => {
     closeBoth("ws_stream_error", 1011, "WebSocket stream error");
@@ -109,28 +145,103 @@ export async function handleTcpRelay(
     log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
   });
 
-  fromWs.once("error", (err) => {
-    closeBoth("ws_to_tcp_stream_error", 1011, "Stream error");
+  const pauseWsRead = () => {
+    if (pausedWsReadForTcpBackpressure) return;
+    pausedWsReadForTcpBackpressure = true;
+    try {
+      wsStream.pause();
+    } catch {
+      // ignore
+    }
+  };
+
+  const resumeWsRead = () => {
+    if (!pausedWsReadForTcpBackpressure) return;
+    pausedWsReadForTcpBackpressure = false;
+    try {
+      wsStream.resume();
+    } catch {
+      // ignore
+    }
+  };
+
+  const pauseTcpRead = () => {
+    if (pausedTcpReadForWsBackpressure) return;
+    pausedTcpReadForWsBackpressure = true;
+    try {
+      socket.pause();
+    } catch {
+      // ignore
+    }
+  };
+
+  const resumeTcpRead = () => {
+    if (!pausedTcpReadForWsBackpressure) return;
+    pausedTcpReadForWsBackpressure = false;
+    try {
+      socket.resume();
+    } catch {
+      // ignore
+    }
+  };
+
+  const enforceTcpBackpressureCap = () => {
+    const cap = config.maxTcpBufferedBytesPerConn;
+    if (!socketWritableLengthExceedsCap(socket, cap)) return;
+    const buffered = socketWritableLengthOrOverflow(socket, cap);
+    closeBoth("tcp_buffer_overflow", 1011, "TCP buffered too much data");
     metrics.incConnectionError("error");
-    log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+    log("warn", "connect_error", {
+      connId,
+      proto: "tcp",
+      err: formatError(new Error(`tcp writableLength exceeded cap (${buffered} > ${cap})`))
+    });
+  };
+
+  socket.on("drain", () => {
+    if (closed) return;
+    resumeWsRead();
   });
 
-  fromTcp.once("error", (err) => {
-    closeBoth("tcp_to_ws_stream_error", 1011, "Stream error");
-    metrics.incConnectionError("error");
-    log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+  wsStream.on("drain", () => {
+    if (closed) return;
+    resumeTcpRead();
   });
 
-  fromWs.on("data", (chunk) => {
-    bytesIn += chunk.length;
-    metrics.addBytesIn("tcp", chunk.length);
+  wsStream.on("data", (chunk) => {
+    if (closed) return;
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any);
+    bytesIn += buf.length;
+    metrics.addBytesIn("tcp", buf.length);
+
+    let ok = false;
+    try {
+      ok = socket.write(buf);
+    } catch (err) {
+      closeBoth("tcp_write_error", 1011, "TCP error");
+      metrics.incConnectionError("error");
+      log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+      return;
+    }
+    enforceTcpBackpressureCap();
+    if (!ok) pauseWsRead();
   });
-  fromTcp.on("data", (chunk) => {
+
+  socket.on("data", (chunk) => {
+    if (closed) return;
     bytesOut += chunk.length;
     metrics.addBytesOut("tcp", chunk.length);
-  });
 
-  wsStream.pipe(fromWs).pipe(tcpSocket);
-  tcpSocket.pipe(fromTcp).pipe(wsStream);
+    let ok = false;
+    try {
+      ok = wsStream.write(chunk);
+    } catch (err) {
+      closeBoth("ws_stream_write_error", 1011, "WebSocket stream error");
+      metrics.incConnectionError("error");
+      log("error", "connect_error", { connId, proto: "tcp", err: formatError(err) });
+      return;
+    }
+    if (!ok) pauseTcpRead();
+  });
 }
 

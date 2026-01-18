@@ -11,7 +11,9 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { formatOneLineError, formatOneLineUtf8 } from "./src/text.js";
+import { isExpectedStreamAbort } from "../src/stream_abort.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -344,6 +346,9 @@ const server = http.createServer((req, res) => {
       res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
       res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
     }
+    res.setHeader("Content-Encoding", "identity");
+    res.setHeader("Cache-Control", "no-store, no-transform");
+    res.setHeader("Content-Length", "0");
     res.end();
     return;
   }
@@ -465,31 +470,41 @@ const server = http.createServer((req, res) => {
         contentRange: `bytes ${start}-${endInclusive}/${stat.size}`,
       });
       const stream = fs.createReadStream(filePath, { start, end: endInclusive });
-      stream.once("error", (e) => {
+      void pipeline(stream, res).catch((e) => {
+        if (isExpectedStreamAbort(e)) return;
         logServerError("range_server: stream error", e);
+        if (res.writableEnded) return;
         if (res.headersSent) {
-          res.destroy();
+          try {
+            res.destroy();
+          } catch {
+            // ignore
+          }
           return;
         }
         clearHeaders(res);
         sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
       });
-      stream.pipe(res);
       return;
     }
 
     sendHeaders(res, stat, { contentLength: stat.size, statusCode: 200 });
     const stream = fs.createReadStream(filePath);
-    stream.once("error", (e) => {
+    void pipeline(stream, res).catch((e) => {
+      if (isExpectedStreamAbort(e)) return;
       logServerError("range_server: stream error", e);
+      if (res.writableEnded) return;
       if (res.headersSent) {
-        res.destroy();
+        try {
+          res.destroy();
+        } catch {
+          // ignore
+        }
         return;
       }
       clearHeaders(res);
       sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
     });
-    stream.pipe(res);
   });
 });
 

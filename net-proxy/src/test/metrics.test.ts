@@ -466,6 +466,49 @@ test("proxy /metrics counts connection failures (tcp)", async () => {
   }
 });
 
+test("proxy /metrics does not leak active tcp connections when createTcpConnection throws", async () => {
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    createTcpConnection: () => {
+      throw new Error("boom");
+    }
+  });
+  const addr = proxy.server.address();
+  assert.ok(addr && typeof addr !== "string");
+
+  try {
+    const origin = `http://127.0.0.1:${addr.port}`;
+    const { body: metrics0Body } = await fetchText(`${origin}/metrics`);
+    const err0 = parseMetric(metrics0Body, "net_proxy_connection_errors_total", { kind: "error" });
+    const conns0 = parseMetric(metrics0Body, "net_proxy_connections_active", { proto: "tcp" });
+    assert.notEqual(err0, null, "missing error counter");
+    assert.notEqual(conns0, null, "missing tcp connections gauge");
+
+    const ws = await openWebSocket(`ws://127.0.0.1:${addr.port}/tcp?v=1&host=127.0.0.1&port=80`);
+    const closed = await waitForClose(ws);
+    assert.equal(closed.code, 1011);
+
+    const deadline = Date.now() + 2_000;
+    let err: bigint | null = null;
+    let conns: bigint | null = null;
+    while (Date.now() < deadline) {
+      const { body } = await fetchText(`${origin}/metrics`);
+      err = parseMetric(body, "net_proxy_connection_errors_total", { kind: "error" });
+      conns = parseMetric(body, "net_proxy_connections_active", { proto: "tcp" });
+      if (err !== null && err0 !== null && err >= err0 + 1n && conns !== null && conns0 !== null && conns === conns0) {
+        break;
+      }
+      await sleep(25);
+    }
+    assert.ok(err0 !== null && err !== null && err >= err0 + 1n, "error counter did not increment");
+    assert.equal(conns, conns0);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("proxy /metrics counts tcp-mux streams and bytes", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });

@@ -2,8 +2,16 @@ import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
+import { wsCloseSafe, wsSendSafe } from "../../scripts/_shared/ws_safe.js";
 import WebSocket from "../../tools/minimal_ws.js";
-import { decodeL2Message, encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TYPE_FRAME } from "../../web/src/shared/l2TunnelProtocol.js";
+import {
+  decodeL2Message,
+  encodeL2Frame,
+  encodePong,
+  L2_TUNNEL_SUBPROTOCOL,
+  L2_TUNNEL_TYPE_FRAME,
+  L2_TUNNEL_TYPE_PING,
+} from "../../web/src/shared/l2TunnelProtocol.js";
 
 import {
   TCP_FLAGS,
@@ -32,16 +40,6 @@ function wrapL2TunnelEthernetFrame(ethernetFrame) {
   // historically used Buffer payloads throughout (and `tools/minimal_ws.js` uses
   // Buffer internally).
   return Buffer.from(encodeL2Frame(ethernetFrame));
-}
-
-function unwrapL2TunnelEthernetFrame(msg) {
-  try {
-    const decoded = decodeL2Message(msg);
-    if (decoded.type !== L2_TUNNEL_TYPE_FRAME) return null;
-    return Buffer.isBuffer(decoded.payload) ? decoded.payload : Buffer.from(decoded.payload);
-  } catch {
-    return null;
-  }
 }
 
 class FrameQueue {
@@ -184,12 +182,27 @@ async function runL2TunnelProbe({
 
   ws.on("message", (msg) => {
     const buf = Buffer.isBuffer(msg) ? msg : Buffer.from(msg);
-    const eth = unwrapL2TunnelEthernetFrame(buf);
-    if (eth) frames.push(eth);
+    let decoded;
+    try {
+      decoded = decodeL2Message(buf);
+    } catch {
+      return;
+    }
+
+    if (decoded.type === L2_TUNNEL_TYPE_FRAME) {
+      frames.push(Buffer.from(decoded.payload));
+      return;
+    }
+
+    if (decoded.type === L2_TUNNEL_TYPE_PING) {
+      wsSendSafe(ws, encodePong(decoded.payload));
+    }
   });
 
   function sendEthernetFrame(frameBuf) {
-    ws.send(wrapL2TunnelEthernetFrame(frameBuf));
+    if (!wsSendSafe(ws, wrapL2TunnelEthernetFrame(frameBuf))) {
+      throw new Error("Failed to send L2 ethernet frame");
+    }
   }
 
   async function waitFor(predicate, timeoutMs = 2000) {
@@ -565,7 +578,7 @@ async function runL2TunnelProbe({
   const echoPayload = Buffer.concat(received, receivedLen).subarray(0, payload.length);
   const throughputMbps = (payload.length * 8) / (txDurationMs / 1000) / 1_000_000;
 
-  ws.close();
+  wsCloseSafe(ws);
 
   return {
     dhcp: { guestIp, gatewayIp, dnsIp },

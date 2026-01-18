@@ -47,6 +47,7 @@ export type Config = Readonly<{
   TCP_PROXY_MAX_CONNECTIONS: number;
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: number;
   TCP_PROXY_MAX_MESSAGE_BYTES: number;
+  TCP_PROXY_MAX_TCP_BUFFER_BYTES: number;
   TCP_PROXY_CONNECT_TIMEOUT_MS: number;
   TCP_PROXY_IDLE_TIMEOUT_MS: number;
 
@@ -162,6 +163,7 @@ const envSchema = z.object({
   TCP_PROXY_MAX_CONNECTIONS: z.coerce.number().int().min(1).default(64),
   TCP_PROXY_MAX_CONNECTIONS_PER_IP: z.coerce.number().int().min(0).default(0),
   TCP_PROXY_MAX_MESSAGE_BYTES: z.coerce.number().int().min(1).default(1024 * 1024),
+  TCP_PROXY_MAX_TCP_BUFFER_BYTES: z.coerce.number().int().min(1).default(10 * 1024 * 1024),
   TCP_PROXY_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(1).default(10_000),
   TCP_PROXY_IDLE_TIMEOUT_MS: z.coerce.number().int().min(1).default(300_000),
 
@@ -338,6 +340,7 @@ export function loadConfig(env: Env = process.env): Config {
     TCP_PROXY_MAX_CONNECTIONS: raw.TCP_PROXY_MAX_CONNECTIONS,
     TCP_PROXY_MAX_CONNECTIONS_PER_IP: raw.TCP_PROXY_MAX_CONNECTIONS_PER_IP,
     TCP_PROXY_MAX_MESSAGE_BYTES: raw.TCP_PROXY_MAX_MESSAGE_BYTES,
+    TCP_PROXY_MAX_TCP_BUFFER_BYTES: raw.TCP_PROXY_MAX_TCP_BUFFER_BYTES,
     TCP_PROXY_CONNECT_TIMEOUT_MS: raw.TCP_PROXY_CONNECT_TIMEOUT_MS,
     TCP_PROXY_IDLE_TIMEOUT_MS: raw.TCP_PROXY_IDLE_TIMEOUT_MS,
 

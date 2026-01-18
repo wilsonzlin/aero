@@ -1,5 +1,6 @@
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../shared/udpRelayProtocol";
 import type { NetTracer } from "./net_tracer";
+import { dcSendSafe } from "./rtcSafe";
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
@@ -163,14 +164,18 @@ export class WebSocketUdpProxyClient {
   private ws: WebSocket | null = null;
   private ready = false;
   private pending: Uint8Array[] = [];
+  private readonly proxyBaseUrl: string;
+  private readonly sink: UdpProxyEventSink;
   private readonly opts: WebSocketUdpProxyClientOptions;
   private readonly tracer?: NetTracer;
 
   constructor(
-    private readonly proxyBaseUrl: string,
-    private readonly sink: UdpProxyEventSink,
+    proxyBaseUrl: string,
+    sink: UdpProxyEventSink,
     optsOrAuthToken: WebSocketUdpProxyClientOptions | string = {},
   ) {
+    this.proxyBaseUrl = proxyBaseUrl;
+    this.sink = sink;
     this.opts = typeof optsOrAuthToken === "string" ? { auth: { token: optsOrAuthToken } } : optsOrAuthToken;
     this.tracer = this.opts.tracer;
   }
@@ -390,13 +395,17 @@ export class WebSocketUdpProxyClient {
  * likely have an existing signaling channel for other purposes.
  */
 export class WebRtcUdpProxyClient {
+  private readonly channel: RTCDataChannel;
+  private readonly sink: UdpProxyEventSink;
   private readonly tracer?: NetTracer;
 
   constructor(
-    private readonly channel: RTCDataChannel,
-    private readonly sink: UdpProxyEventSink,
+    channel: RTCDataChannel,
+    sink: UdpProxyEventSink,
     opts: { tracer?: NetTracer } = {},
   ) {
+    this.channel = channel;
+    this.sink = sink;
     this.tracer = opts.tracer;
     channel.binaryType = "arraybuffer";
     channel.onmessage = (evt) => {
@@ -455,14 +464,9 @@ export class WebRtcUdpProxyClient {
   }
 
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
-    if (this.channel.readyState !== "open") return;
     try {
       const pkt = encodeDatagram(srcPort, dstIp, dstPort, payload);
-      try {
-        this.channel.send(pkt);
-      } catch {
-        return;
-      }
+      if (!dcSendSafe(this.channel, pkt)) return;
 
       // NetTracer's UDP pseudo-header currently only supports IPv4.
       // Skip tracing IPv6 datagrams until the format is extended.

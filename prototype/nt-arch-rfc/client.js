@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import WebSocket from "../../tools/minimal_ws.js";
+import { wsCloseSafe, wsSendSafe } from "../../scripts/_shared/ws_safe.js";
 
 import {
   TCP_FLAGS,
@@ -113,12 +114,14 @@ async function runNetworkingProbe({
     }
 
     if (decoded.type === L2_TUNNEL_TYPE_PING) {
-      ws.send(encodePong(decoded.payload));
+      wsSendSafe(ws, encodePong(decoded.payload));
     }
   });
 
   function sendFrame(frameBuf) {
-    ws.send(encodeL2Frame(frameBuf));
+    if (!wsSendSafe(ws, encodeL2Frame(frameBuf))) {
+      throw new Error("Failed to send L2 frame");
+    }
   }
 
   async function waitFor(predicate, timeoutMs = 2000) {
@@ -385,7 +388,7 @@ async function runNetworkingProbe({
   const echoPayload = Buffer.concat(received, receivedLen).subarray(0, payload.length);
   const throughputMbps = (payload.length * 8) / (txDurationMs / 1000) / 1_000_000;
 
-  ws.close();
+  wsCloseSafe(ws);
 
   return {
     arp: { gatewayMac: arpReply.senderMac.toString("hex") },

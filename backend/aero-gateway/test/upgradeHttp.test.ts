@@ -12,6 +12,7 @@ test("respondUpgradeHttp emits a single blank line before the body", async () =>
   respondUpgradeHttp(socket, 400, "bad");
 
   const text = Buffer.concat(chunks).toString("utf8");
+  assert.ok(text.includes("\r\nCache-Control: no-store\r\n"));
   assert.ok(text.includes("\r\n\r\nbad\n"));
   assert.ok(!text.includes("\r\n\r\n\r\nbad\n"));
 });

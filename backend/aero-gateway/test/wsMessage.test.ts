@@ -6,19 +6,24 @@ import { WsMessageReceiver } from "../src/routes/wsMessage.js";
 function encodeWsFrameTest(opcode: number, payload: Buffer, fin: boolean): Buffer {
   const finOpcode = (fin ? 0x80 : 0x00) | (opcode & 0x0f);
   const length = payload.length;
+  const maskKey = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+  const masked = Buffer.allocUnsafe(payload.length);
+  for (let i = 0; i < payload.length; i++) masked[i] = payload[i]! ^ maskKey[i % 4]!;
   if (length < 126) {
-    const out = Buffer.allocUnsafe(2 + length);
+    const out = Buffer.allocUnsafe(2 + 4 + length);
     out[0] = finOpcode;
-    out[1] = length;
-    payload.copy(out, 2);
+    out[1] = 0x80 | length;
+    maskKey.copy(out, 2);
+    masked.copy(out, 6);
     return out;
   }
   if (length < 65536) {
-    const out = Buffer.allocUnsafe(4 + length);
+    const out = Buffer.allocUnsafe(4 + 4 + length);
     out[0] = finOpcode;
-    out[1] = 126;
+    out[1] = 0x80 | 126;
     out.writeUInt16BE(length, 2);
-    payload.copy(out, 4);
+    maskKey.copy(out, 4);
+    masked.copy(out, 8);
     return out;
   }
   throw new Error("test helper only supports payload < 65536");
@@ -77,6 +82,40 @@ test("WsMessageReceiver replies to ping with pong (same payload)", async () => {
   assert.deepEqual([...sent[0]!.payload], [1, 2, 3]);
 });
 
+test("WsMessageReceiver closes with protocol error on fragmented ping (fin=false)", async () => {
+  let protocolErr = 0;
+  const receiver = new WsMessageReceiver({
+    maxMessageBytes: 1024,
+    onMessage: () => assert.fail("unexpected message"),
+    onClose: () => assert.fail("unexpected close"),
+    sendWsFrame: () => assert.fail("unexpected send"),
+    closeWithProtocolError: () => {
+      protocolErr += 1;
+    },
+    closeWithMessageTooLarge: () => assert.fail("unexpected too-large"),
+  });
+
+  receiver.push(encodeWsFrameTest(0x9, Buffer.from([1, 2, 3]), false));
+  assert.equal(protocolErr, 1);
+});
+
+test("WsMessageReceiver closes with protocol error on oversized ping payload (>125 bytes)", async () => {
+  let protocolErr = 0;
+  const receiver = new WsMessageReceiver({
+    maxMessageBytes: 1024,
+    onMessage: () => assert.fail("unexpected message"),
+    onClose: () => assert.fail("unexpected close"),
+    sendWsFrame: () => assert.fail("unexpected send"),
+    closeWithProtocolError: () => {
+      protocolErr += 1;
+    },
+    closeWithMessageTooLarge: () => assert.fail("unexpected too-large"),
+  });
+
+  receiver.push(encodeWsFrameTest(0x9, Buffer.alloc(126), true));
+  assert.equal(protocolErr, 1);
+});
+
 test("WsMessageReceiver echoes close frames and invokes onClose", async () => {
   const sent: Array<{ opcode: number; payload: Buffer }> = [];
   let closed = 0;
@@ -114,9 +153,9 @@ test("WsMessageReceiver closes with message-too-large when fragments exceed maxM
   });
 
   // First fragment: 4 bytes.
-  receiver.push(Buffer.from([0x02, 0x04, 0x11, 0x22, 0x33, 0x44])); // opcode=2 fin=0 len=4
+  receiver.push(encodeWsFrameTest(0x2, Buffer.from([0x11, 0x22, 0x33, 0x44]), false));
   // Continuation fragment: +2 bytes => 6 total > 5.
-  receiver.push(Buffer.from([0x80, 0x02, 0x55, 0x66])); // opcode=0 fin=1 len=2
+  receiver.push(encodeWsFrameTest(0x0, Buffer.from([0x55, 0x66]), true));
 
   assert.equal(tooLarge, 1);
 });
@@ -134,7 +173,7 @@ test("WsMessageReceiver closes with protocol error on unexpected continuation", 
     closeWithMessageTooLarge: () => assert.fail("unexpected too-large"),
   });
 
-  receiver.push(Buffer.from([0x80, 0x00])); // fin=1 opcode=0 len=0 (continuation without start)
+  receiver.push(encodeWsFrameTest(0x0, Buffer.alloc(0), true)); // continuation without start
   assert.equal(protocolErr, 1);
 });
 

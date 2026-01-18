@@ -14,6 +14,8 @@ const MAX_TCP_CONNECTIONS_TOTAL = 100_000;
 const MAX_WS_CONNECTIONS_PER_IP = 10_000;
 const MAX_CONNECTS_PER_MINUTE = 1_000_000;
 const MAX_BANDWIDTH_BPS = 1_000_000_000;
+const MAX_TCP_BUFFERED_BYTES_PER_CONN = 256 * 1024 * 1024;
+const MAX_WS_BACKPRESSURE_WATERMARK_BYTES = 256 * 1024 * 1024;
 
 const DEFAULTS = Object.freeze({
   host: "0.0.0.0",
@@ -23,6 +25,13 @@ const DEFAULTS = Object.freeze({
   maxTcpConnectionsTotal: 512,
   maxWsConnectionsPerIp: 4,
   bandwidthBytesPerSecond: 5_000_000,
+  // Bound attacker-controlled buffering in `net.Socket.write(...)` when the remote stops reading.
+  // Default: 2 seconds worth of bandwidth at the default rate.
+  maxTcpBufferedBytesPerConn: 10_000_000,
+  // Bound attacker-controlled buffering in `ws.send(...)` when the client stops reading.
+  // Default: 8MiB high watermark / 4MiB low watermark (hysteresis).
+  wsBackpressureHighWatermarkBytes: 8 * 1024 * 1024,
+  wsBackpressureLowWatermarkBytes: 4 * 1024 * 1024,
   connectsPerMinute: 60,
   maxWsMessageBytes: 1_048_576,
   logLevel: "info",
@@ -165,6 +174,22 @@ export function resolveConfig(overrides = {}, env = process.env) {
   const allowedOrigins =
     overrides.allowedOrigins ?? parseCsv(env.AERO_PROXY_ALLOWED_ORIGINS, "AERO_PROXY_ALLOWED_ORIGINS");
 
+  const wsBackpressureHighWatermarkBytes =
+    overrides.wsBackpressureHighWatermarkBytes ??
+    parseNumber(env.AERO_PROXY_WS_BACKPRESSURE_HIGH_WATERMARK_BYTES, DEFAULTS.wsBackpressureHighWatermarkBytes, {
+      min: 1,
+      max: MAX_WS_BACKPRESSURE_WATERMARK_BYTES,
+    });
+
+  const defaultWsLow = Math.max(1, Math.floor(wsBackpressureHighWatermarkBytes / 2));
+  const wsBackpressureLowRaw =
+    overrides.wsBackpressureLowWatermarkBytes ??
+    parseNumber(env.AERO_PROXY_WS_BACKPRESSURE_LOW_WATERMARK_BYTES, DEFAULTS.wsBackpressureLowWatermarkBytes, {
+      min: 1,
+      max: MAX_WS_BACKPRESSURE_WATERMARK_BYTES,
+    });
+  const wsBackpressureLowWatermarkBytes = Math.min(wsBackpressureHighWatermarkBytes, wsBackpressureLowRaw ?? defaultWsLow);
+
   return Object.freeze({
     host: overrides.host ?? env.AERO_PROXY_HOST ?? DEFAULTS.host,
     port: overrides.port ?? parseNumber(env.AERO_PROXY_PORT, DEFAULTS.port, { min: 0, max: MAX_PORT }),
@@ -186,6 +211,14 @@ export function resolveConfig(overrides = {}, env = process.env) {
     bandwidthBytesPerSecond:
       overrides.bandwidthBytesPerSecond ??
       parseNumber(env.AERO_PROXY_BANDWIDTH_BPS, DEFAULTS.bandwidthBytesPerSecond, { min: 0, max: MAX_BANDWIDTH_BPS }),
+    maxTcpBufferedBytesPerConn:
+      overrides.maxTcpBufferedBytesPerConn ??
+      parseNumber(env.AERO_PROXY_MAX_TCP_BUFFER_BYTES, DEFAULTS.maxTcpBufferedBytesPerConn, {
+        min: 1,
+        max: MAX_TCP_BUFFERED_BYTES_PER_CONN,
+      }),
+    wsBackpressureHighWatermarkBytes,
+    wsBackpressureLowWatermarkBytes,
     connectsPerMinute:
       overrides.connectsPerMinute ??
       parseNumber(env.AERO_PROXY_CONNECTS_PER_MINUTE, DEFAULTS.connectsPerMinute, { min: 0, max: MAX_CONNECTS_PER_MINUTE }),

@@ -4,6 +4,7 @@ import {
   type ConnectRelaySignalingOptions,
   type RelaySignalingMode,
 } from "./webrtcRelaySignalingClient";
+import { dcCloseSafe, pcCloseSafe } from "./rtcSafe";
 
 export type UdpRelaySignalingMode = RelaySignalingMode;
 
@@ -28,12 +29,8 @@ export async function connectUdpRelay(
     udp,
     pc,
     close: () => {
-      try {
-        dc.close();
-      } catch {
-        // Ignore.
-      }
-      pc.close();
+      dcCloseSafe(dc);
+      pcCloseSafe(pc);
     },
   };
 }

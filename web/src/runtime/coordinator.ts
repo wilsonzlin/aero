@@ -87,6 +87,7 @@ import {
 } from "../ipc/cursor_state";
 import { formatOneLineError, formatOneLineUtf8, truncateUtf8 } from "../text";
 import { DEFAULT_ERROR_BYTE_LIMITS } from "../errors/serialize";
+import { isErrorInstance } from "../errors/errorProps";
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 const MAX_PENDING_AEROGPU_SUBMISSIONS = 256;
 
@@ -1430,7 +1431,7 @@ export class WorkerCoordinator {
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceStatusRequests.delete(requestId);
-        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
+        reject(isErrorInstance(err) ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -1461,7 +1462,7 @@ export class WorkerCoordinator {
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceRequests.delete(requestId);
-        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
+        reject(isErrorInstance(err) ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -1492,7 +1493,7 @@ export class WorkerCoordinator {
       } catch (err) {
         clearTimeout(pending.timeout);
         this.pendingNetTraceRequests.delete(requestId);
-        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
+        reject(isErrorInstance(err) ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }
@@ -2062,7 +2063,7 @@ export class WorkerCoordinator {
         }
       } catch (err) {
         cleanup();
-        reject(err instanceof Error ? err : new Error(formatOneLineError(err, 512)));
+        reject(isErrorInstance(err) ? err : new Error(formatOneLineError(err, 512)));
       }
     });
   }

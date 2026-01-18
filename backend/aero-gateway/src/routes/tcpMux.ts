@@ -4,12 +4,22 @@ import type { Duplex } from "node:stream";
 import {
   TCP_MUX_SUBPROTOCOL,
 } from "../protocol/tcpMux.js";
+import { tryGetStringProp } from "../../../../src/safe_props.js";
 import { validateWsUpgradePolicy } from "./tcpPolicy.js";
 import { enforceUpgradeRequestUrlLimit, resolveUpgradeRequestUrl, respondUpgradeHttp } from "./upgradeHttp.js";
 import { writeWebSocketHandshake } from "./wsHandshake.js";
 import { sanitizeWebSocketHandshakeKey, validateWebSocketHandshakeRequest } from "./wsUpgradeRequest.js";
 import { hasWebSocketSubprotocol } from "./wsSubprotocol.js";
 import { WebSocketTcpMuxBridge, type TcpMuxBridgeOptions } from "./tcpMuxBridge.js";
+
+function isSocketDestroyed(socket: Duplex): boolean {
+  try {
+    return (socket as unknown as { destroyed?: unknown }).destroyed === true;
+  } catch {
+    // Fail closed: if state is not observable, treat it as destroyed.
+    return true;
+  }
+}
 
 type TcpMuxUpgradeOptions = TcpMuxBridgeOptions &
   Readonly<{
@@ -34,7 +44,7 @@ export function handleTcpMuxUpgrade(
   head: Buffer,
   opts: TcpMuxUpgradeOptions = {},
 ): void {
-  const rawUrl = req.url ?? "";
+  const rawUrl = tryGetStringProp(req, "url") ?? "";
   if (!enforceUpgradeRequestUrlLimit(rawUrl, socket)) return;
 
   let handshakeKey = sanitizeWebSocketHandshakeKey(opts.handshakeKey);
@@ -72,6 +82,10 @@ export function handleTcpMuxUpgrade(
   }
 
   writeWebSocketHandshake(socket, { key: handshakeKey, protocol: TCP_MUX_SUBPROTOCOL });
+
+  // `writeWebSocketHandshake` destroys the socket if `write(...)` throws. Avoid continuing the
+  // upgrade flow if the socket is already torn down.
+  if (isSocketDestroyed(socket)) return;
 
   if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
     socket.setNoDelay(true);

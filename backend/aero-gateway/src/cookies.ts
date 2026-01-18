@@ -14,6 +14,23 @@ export interface CookieOptions {
   secure?: boolean;
 }
 
+function tryGetHeader(res: ServerResponse, name: string): unknown {
+  try {
+    return res.getHeader(name);
+  } catch {
+    return undefined;
+  }
+}
+
+function trySetHeader(res: ServerResponse, name: string, value: string | string[]): boolean {
+  try {
+    res.setHeader(name, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function isRequestSecure(req: IncomingMessage, opts: { trustProxy: boolean }): boolean {
   const socketMaybeTls = req.socket as unknown as { encrypted?: boolean };
   if (socketMaybeTls.encrypted) return true;
@@ -86,25 +103,25 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
 }
 
 export function appendSetCookieHeader(res: ServerResponse, cookie: string): void {
-  const current = res.getHeader('Set-Cookie');
+  const current = tryGetHeader(res, 'Set-Cookie');
   if (current === undefined) {
-    res.setHeader('Set-Cookie', cookie);
+    trySetHeader(res, 'Set-Cookie', cookie);
     return;
   }
 
   if (typeof current === 'string') {
-    res.setHeader('Set-Cookie', [current, cookie]);
+    trySetHeader(res, 'Set-Cookie', [current, cookie]);
     return;
   }
   if (Array.isArray(current)) {
     const cookies = current.filter((v): v is string => typeof v === 'string');
     cookies.push(cookie);
-    res.setHeader('Set-Cookie', cookies);
+    trySetHeader(res, 'Set-Cookie', cookies);
     return;
   }
 
   // Should not happen for Set-Cookie, but don't stringify unexpected header types.
-  res.setHeader('Set-Cookie', cookie);
+  trySetHeader(res, 'Set-Cookie', cookie);
 }
 
 function getCookieValueFromHeaderString(raw: string, name: string): string | undefined {

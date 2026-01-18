@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import net from "node:net";
 import { WebSocket } from "ws";
 import { startProxyServer } from "../server";
@@ -511,6 +511,211 @@ test("tcp-mux enforces per-stream buffered bytes with STREAM_BUFFER_OVERFLOW", a
     }
     await proxy.close();
     await echoServer.close();
+  }
+});
+
+test("tcp-mux enforces socket-level buffering with STREAM_BUFFER_OVERFLOW", async () => {
+  const echoServer = await startTcpEchoServer();
+
+  let createdResolve: (() => void) | null = null;
+  const created = new Promise<void>((resolve) => {
+    createdResolve = resolve;
+  });
+
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    tcpMuxMaxStreamBufferedBytes: 32,
+    createTcpConnection: () => {
+      class FakeTcpSocket extends EventEmitter {
+        writableLength = 0;
+        setNoDelay() {}
+        pause() {}
+        resume() {}
+        write(chunk: unknown) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any);
+          this.writableLength += buf.length;
+          return true;
+        }
+        end() {
+          this.destroy();
+        }
+        destroy() {
+          queueMicrotask(() => this.emit("close"));
+        }
+      }
+
+      createdResolve?.();
+      const socket = new FakeTcpSocket();
+      queueMicrotask(() => socket.emit("connect"));
+      return socket as unknown as net.Socket;
+    },
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    ws.send(open);
+
+    await Promise.race([
+      created,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000)),
+    ]);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("x".repeat(1024), "utf8")));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW);
+    assert.equal(err.message, "stream buffered too much data");
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("tcp-mux enforces STREAM_BUFFER_OVERFLOW if socket.writableLength getter throws", async () => {
+  const echoServer = await startTcpEchoServer();
+
+  let createdResolve: (() => void) | null = null;
+  const created = new Promise<void>((resolve) => {
+    createdResolve = resolve;
+  });
+
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    tcpMuxMaxStreamBufferedBytes: 32,
+    createTcpConnection: () => {
+      class FakeTcpSocket extends EventEmitter {
+        setNoDelay() {}
+        pause() {}
+        resume() {}
+        get writableLength() {
+          throw new Error("boom");
+        }
+        write(_chunk: unknown) {
+          return true;
+        }
+        end() {
+          this.destroy();
+        }
+        destroy() {
+          queueMicrotask(() => this.emit("close"));
+        }
+      }
+
+      createdResolve?.();
+      const socket = new FakeTcpSocket();
+      queueMicrotask(() => socket.emit("connect"));
+      return socket as unknown as net.Socket;
+    },
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    ws.send(open);
+
+    await Promise.race([
+      created,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000)),
+    ]);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("a")));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW);
+    assert.equal(err.message, "stream buffered too much data");
+
+    // Ensure the mux WS is still alive.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([1])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
+
+test("tcp-mux returns DIAL_FAILED when createTcpConnection throws (and keeps the websocket alive)", async () => {
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    createTcpConnection: () => {
+      throw new Error("boom");
+    },
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: 80 })));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.DIAL_FAILED);
+
+    // Ensure the mux WS is still alive.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([4])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
   }
 });
 

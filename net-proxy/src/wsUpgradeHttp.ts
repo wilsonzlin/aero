@@ -2,40 +2,40 @@ import type { Duplex } from "node:stream";
 
 import { formatOneLineUtf8 } from "./text";
 
+import { encodeHttpTextResponse } from "../../src/http_text_response.cjs";
+import { endThenDestroyQuietly } from "../../src/socket_end_then_destroy.cjs";
+
 const MAX_UPGRADE_ERROR_MESSAGE_BYTES = 512;
 
 function httpStatusText(status: number): string {
   switch (status) {
+    case 500:
+      return "Internal Server Error";
     case 400:
       return "Bad Request";
+    case 401:
+      return "Unauthorized";
+    case 403:
+      return "Forbidden";
     case 404:
       return "Not Found";
     case 414:
       return "URI Too Long";
+    case 429:
+      return "Too Many Requests";
+    case 502:
+      return "Bad Gateway";
+    case 503:
+      return "Service Unavailable";
     default:
       return "Error";
   }
 }
 
 export function rejectWsUpgrade(socket: Duplex, status: number, message: string): void {
-  const safeMessage = formatOneLineUtf8(message, MAX_UPGRADE_ERROR_MESSAGE_BYTES) || httpStatusText(status);
-  const body = `${safeMessage}\n`;
-  const response = [
-    `HTTP/1.1 ${status} ${httpStatusText(status)}`,
-    "Content-Type: text/plain; charset=utf-8",
-    `Content-Length: ${Buffer.byteLength(body)}`,
-    "Connection: close",
-    "",
-    body,
-  ].join("\r\n");
-  try {
-    socket.end(response);
-  } catch {
-    try {
-      socket.destroy();
-    } catch {
-      // ignore
-    }
-  }
+  const statusText = httpStatusText(status);
+  const safeMessage = formatOneLineUtf8(message, MAX_UPGRADE_ERROR_MESSAGE_BYTES) || statusText;
+  const res = encodeHttpTextResponse({ statusCode: status, statusText, bodyText: `${safeMessage}\n` });
+  endThenDestroyQuietly(socket, res);
 }
 

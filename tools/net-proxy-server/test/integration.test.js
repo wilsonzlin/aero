@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import net from "node:net";
 import test from "node:test";
 import WebSocket from "ws";
+import { EventEmitter } from "node:events";
+
+import { wsSendSafe } from "../../../scripts/_shared/ws_safe.js";
 
 import { createProxyServer } from "../src/server.js";
 import {
@@ -36,6 +39,10 @@ function waitForWsFailure(ws) {
     ws.once("unexpected-response", () => resolve());
     ws.once("close", () => resolve());
   });
+}
+
+function wsSendOk(ws, data) {
+  assert.ok(wsSendSafe(ws, data));
 }
 
 function asBuffer(data) {
@@ -98,7 +105,17 @@ test("integration: OPEN+DATA roundtrip to echo server (split + concatenated WS m
 
   try {
     echoServer = net.createServer((socket) => {
-      socket.on("data", (d) => socket.write(d));
+      socket.on("data", (d) => {
+        try {
+          socket.write(d);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
     });
     const echoPort = await listen(echoServer);
 
@@ -118,13 +135,13 @@ test("integration: OPEN+DATA roundtrip to echo server (split + concatenated WS m
     // Stream 1: send OPEN + DATA concatenated into a single WebSocket message.
     const open1 = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort }));
     const data1 = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("hello", "utf8"));
-    ws.send(Buffer.concat([open1, data1]));
+    wsSendOk(ws, Buffer.concat([open1, data1]));
 
     // Stream 2: send OPEN split across two WebSocket messages (tests stream reassembly).
     const open2 = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 2, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort }));
-    ws.send(open2.subarray(0, 4));
-    ws.send(open2.subarray(4));
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 2, Buffer.from("world", "utf8")));
+    wsSendOk(ws, open2.subarray(0, 4));
+    wsSendOk(ws, open2.subarray(4));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.DATA, 2, Buffer.from("world", "utf8")));
 
     const d1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 1);
     const d2 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 2);
@@ -132,11 +149,17 @@ test("integration: OPEN+DATA roundtrip to echo server (split + concatenated WS m
     assert.equal(d2.payload.toString("utf8"), "world");
 
     // Graceful close.
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
     const close1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1);
     assert.equal(decodeTcpMuxClosePayload(close1.payload).flags, TcpMuxCloseFlags.FIN);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
     if (echoServer) await new Promise((resolve) => echoServer.close(resolve));
   }
@@ -149,7 +172,17 @@ test("integration: OPEN+DATA+FIN in one WS message", async () => {
 
   try {
     echoServer = net.createServer((socket) => {
-      socket.on("data", (d) => socket.write(d));
+      socket.on("data", (d) => {
+        try {
+          socket.write(d);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
     });
     const echoPort = await listen(echoServer);
 
@@ -169,7 +202,7 @@ test("integration: OPEN+DATA+FIN in one WS message", async () => {
     const data = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("hello", "utf8"));
     const fin = encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN));
 
-    ws.send(Buffer.concat([open, data, fin]));
+    wsSendOk(ws, Buffer.concat([open, data, fin]));
 
     const d1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 1);
     assert.equal(d1.payload.toString("utf8"), "hello");
@@ -177,9 +210,176 @@ test("integration: OPEN+DATA+FIN in one WS message", async () => {
     const close1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1, 5000);
     assert.equal(decodeTcpMuxClosePayload(close1.payload).flags, TcpMuxCloseFlags.FIN);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
     if (echoServer) await new Promise((resolve) => echoServer.close(resolve));
+  }
+});
+
+test("integration: enforces socket-level buffering with STREAM_BUFFER_OVERFLOW (writableLength)", async () => {
+  let proxy;
+  let ws;
+
+  let createdResolve = null;
+  const created = new Promise((resolve) => {
+    createdResolve = resolve;
+  });
+
+  try {
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: true,
+      metricsIntervalMs: 0,
+      maxStreamBufferedBytes: 32,
+      createTcpConnection: () => {
+        class FakeTcpSocket extends EventEmitter {
+          writableLength = 0;
+          setNoDelay() {}
+          pause() {}
+          resume() {}
+          write(chunk) {
+            void chunk;
+            // Simulate a pathological/custom socket that buffers far more than it reports via
+            // backpressure return values.
+            this.writableLength += 1024;
+            return true;
+          }
+          end() {
+            this.destroy();
+          }
+          destroy() {
+            queueMicrotask(() => this.emit("close"));
+          }
+        }
+
+        createdResolve?.();
+        const socket = new FakeTcpSocket();
+        queueMicrotask(() => socket.emit("connect"));
+        return socket;
+      },
+    });
+
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+    await waitForWsOpen(ws);
+
+    const open = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: 80 }));
+    const data = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("a", "utf8"));
+    wsSendOk(ws, Buffer.concat([open, data]));
+
+    await Promise.race([
+      created,
+      new Promise((_, reject) => {
+        const t = setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000);
+        t.unref?.();
+      }),
+    ]);
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW);
+    assert.equal(err.message, "stream buffered too much data");
+
+    // Ensure the mux session stays alive.
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([1])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+  } finally {
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
+    if (proxy) await proxy.close();
+  }
+});
+
+test("integration: enforces STREAM_BUFFER_OVERFLOW when writableLength getter throws", async () => {
+  let proxy;
+  let ws;
+
+  let createdResolve = null;
+  const created = new Promise((resolve) => {
+    createdResolve = resolve;
+  });
+
+  try {
+    proxy = await createProxyServer({
+      host: "127.0.0.1",
+      port: 0,
+      authToken: "test-token",
+      allowPrivateIps: true,
+      metricsIntervalMs: 0,
+      maxStreamBufferedBytes: 32,
+      createTcpConnection: () => {
+        class FakeTcpSocket extends EventEmitter {
+          setNoDelay() {}
+          pause() {}
+          resume() {}
+          get writableLength() {
+            throw new Error("boom");
+          }
+          write(chunk) {
+            void chunk;
+            return true;
+          }
+          end() {
+            this.destroy();
+          }
+          destroy() {
+            queueMicrotask(() => this.emit("close"));
+          }
+        }
+
+        createdResolve?.();
+        const socket = new FakeTcpSocket();
+        queueMicrotask(() => socket.emit("connect"));
+        return socket;
+      },
+    });
+
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+    await waitForWsOpen(ws);
+
+    const open = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: 80 }));
+    const data = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("a", "utf8"));
+    wsSendOk(ws, Buffer.concat([open, data]));
+
+    await Promise.race([
+      created,
+      new Promise((_, reject) => {
+        const t = setTimeout(() => reject(new Error("timeout waiting for createTcpConnection")), 2_000);
+        t.unref?.();
+      }),
+    ]);
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW);
+    assert.equal(err.message, "stream buffered too much data");
+
+    // Ensure the mux session stays alive.
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([1])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+  } finally {
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
+    if (proxy) await proxy.close();
   }
 });
 
@@ -200,7 +400,13 @@ test("integration: requires aero-tcp-mux-v1 subprotocol", async () => {
     await waitForWsFailure(ws);
     assert.notEqual(ws.readyState, WebSocket.OPEN);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
   }
 });
@@ -229,7 +435,13 @@ test("integration: rejects oversized request targets with 414", async () => {
     await waitForWsFailure(ws);
     assert.equal(statusCode, 414);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
   }
 });
@@ -252,12 +464,18 @@ test("integration: PING -> PONG (same payload)", async () => {
     await waitForWsOpen(ws);
 
     const payload = Buffer.from([1, 2, 3, 4]);
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, payload));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, payload));
 
     const pong = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
     assert.deepEqual(pong.payload, payload);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
   }
 });
@@ -279,36 +497,42 @@ test("integration: policy denies private IPs by default", async () => {
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
 
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: 80 })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: 80 })));
 
     const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
     const err = decodeTcpMuxErrorPayload(errFrame.payload);
     assert.equal(err.code, TcpMuxErrorCode.POLICY_DENIED);
 
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 2, encodeTcpMuxOpenPayload({ host: "192.0.2.1", port: 80 })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 2, encodeTcpMuxOpenPayload({ host: "192.0.2.1", port: 80 })));
     const errFrame2 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 2);
     const err2 = decodeTcpMuxErrorPayload(errFrame2.payload);
     assert.equal(err2.code, TcpMuxErrorCode.POLICY_DENIED);
 
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 3, encodeTcpMuxOpenPayload({ host: "2001:db8::1", port: 80 })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 3, encodeTcpMuxOpenPayload({ host: "2001:db8::1", port: 80 })));
     const errFrame3 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 3);
     const err3 = decodeTcpMuxErrorPayload(errFrame3.payload);
     assert.equal(err3.code, TcpMuxErrorCode.POLICY_DENIED);
 
     // IPv4-mapped IPv6 should not bypass the IPv4 policy.
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 4, encodeTcpMuxOpenPayload({ host: "::ffff:127.0.0.1", port: 80 })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 4, encodeTcpMuxOpenPayload({ host: "::ffff:127.0.0.1", port: 80 })));
     const errFrame4 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 4);
     const err4 = decodeTcpMuxErrorPayload(errFrame4.payload);
     assert.equal(err4.code, TcpMuxErrorCode.POLICY_DENIED);
 
     // Hostnames that resolve only to blocked ranges should also be denied (DNS
     // rebinding / local-network bypass mitigation).
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 5, encodeTcpMuxOpenPayload({ host: "localhost", port: 80 })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 5, encodeTcpMuxOpenPayload({ host: "localhost", port: 80 })));
     const errFrame5 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 5);
     const err5 = decodeTcpMuxErrorPayload(errFrame5.payload);
     assert.equal(err5.code, TcpMuxErrorCode.POLICY_DENIED);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
   }
 });
@@ -320,7 +544,17 @@ test("integration: allowCidrs permits specific private IPv4 destinations", async
 
   try {
     echoServer = net.createServer((socket) => {
-      socket.on("data", (d) => socket.write(d));
+      socket.on("data", (d) => {
+        try {
+          socket.write(d);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
     });
     const echoPort = await listen(echoServer);
 
@@ -337,13 +571,19 @@ test("integration: allowCidrs permits specific private IPv4 destinations", async
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
 
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })));
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("ok", "utf8")));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("ok", "utf8")));
 
     const d1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 1);
     assert.equal(d1.payload.toString("utf8"), "ok");
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
     if (echoServer) await new Promise((resolve) => echoServer.close(resolve));
   }
@@ -366,14 +606,32 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
         const writeMore = () => {
           while (remaining > 0) {
             const n = Math.min(remaining, chunk.length);
-            const ok = socket.write(chunk.subarray(0, n));
+            let ok;
+            try {
+              ok = socket.write(chunk.subarray(0, n));
+            } catch {
+              try {
+                socket.destroy();
+              } catch {
+                // ignore
+              }
+              return;
+            }
             remaining -= n;
             if (!ok) {
               socket.once("drain", writeMore);
               return;
             }
           }
-          socket.end();
+          try {
+            socket.end();
+          } catch {
+            try {
+              socket.destroy();
+            } catch {
+              // ignore
+            }
+          }
         };
 
         writeMore();
@@ -396,7 +654,7 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
 
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: burstPort })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: burstPort })));
 
     // Stop the WS client from reading, causing the server-side send queue to grow.
     ws._socket.pause();
@@ -417,7 +675,13 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
     await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1, 5000);
     assert.ok(proxy.stats.wsBackpressureResumes > 0);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
     if (burstServer) await new Promise((resolve) => burstServer.close(resolve));
   }
@@ -442,14 +706,32 @@ test("integration: backpressure poll resumes TCP reads after WS drains (small th
         const writeMore = () => {
           while (remaining > 0) {
             const n = Math.min(remaining, chunk.length);
-            const ok = socket.write(chunk.subarray(0, n));
+            let ok;
+            try {
+              ok = socket.write(chunk.subarray(0, n));
+            } catch {
+              try {
+                socket.destroy();
+              } catch {
+                // ignore
+              }
+              return;
+            }
             remaining -= n;
             if (!ok) {
               socket.once("drain", writeMore);
               return;
             }
           }
-          socket.end();
+          try {
+            socket.end();
+          } catch {
+            try {
+              socket.destroy();
+            } catch {
+              // ignore
+            }
+          }
         };
 
         writeMore();
@@ -473,7 +755,7 @@ test("integration: backpressure poll resumes TCP reads after WS drains (small th
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
 
-    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: burstPort })));
+    wsSendOk(ws, encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: burstPort })));
 
     // Stop the WS client from reading, causing the server-side socket buffer to
     // fill up quickly.
@@ -494,7 +776,13 @@ test("integration: backpressure poll resumes TCP reads after WS drains (small th
     await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1, 5000);
     assert.ok(proxy.stats.wsBackpressureResumes > 0);
   } finally {
-    if (ws) ws.terminate();
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore
+      }
+    }
     if (proxy) await proxy.close();
     if (burstServer) await new Promise((resolve) => burstServer.close(resolve));
   }

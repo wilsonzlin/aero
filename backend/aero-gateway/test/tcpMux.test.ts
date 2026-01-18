@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
 import { once } from "node:events";
+import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 
@@ -76,7 +77,11 @@ function openWebSocket(url: string, protocol: string): Promise<WebSocket> {
 
 async function closeWebSocket(ws: WebSocket): Promise<void> {
   if (ws.readyState === WebSocket.CLOSED) return;
-  ws.close();
+  try {
+    ws.close();
+  } catch {
+    // ignore close races
+  }
   await new Promise<void>((resolve) => ws.addEventListener("close", () => resolve(), { once: true }));
 }
 
@@ -141,6 +146,45 @@ describe("tcpMux route", () => {
     assert.ok(res.includes(`Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`));
   });
 
+  it("does not continue upgrade if writeWebSocketHandshake destroys the socket (write throws)", async () => {
+    const req = {
+      url: "/tcp-mux",
+      headers: {
+        "sec-websocket-protocol": TCP_MUX_SUBPROTOCOL,
+      },
+      socket: { remoteAddress: "127.0.0.1" },
+    } as unknown as http.IncomingMessage;
+
+    let setNoDelayCalls = 0;
+
+    class FakeSocket extends EventEmitter {
+      write() {
+        throw new Error("boom");
+      }
+      destroy() {
+        queueMicrotask(() => this.emit("close"));
+      }
+      get destroyed() {
+        throw new Error("boom");
+      }
+      setNoDelay() {
+        setNoDelayCalls += 1;
+        throw new Error("should not be called");
+      }
+    }
+
+    const socket = new FakeSocket() as unknown as import("node:stream").Duplex;
+
+    assert.doesNotThrow(() =>
+      handleTcpMuxUpgrade(req, socket, Buffer.alloc(0), {
+        handshakeKey: "dGhlIHNhbXBsZSBub25jZQ==",
+      }),
+    );
+
+    await new Promise((r) => setImmediate(r));
+    assert.equal(setNoDelayCalls, 0);
+  });
+
   it("closes the WebSocket with 1002 when a frame exceeds maxFramePayloadBytes", async () => {
     const proxyServer = http.createServer();
     proxyServer.on("upgrade", (req, socket, head) => {
@@ -183,7 +227,22 @@ describe("tcpMux route", () => {
   });
 
   it("multiplexes multiple concurrent streams to an echo server", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const proxyServer = http.createServer();
     let ws: WebSocket | null = null;
 
@@ -276,7 +335,22 @@ describe("tcpMux route", () => {
   });
 
   it("returns ERROR for a blocked target without closing the mux connection", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const proxyServer = http.createServer();
     let ws: WebSocket | null = null;
 
@@ -360,8 +434,98 @@ describe("tcpMux route", () => {
     }
   });
 
+  it("returns ERROR when the TCP socket buffer exceeds maxStreamBufferedBytes", async () => {
+    const proxyServer = http.createServer();
+    let ws: WebSocket | null = null;
+
+    const createConnection = (() => {
+      class FakeTcpSocket extends EventEmitter {
+        writableLength = 0;
+        setNoDelay() {}
+        setTimeout() {}
+        write(chunk: unknown) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any);
+          this.writableLength += buf.length;
+          return true;
+        }
+        end() {
+          this.destroy();
+        }
+        destroy() {
+          queueMicrotask(() => this.emit("close"));
+        }
+        removeAllListeners() {
+          super.removeAllListeners();
+          return this;
+        }
+      }
+
+      const socket = new FakeTcpSocket();
+      queueMicrotask(() => socket.emit("connect"));
+      return () => socket as unknown as net.Socket;
+    })();
+
+    try {
+      proxyServer.on("upgrade", (req, socket, head) => {
+        handleTcpMuxUpgrade(req, socket, head, {
+          allowedTargetHosts: ["8.8.8.8"],
+          allowedTargetPorts: [1],
+          maxStreams: 1,
+          maxStreamBufferedBytes: 32,
+          createConnection: createConnection as unknown as typeof net.createConnection,
+        });
+      });
+      const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+      ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+
+      const parser = new TcpMuxFrameParser();
+      let seen: { code: number; message: string } | null = null;
+
+      ws.addEventListener("message", (event) => {
+        if (!(event.data instanceof ArrayBuffer)) return;
+        for (const frame of parser.push(Buffer.from(event.data))) {
+          if (frame.msgType !== TcpMuxMsgType.ERROR) continue;
+          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+          seen = { code, message };
+        }
+      });
+
+      const streamId = 1;
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "8.8.8.8", port: 1 })));
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, Buffer.from("x".repeat(1024), "utf8")));
+
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (seen) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert.ok(seen, "expected ERROR frame");
+      assert.equal(seen.code, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW);
+      assert.equal(seen.message, "stream buffered too much data");
+    } finally {
+      if (ws) await closeWebSocket(ws);
+      await closeServer(proxyServer);
+    }
+  });
+
   it("allows dialing loopback targets when allowPrivateIps is enabled", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const proxyServer = http.createServer();
     let ws: WebSocket | null = null;
 
@@ -421,7 +585,22 @@ describe("tcpMux route", () => {
   });
 
   it("returns ERROR when dialing loopback targets when allowPrivateIps is disabled", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const proxyServer = http.createServer();
     let ws: WebSocket | null = null;
 
@@ -478,7 +657,22 @@ describe("tcpMux route", () => {
   });
 
   it("enforces per-session maxConnections across multiplexed streams", async () => {
-    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoServer = net.createServer((socket) => {
+      socket.on("error", () => {
+        // ignore (tests can trigger close races during shutdown)
+      });
+      socket.on("data", (data) => {
+        try {
+          socket.write(data);
+        } catch {
+          try {
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
     const sessionConnections = new SessionConnectionTracker(1);
 
     const proxyServer = http.createServer();

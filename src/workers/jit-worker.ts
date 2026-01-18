@@ -3,6 +3,7 @@
 import type { CompileBlockRequest, CpuToJitMessage, JitToCpuMessage } from './jit-protocol';
 import { initJitWasmForContext, type JitWasmApi, type Tier1BlockCompilation } from '../../web/src/runtime/jit_wasm_loader';
 import { formatOneLineError } from '../text.js';
+import { isDataCloneError, isTier1AbiMismatchError } from './jit_error_utils';
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -19,19 +20,6 @@ let guestSize = 0;
 
 let jitWasmApiPromise: Promise<JitWasmApi> | null = null;
 let canPostWasmModule: boolean | null = null;
-
-function isDataCloneError(err: unknown): boolean {
-  const domException = (globalThis as unknown as { DOMException?: unknown }).DOMException;
-  if (typeof domException === 'function') {
-    if (err instanceof (domException as unknown as Function) && (err as { name?: unknown }).name === 'DataCloneError') return true;
-  }
-  if (err && typeof err === 'object') {
-    const name = (err as { name?: unknown }).name;
-    if (name === 'DataCloneError') return true;
-  }
-  const message = formatOneLineError(err, 2048);
-  return /DataCloneError|could not be cloned/i.test(message);
-}
 
 // Debug-only sync word used by the JIT smoke test to coordinate a deterministic
 // stale-code scenario.
@@ -141,15 +129,6 @@ function isTier1CompileError(err: unknown): boolean {
   // running against older wasm-pack outputs.
   const message = formatOneLineError(err, 2048);
   return message.trimStart().startsWith('compile_tier1_block:');
-}
-
-function isTier1AbiMismatchError(err: unknown): boolean {
-  // wasm-bindgen argument mismatches typically show up as TypeErrors (wrong BigInt/number types,
-  // wrong arg count, etc). Use a best-effort heuristic so we don't accidentally swallow real
-  // compiler/runtime errors by retrying with legacy call signatures.
-  if (err instanceof TypeError) return true;
-  const message = formatOneLineError(err, 2048);
-  return /bigint|cannot convert|argument|parameter|is not a function/i.test(message);
 }
 async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileBlockRequest' }) {
   if (!sharedMemory) {

@@ -23,7 +23,8 @@ import {
   encodePing,
   encodePong,
 } from "../shared/l2TunnelProtocol";
-import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
+import { dcCloseSafe, dcSendSafe } from "./rtcSafe";
+import { wsBufferedAmountSafe, wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export { L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_DATA_CHANNEL_LABEL };
 
@@ -668,7 +669,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
             `L2 tunnel subprotocol not negotiated (wanted ${L2_TUNNEL_SUBPROTOCOL}, got ${ws.protocol || "none"})`,
           ),
         );
-        ws.close(1002);
+        wsCloseSafe(ws, 1002);
         return;
       }
       this.onTransportOpen();
@@ -737,7 +738,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
   }
 
   protected getTransportBufferedAmount(): number {
-    return this.ws?.bufferedAmount ?? 0;
+    return wsBufferedAmountSafe(this.ws);
   }
 
   protected transportSend(data: Uint8Array): void {
@@ -819,15 +820,13 @@ export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
     // backed views to APIs that may not accept them).
     const view: Uint8Array<ArrayBuffer> =
       data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
-    try {
-      this.channel.send(view);
-    } catch (err) {
-      this.onTransportError(err);
+    if (!dcSendSafe(this.channel, view)) {
+      this.onTransportError(new Error("RTCDataChannel send failed"));
       this.close();
     }
   }
 
   protected closeTransport(): void {
-    this.channel.close();
+    dcCloseSafe(this.channel);
   }
 }

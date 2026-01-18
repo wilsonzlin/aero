@@ -5,6 +5,8 @@ import { once } from "node:events";
 
 import { probeRemoteDisk } from "../web/src/platform/remote_disk";
 
+import { sendEmpty, sendText } from "./helpers/http_test_response.js";
+
 function startRangeServer(opts: {
   contentRange?: string;
   cacheControl?: string;
@@ -14,10 +16,27 @@ function startRangeServer(opts: {
   const totalSize = 1024;
 
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const rawUrl = req.url ?? "/";
+    let url: URL;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      sendText(res, 400, "bad request");
+      return;
+    }
     if (url.pathname !== "/disk") {
-      res.statusCode = 404;
-      res.end("not found");
+      sendText(res, 404, "not found");
+      return;
+    }
+
+    const method = req.method ?? "GET";
+    const allow = "GET, HEAD, OPTIONS";
+    if (method === "OPTIONS") {
+      sendEmpty(res, 204, { allow });
+      return;
+    }
+    if (method !== "GET" && method !== "HEAD") {
+      sendEmpty(res, 405, { allow });
       return;
     }
 
@@ -42,8 +61,7 @@ function startRangeServer(opts: {
       return;
     }
 
-    res.statusCode = 416;
-    res.end();
+    sendEmpty(res, 416);
   });
 
   return new Promise((resolve, reject) => {

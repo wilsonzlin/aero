@@ -94,6 +94,51 @@ function postToMain(msg: CpuWorkerToMainMessage) {
   ctx.postMessage(msg);
 }
 
+function formatDebugScalar(value: unknown): string {
+  try {
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+    switch (typeof value) {
+      case 'string':
+        return value.length > 256 ? `${value.slice(0, 256)}…` : value;
+      case 'number':
+        return Number.isFinite(value) ? String(value) : 'NaN';
+      case 'bigint':
+        return value.toString();
+      case 'boolean':
+        return value ? 'true' : 'false';
+      case 'symbol':
+        return 'symbol';
+      case 'function':
+        return 'function';
+      case 'object':
+        return 'object';
+      default:
+        return 'unknown';
+    }
+  } catch {
+    return '[unprintable]';
+  }
+}
+
+function formatDebugObject(obj: Record<string, unknown>): string {
+  try {
+    const parts: string[] = [];
+    for (const key of Object.keys(obj)) {
+      let value: unknown;
+      try {
+        value = obj[key];
+      } catch {
+        value = '[threw]';
+      }
+      parts.push(`${key}=${formatDebugScalar(value)}`);
+    }
+    return `{ ${parts.join(' ')} }`;
+  } catch {
+    return '[unserializable]';
+  }
+}
+
 type PendingCompile = {
   pre_meta: JsCompiledBlockMeta;
   resolve: (msg: CompileBlockResponse) => void;
@@ -347,7 +392,7 @@ async function runTieredVm(iterations: number, threshold: number) {
         : undefined;
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_abi_constants payload from aero-wasm: ${JSON.stringify({
+      reason: `Invalid jit_abi_constants payload from aero-wasm: ${formatDebugObject({
         cpu_state_size,
         cpu_state_align,
         cpu_rip_off,
@@ -363,7 +408,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if ((cpu_state_align & (cpu_state_align - 1)) !== 0 || cpu_state_size % cpu_state_align !== 0) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_abi_constants CpuState size/alignment: ${JSON.stringify({
+      reason: `Invalid jit_abi_constants CpuState size/alignment: ${formatDebugObject({
         cpu_state_size,
         cpu_state_align,
       })}`,
@@ -375,7 +420,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (cpu_rip_off + 8 > cpu_state_size || cpu_rflags_off + 8 > cpu_state_size || cpu_rax_off + 8 > cpu_state_size) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_abi_constants offsets (out of bounds): ${JSON.stringify({
+      reason: `Invalid jit_abi_constants offsets (out of bounds): ${formatDebugObject({
         cpu_state_size,
         cpu_rax_off,
         cpu_rip_off,
@@ -389,7 +434,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if ((cpu_rip_off & 7) !== 0 || (cpu_rflags_off & 7) !== 0 || (cpu_rax_off & 7) !== 0) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_abi_constants offsets (misaligned u64 fields): ${JSON.stringify({
+      reason: `Invalid jit_abi_constants offsets (misaligned u64 fields): ${formatDebugObject({
         cpu_state_size,
         cpu_rax_off,
         cpu_rip_off,
@@ -406,7 +451,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     if (got !== expected) {
       postToMain({
         type: 'CpuWorkerError',
-        reason: `Invalid jit_abi_constants cpu_gpr_off array (unexpected layout): ${JSON.stringify({
+        reason: `Invalid jit_abi_constants cpu_gpr_off array (unexpected layout): ${formatDebugObject({
           i,
           got,
           expected,
@@ -419,7 +464,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (cpu_rax_off + 16 * 8 > cpu_state_size) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_abi_constants cpu_gpr_off array (out of bounds): ${JSON.stringify({
+      reason: `Invalid jit_abi_constants cpu_gpr_off array (out of bounds): ${formatDebugObject({
         cpu_state_size,
         cpu_rax_off,
         cpu_r15_end: cpu_rax_off + 16 * 8,
@@ -471,7 +516,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (!jitCtxHeaderBytes || !jitTlbEntries || !jitTlbEntryBytes || !tier2CtxBytes || !commitFlagOffset) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid Tier-1 JIT ABI layout values: ${JSON.stringify({
+      reason: `Invalid Tier-1 JIT ABI layout values: ${formatDebugObject({
         jitCtxHeaderBytes,
         jitTlbEntries,
         jitTlbEntryBytes,
@@ -493,7 +538,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   ) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid JitContext header offsets: ${JSON.stringify({
+      reason: `Invalid JitContext header offsets: ${formatDebugObject({
         jitCtxHeaderBytes,
         jitCtxRamBaseOffset,
         jitCtxTlbSaltOffset,
@@ -507,7 +552,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     if (off !== jitCtxHeaderBytes || (off & 7) !== 0) {
       postToMain({
         type: 'CpuWorkerError',
-        reason: `Invalid JitContext TLB offset: ${JSON.stringify({
+        reason: `Invalid JitContext TLB offset: ${formatDebugObject({
           jitCtxHeaderBytes,
           jitCtxTlbOffset: off,
         })}`,
@@ -519,7 +564,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if ((jitCtxHeaderBytes & 7) !== 0) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_ctx_header_bytes (expected 8-byte alignment): ${JSON.stringify({
+      reason: `Invalid jit_ctx_header_bytes (expected 8-byte alignment): ${formatDebugObject({
         jitCtxHeaderBytes,
       })}`,
     });
@@ -529,7 +574,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (jitTlbEntryBytes < 16 || (jitTlbEntryBytes & 7) !== 0) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_tlb_entry_bytes (expected >=16 and 8-byte aligned): ${JSON.stringify({
+      reason: `Invalid jit_tlb_entry_bytes (expected >=16 and 8-byte aligned): ${formatDebugObject({
         jitTlbEntryBytes,
       })}`,
     });
@@ -539,7 +584,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if ((jitTlbEntries & (jitTlbEntries - 1)) !== 0) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid jit_tlb_entries (expected power-of-two): ${JSON.stringify({
+      reason: `Invalid jit_tlb_entries (expected power-of-two): ${formatDebugObject({
         jitTlbEntries,
       })}`,
     });
@@ -549,7 +594,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (commitFlagBytes !== undefined && (commitFlagBytes >>> 0) !== 4) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid commit_flag_bytes (expected 4): ${JSON.stringify({
+      reason: `Invalid commit_flag_bytes (expected 4): ${formatDebugObject({
         commitFlagBytes: commitFlagBytes >>> 0,
       })}`,
     });
@@ -561,7 +606,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (derivedJitCtxTotalBytesBig > 0xffff_ffffn) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Tier-1 jit ctx size overflow (expected <= 4GiB): ${JSON.stringify({
+      reason: `Tier-1 jit ctx size overflow (expected <= 4GiB): ${formatDebugObject({
         jitCtxHeaderBytes,
         jitTlbEntries,
         jitTlbEntryBytes,
@@ -574,7 +619,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (exportedJitCtxTotalBytes !== 0 && exportedJitCtxTotalBytes !== derivedJitCtxTotalBytes) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Inconsistent jit_abi_constants payload: ${JSON.stringify({
+      reason: `Inconsistent jit_abi_constants payload: ${formatDebugObject({
         derivedJitCtxTotalBytes,
         exportedJitCtxTotalBytes,
         jitCtxHeaderBytes,
@@ -589,7 +634,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if (commitFlagOffset !== expectedCommitFlagOffset) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Inconsistent Tier-1 commit_flag_offset: ${JSON.stringify({
+      reason: `Inconsistent Tier-1 commit_flag_offset: ${formatDebugObject({
         commitFlagOffset,
         expectedCommitFlagOffset,
         cpu_state_size,
@@ -603,7 +648,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   if ((commitFlagOffset & 3) !== 0) {
     postToMain({
       type: 'CpuWorkerError',
-      reason: `Invalid commit_flag_offset alignment (expected 4-byte alignment): ${JSON.stringify({
+      reason: `Invalid commit_flag_offset alignment (expected 4-byte alignment): ${formatDebugObject({
         commitFlagOffset,
       })}`,
     });
@@ -616,7 +661,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     if (gotTier2CtxOffset !== expectedTier2CtxOffset) {
       postToMain({
         type: 'CpuWorkerError',
-        reason: `Inconsistent Tier-1 tier2_ctx_offset: ${JSON.stringify({
+        reason: `Inconsistent Tier-1 tier2_ctx_offset: ${formatDebugObject({
           gotTier2CtxOffset,
           expectedTier2CtxOffset,
           cpu_state_size,

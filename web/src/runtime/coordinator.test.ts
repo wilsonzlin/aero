@@ -1310,6 +1310,33 @@ describe("runtime/coordinator", () => {
     expect(Array.from(actualBytes)).toEqual(Array.from(expectedBytes));
   });
 
+  it("net trace requests reject with an Error when net.postMessage throws a hostile proxy", async () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
+
+    const netInfo = (coordinator as unknown as CoordinatorTestHarness).workers.net as { instanceId: number; worker: MockWorker };
+    const netWorker = netInfo.worker;
+
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("boom");
+        },
+      },
+    );
+
+    // Make postMessage throw a value for which `err instanceof Error` would throw.
+    netWorker.postMessage = () => {
+      throw hostile;
+    };
+
+    await expect(coordinator.takeNetTracePcapng()).rejects.toBeInstanceOf(Error);
+  });
+
   it("roundtrips net.trace.export_pcapng request/response through the coordinator", async () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();

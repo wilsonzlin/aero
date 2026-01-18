@@ -4,6 +4,7 @@ import type { Duplex } from "node:stream";
 
 import type { TcpTarget } from "../protocol/tcpTarget.js";
 import { TcpTargetParseError, parseTcpTargetFromUrl } from "../protocol/tcpTarget.js";
+import { tryGetStringProp } from "../../../../src/safe_props.js";
 import { validateTcpTargetPolicy, validateWsUpgradePolicy, type TcpProxyUpgradePolicy } from "./tcpPolicy.js";
 import { enforceUpgradeRequestUrlLimit, resolveUpgradeRequestUrl, respondUpgradeHttp } from "./upgradeHttp.js";
 import { writeWebSocketHandshake } from "./wsHandshake.js";
@@ -16,6 +17,15 @@ import { formatOneLineError } from "../util/text.js";
 
 const MAX_UPGRADE_ERROR_MESSAGE_BYTES = 512;
 
+function isSocketDestroyed(socket: Duplex): boolean {
+  try {
+    return (socket as unknown as { destroyed?: unknown }).destroyed === true;
+  } catch {
+    // Fail closed: if state is not observable, treat it as destroyed.
+    return true;
+  }
+}
+
 type TcpProxyUpgradeOptions = TcpProxyUpgradePolicy &
   Readonly<{
     allowPrivateIps?: boolean;
@@ -24,6 +34,7 @@ type TcpProxyUpgradeOptions = TcpProxyUpgradePolicy &
     sessionId?: string;
     sessionConnections?: SessionConnectionTracker;
     maxMessageBytes?: number;
+    maxTcpBufferedBytes?: number;
     connectTimeoutMs?: number;
     idleTimeoutMs?: number;
     /**
@@ -47,7 +58,7 @@ export function handleTcpProxyUpgrade(
   head: Buffer,
   opts: TcpProxyUpgradeOptions = {},
 ): void {
-  const rawUrl = req.url ?? "";
+  const rawUrl = tryGetStringProp(req, "url") ?? "";
   if (!enforceUpgradeRequestUrlLimit(rawUrl, socket, opts.upgradeUrl)) return;
 
   let handshakeKey = sanitizeWebSocketHandshakeKey(opts.handshakeKey);
@@ -87,61 +98,96 @@ export function handleTcpProxyUpgrade(
   }
 
   void (async () => {
-    let resolved: { ip: string; port: number; hostname?: string };
     try {
-      resolved = await resolveTcpProxyTarget(target.host, target.port, {
-        allowPrivateIps: opts.allowPrivateIps,
-        metrics: opts.metrics,
+      let resolved: { ip: string; port: number; hostname?: string };
+      try {
+        resolved = await resolveTcpProxyTarget(target.host, target.port, {
+          allowPrivateIps: opts.allowPrivateIps,
+          metrics: opts.metrics,
+        });
+      } catch (err) {
+        if (err instanceof TcpProxyTargetError) {
+          respondUpgradeHttp(socket, err.statusCode, formatOneLineError(err, MAX_UPGRADE_ERROR_MESSAGE_BYTES));
+          return;
+        }
+        respondUpgradeHttp(socket, 502, formatUpgradeError(err, "Bad Gateway"));
+        return;
+      }
+
+      if (opts.sessionId && opts.sessionConnections) {
+        if (!opts.sessionConnections.tryAcquire(opts.sessionId)) {
+          respondUpgradeHttp(socket, 429, "Too many concurrent connections");
+          return;
+        }
+
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          opts.sessionConnections!.release(opts.sessionId!);
+        };
+        socket.once("close", release);
+        socket.once("error", release);
+      }
+
+      writeWebSocketHandshake(socket, { key: handshakeKey });
+      // `writeWebSocketHandshake` destroys the socket if `write(...)` throws. Avoid continuing the
+      // upgrade flow if the socket is already torn down.
+      if (isSocketDestroyed(socket)) return;
+
+      if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
+        socket.setNoDelay(true);
+      }
+
+      const connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
+      const idleTimeoutMs = opts.idleTimeoutMs ?? 300_000;
+      const createConnection = opts.createConnection ?? net.createConnection;
+      let tcpSocket: net.Socket;
+      try {
+        tcpSocket = createConnection({ host: resolved.ip, port: resolved.port });
+      } catch {
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      tcpSocket.setNoDelay(true);
+      tcpSocket.setTimeout(idleTimeoutMs);
+      tcpSocket.on("timeout", () => {
+        try {
+          tcpSocket.destroy(new Error("TCP idle timeout"));
+        } catch {
+          // ignore
+        }
       });
-    } catch (err) {
-      if (err instanceof TcpProxyTargetError) {
-        respondUpgradeHttp(socket, err.statusCode, formatOneLineError(err, MAX_UPGRADE_ERROR_MESSAGE_BYTES));
-        return;
+
+      const connectTimer = setTimeout(() => {
+        try {
+          tcpSocket.destroy(new Error("TCP connect timeout"));
+        } catch {
+          // ignore
+        }
+      }, connectTimeoutMs);
+      connectTimer.unref?.();
+      tcpSocket.once("connect", () => clearTimeout(connectTimer));
+      tcpSocket.once("error", () => clearTimeout(connectTimer));
+      tcpSocket.once("close", () => clearTimeout(connectTimer));
+
+      const bridge = new WebSocketTcpBridge(socket, tcpSocket, {
+        maxMessageBytes: opts.maxMessageBytes ?? 1024 * 1024,
+        maxTcpBufferedBytes: opts.maxTcpBufferedBytes ?? 10 * 1024 * 1024,
+      });
+      bridge.start(head);
+    } catch {
+      // Defensive: avoid unhandled rejections crashing the gateway on unexpected errors.
+      try {
+        socket.destroy();
+      } catch {
+        // ignore
       }
-      respondUpgradeHttp(socket, 502, formatUpgradeError(err, "Bad Gateway"));
-      return;
     }
-
-    if (opts.sessionId && opts.sessionConnections) {
-      if (!opts.sessionConnections.tryAcquire(opts.sessionId)) {
-        respondUpgradeHttp(socket, 429, "Too many concurrent connections");
-        return;
-      }
-
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        opts.sessionConnections!.release(opts.sessionId!);
-      };
-      socket.once("close", release);
-      socket.once("error", release);
-    }
-
-    writeWebSocketHandshake(socket, { key: handshakeKey });
-
-    if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
-      socket.setNoDelay(true);
-    }
-
-    const connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
-    const idleTimeoutMs = opts.idleTimeoutMs ?? 300_000;
-    const createConnection = opts.createConnection ?? net.createConnection;
-    const tcpSocket = createConnection({ host: resolved.ip, port: resolved.port });
-    tcpSocket.setNoDelay(true);
-    tcpSocket.setTimeout(idleTimeoutMs);
-    tcpSocket.on("timeout", () => tcpSocket.destroy(new Error("TCP idle timeout")));
-
-    const connectTimer = setTimeout(() => {
-      tcpSocket.destroy(new Error("TCP connect timeout"));
-    }, connectTimeoutMs);
-    connectTimer.unref?.();
-    tcpSocket.once("connect", () => clearTimeout(connectTimer));
-    tcpSocket.once("error", () => clearTimeout(connectTimer));
-    tcpSocket.once("close", () => clearTimeout(connectTimer));
-
-    const bridge = new WebSocketTcpBridge(socket, tcpSocket, opts.maxMessageBytes ?? 1024 * 1024);
-    bridge.start(head);
   })();
 }
 

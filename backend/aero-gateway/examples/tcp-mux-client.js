@@ -2,6 +2,7 @@ const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 const HEADER_BYTES = 9;
 
 import WebSocket from "ws";
+import { wsCloseSafe, wsSendSafe } from "../../../scripts/_shared/ws_safe.js";
 
 const MsgType = {
   OPEN: 1,
@@ -105,41 +106,23 @@ const ws = new WebSocket(wsUrl.toString(), TCP_MUX_SUBPROTOCOL, {
 });
 ws.binaryType = "arraybuffer";
 
-function wsSendSafe(data) {
-  if (ws.readyState !== WebSocket.OPEN) return false;
-  try {
-    ws.send(data);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function wsCloseSafe() {
-  try {
-    ws.close();
-  } catch {
-    // ignore
-  }
-}
-
 ws.on("open", () => {
   const streamId = 1;
-  if (!wsSendSafe(encodeFrame(MsgType.OPEN, streamId, encodeOpenPayload({ host: targetHost, port: targetPort })))) {
-    wsCloseSafe();
+  if (!wsSendSafe(ws, encodeFrame(MsgType.OPEN, streamId, encodeOpenPayload({ host: targetHost, port: targetPort })))) {
+    wsCloseSafe(ws);
     return;
   }
   const request = `GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\n\r\n`;
-  if (!wsSendSafe(encodeFrame(MsgType.DATA, streamId, Buffer.from(request, "utf8")))) {
-    wsCloseSafe();
+  if (!wsSendSafe(ws, encodeFrame(MsgType.DATA, streamId, Buffer.from(request, "utf8")))) {
+    wsCloseSafe(ws);
     return;
   }
 
   // Closing is optional here because we set "Connection: close". We still send
   // a FIN after a short delay to demonstrate half-close propagation.
   setTimeout(() => {
-    if (!wsSendSafe(encodeFrame(MsgType.CLOSE, streamId, Buffer.from([CloseFlags.FIN])))) {
-      wsCloseSafe();
+    if (!wsSendSafe(ws, encodeFrame(MsgType.CLOSE, streamId, Buffer.from([CloseFlags.FIN])))) {
+      wsCloseSafe(ws);
     }
   }, 1000);
 });
@@ -176,8 +159,8 @@ ws.on("message", (data) => {
       console.log(`[stream ${streamId}] CLOSE ${parts.length ? parts.join("|") : `flags=0x${flags.toString(16)}`}`);
     } else if (msgType === MsgType.PING) {
       // Reply with PONG (same payload) per protocol.
-      if (!wsSendSafe(encodeFrame(MsgType.PONG, streamId, payload))) {
-        wsCloseSafe();
+      if (!wsSendSafe(ws, encodeFrame(MsgType.PONG, streamId, payload))) {
+        wsCloseSafe(ws);
       }
     } else if (msgType === MsgType.PONG) {
       console.log(`[stream ${streamId}] PONG len=${length}`);

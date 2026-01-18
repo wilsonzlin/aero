@@ -2,7 +2,10 @@ import net from "node:net";
 import { randomInt } from "node:crypto";
 import { once } from "node:events";
 
+import { socketWritableLengthExceedsCap } from "../../src/socket_writable_length.js";
+
 import { WebSocketServer } from "../../tools/minimal_ws.js";
+import { wsSendSafe } from "../../scripts/_shared/ws_safe.js";
 
 import {
   TCP_FLAGS,
@@ -51,6 +54,10 @@ async function startProxyServer({
   // Return a TEST-NET address by default; the proxy still uses local forwarding.
   dnsA = { "echo.local": "203.0.113.10" },
   tcpForward = {},
+  // Defensive: prevent unbounded buffering if the forwarded TCP peer stops reading.
+  maxTcpBufferedBytesPerConn = 10 * 1024 * 1024,
+  // Test/embedding hook.
+  createTcpConnection = net.createConnection,
 } = {}) {
   const gatewayMacBuf = macToBuffer(gatewayMac);
   const gatewayIpBuf = ipToBuffer(gatewayIp);
@@ -76,7 +83,7 @@ async function startProxyServer({
     const tcpConns = new Map(); // key: `${clientIp}:${clientPort}->${dstIp}:${dstPort}`
 
     function sendEthernet({ dstMac, srcMac, ethertype, payload }) {
-      ws.send(encodeL2Frame(encodeEthernetFrame({ dstMac, srcMac, ethertype, payload })));
+      wsSendSafe(ws, encodeL2Frame(encodeEthernetFrame({ dstMac, srcMac, ethertype, payload })));
     }
 
     function sendArpReply({ requestEth, requestArp }) {
@@ -215,10 +222,17 @@ async function startProxyServer({
       };
       conn.nextServerSeq = (conn.serverIsn + 1) >>> 0;
 
-      const socket = net.createConnection({
-        host: forward.host,
-        port: forward.port,
-      });
+      let socket;
+      try {
+        const dial = typeof createTcpConnection === "function" ? createTcpConnection : net.createConnection;
+        socket = dial({
+          host: forward.host,
+          port: forward.port,
+        });
+        socket.setNoDelay?.(true);
+      } catch {
+        return null;
+      }
       conn.socket = socket;
 
       socket.on("data", (data) => {
@@ -228,10 +242,16 @@ async function startProxyServer({
         sendTcpSegment(conn, { flags: TCP_FLAGS.PSH | TCP_FLAGS.ACK, payload: data });
       });
       socket.on("error", () => {
-        // For a minimal prototype, ignore.
+        // For a minimal prototype, ignore the details but clean up resources.
+        tcpConns.delete(key);
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
       });
       socket.on("close", () => {
-        // For a minimal prototype, ignore FIN/RST propagation.
+        tcpConns.delete(key);
       });
 
       tcpConns.set(key, conn);
@@ -248,7 +268,7 @@ async function startProxyServer({
       }
 
       if (decoded.type === L2_TUNNEL_TYPE_PING) {
-        ws.send(encodePong(decoded.payload));
+        wsSendSafe(ws, encodePong(decoded.payload));
         return;
       }
 
@@ -318,6 +338,19 @@ async function startProxyServer({
         try {
           conn.socket.write(tcp.payload);
         } catch {
+          try {
+            conn.socket.destroy();
+          } catch {
+            // ignore
+          }
+          tcpConns.delete(key);
+          return;
+        }
+
+        // Defensive: enforce a hard cap on buffered bytes in case the forwarded TCP peer
+        // stops reading (or a custom socket buffers without applying backpressure).
+        if (socketWritableLengthExceedsCap(conn.socket, maxTcpBufferedBytesPerConn)) {
+          sendTcpSegment(conn, { flags: TCP_FLAGS.RST | TCP_FLAGS.ACK });
           try {
             conn.socket.destroy();
           } catch {

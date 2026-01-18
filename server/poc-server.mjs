@@ -1,9 +1,11 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { formatOneLineError, formatOneLineUtf8 } from './src/text.js';
+import { isExpectedStreamAbort } from '../src/stream_abort.js';
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -69,16 +71,21 @@ function withCommonHeaders(res) {
 
 function pipeFile(res, filePath) {
   const stream = createReadStream(filePath);
-  stream.once('error', (err) => {
+  void pipeline(stream, res).catch((err) => {
+    if (isExpectedStreamAbort(err)) return;
     // eslint-disable-next-line no-console
     console.error(`poc-server: stream error: ${formatOneLineError(err, 512, 'Error')}`);
-    if (res.headersSent) {
-      res.destroy();
+    if (res.writableEnded) return;
+    if (!res.headersSent) {
+      sendText(res, 500, 'Internal server error');
       return;
     }
-    sendText(res, 500, 'Internal server error');
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
   });
-  stream.pipe(res);
 }
 
 function contentTypeFor(filePath) {
@@ -95,12 +102,25 @@ function isPathInside(parent, child) {
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
+function tryStatFile(filePath) {
+  try {
+    const stat = statSync(filePath);
+    return stat.isFile() ? stat : null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleIndex(res, mode) {
   const html = await readFile(path.join(webPublicRoot, 'wasm-jit-csp', 'index.html'), 'utf8');
+  const bytes = Buffer.from(html, 'utf8');
   withCommonHeaders(res);
   res.setHeader('Content-Security-Policy', cspHeader(mode));
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(html);
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': String(bytes.byteLength),
+  });
+  res.end(bytes);
 }
 
 function handleStaticFile(reqPath, res) {
@@ -121,9 +141,14 @@ function handleStaticFile(reqPath, res) {
   // Serve built browser JS.
   if (decodedPath.startsWith('/dist/')) {
     const filePath = path.join(webDistRoot, decodedPath.slice('/dist/'.length));
-    if (!isPathInside(webDistRoot, filePath) || !existsSync(filePath)) return false;
+    if (!isPathInside(webDistRoot, filePath)) return false;
+    const stat = tryStatFile(filePath);
+    if (!stat) return false;
     withCommonHeaders(res);
-    res.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
+    res.writeHead(200, {
+      'Content-Type': contentTypeFor(filePath),
+      'Content-Length': String(stat.size),
+    });
     pipeFile(res, filePath);
     return true;
   }
@@ -134,9 +159,14 @@ function handleStaticFile(reqPath, res) {
   const publicRelPath = decodedPath.replace(/^\/+/, '');
   if (publicRelPath) {
     const filePath = path.join(webPublicRoot, publicRelPath);
-    if (isPathInside(webPublicRoot, filePath) && existsSync(filePath)) {
+    if (isPathInside(webPublicRoot, filePath)) {
+      const stat = tryStatFile(filePath);
+      if (!stat) return false;
       withCommonHeaders(res);
-      res.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
+      res.writeHead(200, {
+        'Content-Type': contentTypeFor(filePath),
+        'Content-Length': String(stat.size),
+      });
       pipeFile(res, filePath);
       return true;
     }
@@ -147,9 +177,13 @@ function handleStaticFile(reqPath, res) {
 
 function sendText(res, statusCode, message) {
   withCommonHeaders(res);
-  res.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
   const safeMessage = formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || 'Error';
-  res.end(safeMessage);
+  const bytes = Buffer.from(safeMessage, 'utf8');
+  res.writeHead(statusCode, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Content-Length': String(bytes.byteLength),
+  });
+  res.end(bytes);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -179,9 +213,7 @@ const server = http.createServer(async (req, res) => {
 
     // CSP test entry points.
     if (reqPath === '/' || reqPath === '/index.html') {
-      withCommonHeaders(res);
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(`<!doctype html>
+      const body = `<!doctype html>
 <meta charset="utf-8">
 <title>Aero WASM JIT CSP PoC</title>
 <h1>Aero WASM JIT CSP PoC</h1>
@@ -189,7 +221,14 @@ const server = http.createServer(async (req, res) => {
   <li><a href="/csp/strict/?bench=3">Strict CSP (no unsafe-eval, no wasm-unsafe-eval)</a></li>
   <li><a href="/csp/wasm-unsafe-eval/?bench=10">CSP with wasm-unsafe-eval</a></li>
   <li><a href="/csp/unsafe-eval/?bench=10">CSP with unsafe-eval (legacy)</a></li>
-</ul>`);
+</ul>`;
+      const bytes = Buffer.from(body, 'utf8');
+      withCommonHeaders(res);
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Length': String(bytes.byteLength),
+      });
+      res.end(bytes);
       return;
     }
 
@@ -204,20 +243,20 @@ const server = http.createServer(async (req, res) => {
     }
     if (handled) return;
 
-    withCommonHeaders(res);
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Not found');
+    sendText(res, 404, 'Not found');
   } catch (err) {
-    withCommonHeaders(res);
     // Avoid echoing internal error details back to the client.
     // eslint-disable-next-line no-console
     console.error(`poc-server: handler error: ${formatOneLineError(err, 512, 'Error')}`);
     if (res.headersSent) {
-      res.destroy();
+      try {
+        res.destroy();
+      } catch {
+        // ignore
+      }
       return;
     }
-    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Internal server error');
+    sendText(res, 500, 'Internal server error');
   }
 });
 

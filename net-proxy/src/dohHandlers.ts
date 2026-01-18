@@ -16,13 +16,65 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function tryWriteResponse(
+  res: http.ServerResponse,
+  statusCode: number,
+  headers: http.OutgoingHttpHeaders,
+  body: Buffer | string
+): void {
+  try {
+    res.writeHead(statusCode, headers);
+    res.end(body);
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function sendDnsMessage(res: http.ServerResponse, statusCode: number, message: Buffer): void {
-  res.writeHead(statusCode, {
-    "content-type": "application/dns-message",
-    "cache-control": "no-store",
-    "content-length": message.length
-  });
-  res.end(message);
+  tryWriteResponse(
+    res,
+    statusCode,
+    {
+      "content-type": "application/dns-message",
+      "cache-control": "no-store",
+      "content-length": message.length
+    },
+    message
+  );
+}
+
+function sendJson(
+  res: http.ServerResponse,
+  statusCode: number,
+  value: unknown,
+  opts: Readonly<{ contentType: string }>
+): void {
+  let code = statusCode;
+  let contentType = opts.contentType;
+  let body = "";
+  try {
+    body = JSON.stringify(value);
+  } catch {
+    code = 500;
+    contentType = "application/json; charset=utf-8";
+    // Do not call JSON.stringify again; treat it as hostile/unavailable.
+    body = `{"error":"internal server error"}`;
+  }
+
+  tryWriteResponse(
+    res,
+    code,
+    {
+      "content-type": contentType,
+      "cache-control": "no-store",
+      "content-length": Buffer.byteLength(body)
+    },
+    body
+  );
 }
 
 export async function handleDnsQuery(
@@ -172,15 +224,11 @@ export async function handleDnsJson(
   const rawType = url.searchParams.get("type") ?? "A";
   const name = normalizeDnsName(rawName);
   if (!name) {
-    const body = JSON.stringify({ error: "missing name" });
-    res.writeHead(400, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
-    res.end(body);
+    sendJson(res, 400, { error: "missing name" }, { contentType: "application/json; charset=utf-8" });
     return;
   }
   if (Buffer.byteLength(name, "utf8") > config.dohMaxQnameLength) {
-    const body = JSON.stringify({ error: "name too long" });
-    res.writeHead(400, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
-    res.end(body);
+    sendJson(res, 400, { error: "name too long" }, { contentType: "application/json; charset=utf-8" });
     return;
   }
 
@@ -193,9 +241,7 @@ export async function handleDnsJson(
   } else if (typeNorm === "CNAME" || typeNorm === "5") {
     qtype = 5;
   } else {
-    const body = JSON.stringify({ error: "unsupported type" });
-    res.writeHead(400, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
-    res.end(body);
+    sendJson(res, 400, { error: "unsupported type" }, { contentType: "application/json; charset=utf-8" });
     return;
   }
 
@@ -234,21 +280,20 @@ export async function handleDnsJson(
     answer = [];
   }
 
-  const payload = JSON.stringify({
-    Status: status,
-    TC: false,
-    RD: true,
-    RA: true,
-    AD: false,
-    CD: false,
-    Question: [{ name, type: qtype }],
-    Answer: answer
-  });
-  res.writeHead(200, {
-    "content-type": "application/dns-json; charset=utf-8",
-    "cache-control": "no-store",
-    "content-length": Buffer.byteLength(payload)
-  });
-  res.end(payload);
+  sendJson(
+    res,
+    200,
+    {
+      Status: status,
+      TC: false,
+      RD: true,
+      RA: true,
+      AD: false,
+      CD: false,
+      Question: [{ name, type: qtype }],
+      Answer: answer
+    },
+    { contentType: "application/dns-json; charset=utf-8" }
+  );
 }
 

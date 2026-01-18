@@ -8,7 +8,17 @@ import { L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD } from "../web/src/shared/l2TunnelP
 
 async function startTcpEchoServer() {
   const server = net.createServer((socket) => {
-    socket.on("data", (data) => socket.write(data));
+    socket.on("data", (data) => {
+      try {
+        socket.write(data);
+      } catch {
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+      }
+    });
   });
   await new Promise((resolve, reject) => {
     const onError = (err) => {

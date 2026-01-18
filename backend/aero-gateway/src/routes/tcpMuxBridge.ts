@@ -2,6 +2,8 @@ import { lookup } from "node:dns/promises";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 
+import { socketWritableLengthOrOverflow } from "../../../../src/socket_writable_length.js";
+
 import {
   decodeTcpMuxClosePayload,
   decodeTcpMuxOpenPayload,
@@ -17,6 +19,7 @@ import {
 } from "../protocol/tcpMux.js";
 import { validateTcpTargetPolicy, type TcpProxyUpgradePolicy } from "./tcpPolicy.js";
 import { encodeWsClosePayload, encodeWsFrame } from "./wsFrame.js";
+import { createGracefulDuplexCloser } from "./wsDuplexClose.js";
 import { WsMessageReceiver } from "./wsMessage.js";
 import {
   evaluateTcpHostPolicy,
@@ -84,6 +87,7 @@ export class WebSocketTcpMuxBridge {
   private readonly maxMessageBytes: number;
   private readonly hostnamePolicy: TcpHostnameEgressPolicy | null;
   private readonly wsMessages: WsMessageReceiver;
+  private readonly wsCloser: ReturnType<typeof createGracefulDuplexCloser>;
 
   private readonly muxParser = new TcpMuxFrameParser();
   private readonly streams = new Map<number, StreamState>();
@@ -94,6 +98,7 @@ export class WebSocketTcpMuxBridge {
   constructor(wsSocket: Duplex, opts: TcpMuxBridgeOptions) {
     this.wsSocket = wsSocket;
     this.opts = opts;
+    this.wsCloser = createGracefulDuplexCloser(wsSocket);
     this.maxMessageBytes = opts.maxMessageBytes ?? 1024 * 1024;
     try {
       this.hostnamePolicy = parseTcpHostnameEgressPolicyFromEnv(process.env);
@@ -104,7 +109,7 @@ export class WebSocketTcpMuxBridge {
       maxMessageBytes: this.maxMessageBytes,
       sendWsFrame: (opcode, payload) => this.sendWsFrame(opcode, payload),
       onMessage: (opcode, payload) => this.forwardMessage(opcode, payload),
-      onClose: () => this.close(),
+      onClose: () => this.closeGracefully(),
       closeWithProtocolError: () => this.closeWithProtocolError(),
       closeWithMessageTooLarge: () => this.closeWithMessageTooLarge(),
     });
@@ -116,9 +121,9 @@ export class WebSocketTcpMuxBridge {
     this.wsSocket.on("data", (data) => {
       this.wsMessages.push(data);
     });
-    this.wsSocket.on("error", () => this.close());
-    this.wsSocket.on("close", () => this.close());
-    this.wsSocket.on("end", () => this.close());
+    this.wsSocket.on("error", () => this.destroyNow());
+    this.wsSocket.on("close", () => this.destroyNow());
+    this.wsSocket.on("end", () => this.destroyNow());
     this.wsSocket.on("drain", () => this.onWsDrain());
   }
 
@@ -261,27 +266,36 @@ export class WebSocketTcpMuxBridge {
     } else {
       dialHost = hostDecision.target.hostname;
       dialLookup = (_hostname, _options, cb) => {
+        let cbDone = false;
+        const cbOnce = (err: Error | null, address: string, family: number) => {
+          if (cbDone) return;
+          cbDone = true;
+          cb(err, address, family);
+        };
+
         void (async () => {
           let addresses: { address: string; family: number }[];
           try {
             addresses = await lookup(dialHost, { all: true, verbatim: true });
           } catch (err) {
-            cb(err as Error, "", 4);
+            cbOnce(err as Error, "", 4);
             return;
           }
 
           if (addresses.length === 0) {
-            cb(new Error("DNS lookup returned no addresses"), "", 4);
+            cbOnce(new Error("DNS lookup returned no addresses"), "", 4);
             return;
           }
 
           const chosen = selectAllowedDnsAddress(addresses, allowPrivateIps);
           if (chosen) {
-            cb(null, chosen.address, chosen.family ?? 4);
+            cbOnce(null, chosen.address, chosen.family ?? 4);
             return;
           }
-          cb(new TcpMuxIpPolicyDeniedError("All resolved IPs are blocked by IP egress policy"), "", 4);
-        })();
+          cbOnce(new TcpMuxIpPolicyDeniedError("All resolved IPs are blocked by IP egress policy"), "", 4);
+        })().catch((err) => {
+          cbOnce(err as Error, "", 4);
+        });
       };
     }
 
@@ -300,13 +314,20 @@ export class WebSocketTcpMuxBridge {
     }
 
     const createConnection = this.opts.createConnection ?? net.createConnection;
-    const socket = createConnection({
-      host: dialHost,
-      port: target.port,
-      allowHalfOpen: true,
-      lookup: dialLookup,
-    });
-    socket.setNoDelay(true);
+    let socket: net.Socket;
+    try {
+      socket = createConnection({
+        host: dialHost,
+        port: target.port,
+        allowHalfOpen: true,
+        lookup: dialLookup,
+      });
+      socket.setNoDelay(true);
+    } catch {
+      releaseSessionSlot?.();
+      this.sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+      return;
+    }
 
     const stream: StreamState = {
       id: frame.streamId,
@@ -413,7 +434,9 @@ export class WebSocketTcpMuxBridge {
     }
     if (!ok) {
       stream.writePaused = true;
+      return;
     }
+    this.enforceTcpBackpressure(stream);
   }
 
   private handleClose(frame: TcpMuxFrame): void {
@@ -447,13 +470,30 @@ export class WebSocketTcpMuxBridge {
   }
 
   private enqueueStreamWrite(stream: StreamState, data: Buffer): void {
-    const maxStreamBufferedBytes = this.opts.maxStreamBufferedBytes ?? 1024 * 1024;
+    const maxStreamBufferedBytes = this.maxStreamBufferedBytes();
     stream.pendingWrites.push(data);
     stream.pendingWriteBytes += data.length;
-    if (stream.pendingWriteBytes > maxStreamBufferedBytes) {
+    // Enforce combined queued bytes + socket-level buffering (writableLength), even when writes
+    // are paused due to backpressure.
+    const socketBuffered = socketWritableLengthOrOverflow(stream.socket, maxStreamBufferedBytes);
+    if (stream.pendingWriteBytes + socketBuffered > maxStreamBufferedBytes) {
       this.sendStreamError(stream.id, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "stream buffered too much data");
       this.destroyStream(stream.id);
     }
+  }
+
+  private maxStreamBufferedBytes(): number {
+    return this.opts.maxStreamBufferedBytes ?? 1024 * 1024;
+  }
+
+  private enforceTcpBackpressure(stream: StreamState): boolean {
+    const max = this.maxStreamBufferedBytes();
+    const socketBuffered = socketWritableLengthOrOverflow(stream.socket, max);
+    const totalBuffered = stream.pendingWriteBytes + socketBuffered;
+    if (totalBuffered <= max) return true;
+    this.sendStreamError(stream.id, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "stream buffered too much data");
+    this.destroyStream(stream.id);
+    return false;
   }
 
   private flushStreamWrites(stream: StreamState): void {
@@ -477,6 +517,7 @@ export class WebSocketTcpMuxBridge {
         stream.writePaused = true;
         return;
       }
+      if (!this.enforceTcpBackpressure(stream)) return;
     }
   }
 
@@ -509,7 +550,7 @@ export class WebSocketTcpMuxBridge {
     try {
       ok = this.wsSocket.write(frame);
     } catch {
-      this.close();
+      this.destroyNow();
       return;
     }
     if (!ok) {
@@ -520,22 +561,22 @@ export class WebSocketTcpMuxBridge {
   private closeWithProtocolError(): void {
     // 1002 = protocol error.
     this.sendWsFrame(0x8, encodeWsClosePayload(1002));
-    this.close();
+    this.closeGracefully();
   }
 
   private closeWithMessageTooLarge(): void {
     // 1009 = message too big.
     this.sendWsFrame(0x8, encodeWsClosePayload(1009));
-    this.close();
+    this.closeGracefully();
   }
 
   private closeWithUnsupportedData(): void {
     // 1003 = unsupported data.
     this.sendWsFrame(0x8, encodeWsClosePayload(1003));
-    this.close();
+    this.closeGracefully();
   }
 
-  private close(): void {
+  private closeGracefully(): void {
     if (this.closed) return;
     this.closed = true;
 
@@ -543,11 +584,20 @@ export class WebSocketTcpMuxBridge {
       this.destroyStream(id);
     }
 
-    try {
-      this.wsSocket.destroy();
-    } catch {
-      // ignore
+    // `WsMessageReceiver` writes the close response frame before invoking `onClose()`.
+    // Avoid destroying the underlying socket until pending writes have a chance to flush.
+    this.wsCloser.endThenDestroy();
+  }
+
+  private destroyNow(): void {
+    if (this.closed) return;
+    this.closed = true;
+
+    for (const id of this.streams.keys()) {
+      this.destroyStream(id);
     }
+
+    this.wsCloser.destroyNow();
   }
 }
 

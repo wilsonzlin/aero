@@ -1,8 +1,10 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { formatOneLineError } from "../../src/text.js";
+import { isExpectedStreamAbort } from "../../src/stream_abort.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,9 +36,11 @@ function logServerError(prefix, err) {
 }
 
 function send(res, statusCode, body, contentType = "text/plain; charset=utf-8") {
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(String(body), "utf8");
   res.statusCode = statusCode;
   res.setHeader("Content-Type", contentType);
-  res.end(body);
+  res.setHeader("Content-Length", String(bytes.byteLength));
+  res.end(bytes);
 }
 
 function safeResolve(rootDir, requestPath) {
@@ -93,17 +97,23 @@ const server = http.createServer((req, res) => {
 
   const ext = path.extname(filePath);
   res.setHeader("Content-Type", MIME.get(ext) ?? "application/octet-stream");
+  res.setHeader("Content-Length", String(stat.size));
 
   const stream = fs.createReadStream(filePath);
-  stream.on("error", (err) => {
+  void pipeline(stream, res).catch((err) => {
+    if (isExpectedStreamAbort(err)) return;
     logServerError("poc browser-memory: stream error", err);
+    if (res.writableEnded) return;
     if (res.headersSent) {
-      res.destroy();
+      try {
+        res.destroy();
+      } catch {
+        // ignore
+      }
       return;
     }
     send(res, 500, "Internal server error");
   });
-  stream.pipe(res);
 });
 
 server.listen(PORT, () => {

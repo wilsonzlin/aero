@@ -28,6 +28,7 @@ import { validateWebSocketHandshakeRequest } from './routes/wsUpgradeRequest.js'
 import { normalizeOriginString } from './security/origin.js';
 import { buildUdpRelaySessionInfo, mintUdpRelayToken } from './udpRelay.js';
 import { getVersionInfo } from './version.js';
+import { formatOneLineError } from './util/text.js';
 import {
   L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD_BYTES,
   L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD_BYTES,
@@ -38,6 +39,15 @@ type ServerBundle = {
   markShuttingDown: () => void;
   closeUpgradeSockets: () => void;
 };
+
+function isUpgradeSocketDestroyed(socket: Duplex): boolean {
+  try {
+    return (socket as unknown as { destroyed?: unknown }).destroyed === true;
+  } catch {
+    // Fail closed: if state is not observable, treat it as destroyed.
+    return true;
+  }
+}
 
 function normalizeBasePathFromPublicBaseUrl(publicBaseUrl: string): string {
   let pathname: string;
@@ -325,78 +335,85 @@ export function buildServer(config: Config): ServerBundle {
     upgradeSockets.add(socket);
     socket.once('close', () => upgradeSockets.delete(socket));
 
-    if (shuttingDown) {
-      respondUpgradeHttp(socket, 503, 'Shutting down');
-      return;
-    }
-
-    const rawUrl = req.url ?? '';
-    if (!enforceUpgradeRequestUrlLimit(rawUrl, socket)) return;
-    const url = parseUpgradeRequestUrl(rawUrl, socket, { invalidUrlMessage: 'Invalid request URL' });
-    if (!url) return;
-
-    // The gateway may be deployed behind a reverse proxy under a base path
-    // prefix (e.g. `/aero`). Some proxies strip that prefix before forwarding
-    // to the gateway, while others forward it verbatim. Support both.
-    const authForUpgrade = () => {
-      const handshake = validateWebSocketHandshakeRequest(req);
-      if (!handshake.ok) {
-        respondUpgradeHttp(socket, handshake.status, handshake.message);
-        return null;
+    try {
+      if (shuttingDown) {
+        respondUpgradeHttp(socket, 503, 'Shutting down');
+        return;
       }
 
-      const session = sessions.verifySessionRequest(req);
-      if (!session) {
-        respondUpgradeHttp(socket, 401, 'Unauthorized');
-        return null;
+      const rawUrl = req.url ?? '';
+      if (!enforceUpgradeRequestUrlLimit(rawUrl, socket)) return;
+      const url = parseUpgradeRequestUrl(rawUrl, socket, { invalidUrlMessage: 'Invalid request URL' });
+      if (!url) return;
+
+      // The gateway may be deployed behind a reverse proxy under a base path
+      // prefix (e.g. `/aero`). Some proxies strip that prefix before forwarding
+      // to the gateway, while others forward it verbatim. Support both.
+      const authForUpgrade = () => {
+        const handshake = validateWebSocketHandshakeRequest(req);
+        if (!handshake.ok) {
+          respondUpgradeHttp(socket, handshake.status, handshake.message);
+          return null;
+        }
+
+        const session = sessions.verifySessionRequest(req);
+        if (!session) {
+          respondUpgradeHttp(socket, 401, 'Unauthorized');
+          return null;
+        }
+
+        return { session, handshakeKey: handshake.key };
+      };
+
+      const commonTcpUpgradeOptions = (sessionId: string) =>
+        ({
+          allowedOrigins: config.ALLOWED_ORIGINS,
+          blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
+          allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
+          allowedTargetPorts: config.TCP_ALLOWED_PORTS,
+          allowPrivateIps: config.TCP_ALLOW_PRIVATE_IPS,
+          sessionId,
+          sessionConnections,
+          maxMessageBytes: config.TCP_PROXY_MAX_MESSAGE_BYTES,
+          maxTcpBufferedBytes: config.TCP_PROXY_MAX_TCP_BUFFER_BYTES,
+          connectTimeoutMs: config.TCP_PROXY_CONNECT_TIMEOUT_MS,
+          idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
+          metrics: metrics.tcpProxy,
+        }) as const;
+
+      if (url.pathname === '/tcp' || url.pathname === endpoints.tcp) {
+        const auth = authForUpgrade();
+        if (!auth) return;
+
+        handleTcpProxyUpgrade(req, socket, head, {
+          ...commonTcpUpgradeOptions(auth.session.id),
+          handshakeKey: auth.handshakeKey,
+          upgradeUrl: url,
+        });
+        return;
       }
 
-      return { session, handshakeKey: handshake.key };
-    };
+      if (url.pathname === '/tcp-mux' || url.pathname === endpoints.tcpMux) {
+        const auth = authForUpgrade();
+        if (!auth) return;
 
-    const commonTcpUpgradeOptions = (sessionId: string) =>
-      ({
-        allowedOrigins: config.ALLOWED_ORIGINS,
-        blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
-        allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
-        allowedTargetPorts: config.TCP_ALLOWED_PORTS,
-        allowPrivateIps: config.TCP_ALLOW_PRIVATE_IPS,
-        sessionId,
-        sessionConnections,
-        maxMessageBytes: config.TCP_PROXY_MAX_MESSAGE_BYTES,
-        connectTimeoutMs: config.TCP_PROXY_CONNECT_TIMEOUT_MS,
-        idleTimeoutMs: config.TCP_PROXY_IDLE_TIMEOUT_MS,
-        metrics: metrics.tcpProxy,
-      }) as const;
+        handleTcpMuxUpgrade(req, socket, head, {
+          ...commonTcpUpgradeOptions(auth.session.id),
+          handshakeKey: auth.handshakeKey,
+          upgradeUrl: url,
+          maxStreams: config.TCP_MUX_MAX_STREAMS,
+          maxStreamBufferedBytes: config.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
+          maxFramePayloadBytes: config.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
+        });
+        return;
+      }
 
-    if (url.pathname === '/tcp' || url.pathname === endpoints.tcp) {
-      const auth = authForUpgrade();
-      if (!auth) return;
-
-      handleTcpProxyUpgrade(req, socket, head, {
-        ...commonTcpUpgradeOptions(auth.session.id),
-        handshakeKey: auth.handshakeKey,
-        upgradeUrl: url,
-      });
-      return;
+      respondUpgradeHttp(socket, 404, 'Not Found');
+    } catch (err) {
+      app.log.error({ err: formatOneLineError(err, 512) }, 'upgrade_unexpected_error');
+      if (isUpgradeSocketDestroyed(socket)) return;
+      respondUpgradeHttp(socket, 500, 'WebSocket upgrade failed');
     }
-
-    if (url.pathname === '/tcp-mux' || url.pathname === endpoints.tcpMux) {
-      const auth = authForUpgrade();
-      if (!auth) return;
-
-      handleTcpMuxUpgrade(req, socket, head, {
-        ...commonTcpUpgradeOptions(auth.session.id),
-        handshakeKey: auth.handshakeKey,
-        upgradeUrl: url,
-        maxStreams: config.TCP_MUX_MAX_STREAMS,
-        maxStreamBufferedBytes: config.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
-        maxFramePayloadBytes: config.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,
-      });
-      return;
-    }
-
-    respondUpgradeHttp(socket, 404, 'Not Found');
   });
 
   // Handle CORS preflight requests, even when no route matches.
@@ -441,7 +458,13 @@ function e2ePageHtml(): string {
     <script>
       const outEl = document.getElementById('out');
       function render(obj) {
-        outEl.textContent = JSON.stringify(obj, null, 2);
+        let text = '';
+        try {
+          text = JSON.stringify(obj, null, 2);
+        } catch {
+          text = '[unserializable]';
+        }
+        outEl.textContent = text;
       }
       function withTimeout(promise, ms, label) {
         return Promise.race([
@@ -580,7 +603,7 @@ function e2ePageHtml(): string {
             method: 'POST',
             credentials: 'include',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({}),
+            body: '{}',
           }), 5000, 'session fetch');
           results.session.ok = res.ok;
           if (!res.ok) results.session.error = 'HTTP ' + res.status;
@@ -607,16 +630,67 @@ function e2ePageHtml(): string {
           wsUrl.searchParams.set('host', '127.0.0.1');
           wsUrl.searchParams.set('port', String(echoPort));
           const echo = await withTimeout(new Promise((resolve, reject) => {
+            const MAX_WS_CLOSE_REASON_BYTES = 123;
+            const wsSendSafe = (ws, data) => {
+              let openState = 1;
+              try {
+                openState = typeof WebSocket.OPEN === 'number' ? WebSocket.OPEN : 1;
+              } catch {
+                // ignore (treat as default)
+              }
+              try {
+                // If we can observe readyState, avoid calling send() when not open.
+                if (typeof ws?.readyState === 'number' && ws.readyState !== openState) return false;
+              } catch {
+                return false;
+              }
+              try {
+                ws.send(data);
+                return true;
+              } catch {
+                return false;
+              }
+            };
+            const wsCloseSafe = (ws, code, reason) => {
+              let closeFn;
+              try {
+                closeFn = ws?.close;
+              } catch {
+                closeFn = null;
+              }
+              if (typeof closeFn !== 'function') return;
+              try {
+                if (code === undefined) {
+                  closeFn.call(ws);
+                  return;
+                }
+                if (reason === undefined) {
+                  closeFn.call(ws, code);
+                  return;
+                }
+                const safeReason = formatOneLineUtf8(reason, MAX_WS_CLOSE_REASON_BYTES);
+                if (!safeReason) {
+                  closeFn.call(ws, code);
+                  return;
+                }
+                closeFn.call(ws, code, safeReason);
+              } catch {
+                // ignore
+              }
+            };
             const ws = new WebSocket(wsUrl.toString());
             ws.binaryType = 'arraybuffer';
             ws.onopen = () => {
               const data = new TextEncoder().encode('ping');
-              ws.send(data);
+              if (!wsSendSafe(ws, data)) {
+                wsCloseSafe(ws);
+                reject(new Error('WebSocket send failed'));
+              }
             };
             ws.onerror = () => reject(new Error('WebSocket error'));
             ws.onmessage = (event) => {
               resolve(event.data);
-              ws.close();
+              wsCloseSafe(ws);
             };
           }), 5000, 'WebSocket');
 

@@ -7,6 +7,7 @@ import {
   type SignalMessage,
 } from "../shared/udpRelaySignaling";
 import { readJsonResponseWithLimit, readTextResponseWithLimit } from "../storage/response_json";
+import { pcCloseSafe } from "./rtcSafe";
 import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type RelaySignalingMode = "ws-trickle" | "http-offer" | "legacy-offer";
@@ -65,7 +66,7 @@ export async function connectRelaySignaling(
     await waitForDataChannelOpen(dc);
     return { pc, dc };
   } catch (err) {
-    pc.close();
+    pcCloseSafe(pc);
     throw err;
   }
 }
@@ -398,11 +399,7 @@ async function openWebSocket(url: string, protocol?: string): Promise<WebSocket>
     };
 
     const timer = setTimeout(() => {
-      try {
-        ws.close();
-      } catch {
-        // Ignore.
-      }
+      wsCloseSafe(ws);
       settle(new Error("websocket connect timed out"));
     }, DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS);
     (timer as unknown as { unref?: () => void }).unref?.();
@@ -487,11 +484,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   const closeActiveWs = () => {
     currentAttempt = null;
     if (!activeWs) return;
-    try {
-      activeWs.close();
-    } catch {
-      // Ignore.
-    }
+    wsCloseSafe(activeWs);
     activeWs = null;
   };
 
@@ -595,7 +588,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
             await pc.addIceCandidate(msg.candidate);
           } catch (err) {
             if (!haveAnswer) settleAnswer(err);
-            else pc.close();
+            else pcCloseSafe(pc);
           }
           break;
         case "error":
@@ -603,14 +596,14 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
             // Do not reflect server-provided error messages into user-visible errors.
             settleAnswer(new Error(`signaling error (${sanitizeSignalingErrorCode(msg.code)})`));
           } else {
-            pc.close();
+            pcCloseSafe(pc);
           }
           break;
         case "close":
           if (!haveAnswer) {
             settleAnswer(new Error("signaling closed"));
           } else {
-            pc.close();
+            pcCloseSafe(pc);
           }
           break;
         case "auth":
@@ -618,7 +611,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
           break;
         case "offer":
           if (!haveAnswer) settleAnswer(new Error("unexpected offer from server"));
-          else pc.close();
+          else pcCloseSafe(pc);
           break;
       }
     };
@@ -630,7 +623,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
         settleAnswer(new Error(`signaling websocket closed (${evt.code})`));
         return;
       }
-      pc.close();
+      pcCloseSafe(pc);
     };
 
     const onError = () => {
@@ -639,7 +632,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
         settleAnswer(new Error("signaling websocket error"));
         return;
       }
-      pc.close();
+      pcCloseSafe(pc);
     };
 
     ws.addEventListener("message", onMessage);
@@ -742,7 +735,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
         settleAnswer(new Error(`signaling websocket closed (${evt.code})`));
         return;
       }
-      pc.close();
+      pcCloseSafe(pc);
     };
 
     const onError = () => {
@@ -751,7 +744,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
         settleAnswer(new Error("signaling websocket error"));
         return;
       }
-      pc.close();
+      pcCloseSafe(pc);
     };
 
     ws.addEventListener("message", onMessage);

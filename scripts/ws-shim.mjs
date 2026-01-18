@@ -13,12 +13,13 @@
 import { EventEmitter } from "node:events";
 import http from "node:http";
 import https from "node:https";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { Duplex } from "node:stream";
 import { isValidHttpToken } from "../src/httpTokens.js";
 import { formatOneLineUtf8 } from "../src/text.js";
-
-const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+import { rejectHttpUpgrade } from "../src/http_upgrade_reject.js";
+import { wsCloseSafe, wsSendSafe } from "../src/ws_safe.js";
+import { encodeWebSocketHandshakeResponse } from "../src/ws_handshake_response.js";
 
 const utf8DecoderFatal = new TextDecoder("utf-8", { fatal: true });
 
@@ -343,7 +344,12 @@ class BaseWebSocket extends EventEmitter {
   }
 
   get bufferedAmount() {
-    return this.#socket?.writableLength ?? 0;
+    try {
+      const n = this.#socket?.writableLength;
+      return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch {
+      return 0;
+    }
   }
 
   send(data, optionsOrCb, cb) {
@@ -505,7 +511,13 @@ class BaseWebSocket extends EventEmitter {
           const response = encodeFrame(0x8, payload, { mask });
           this.#closeSent = true;
           try {
-            this.#socket?.write(response, () => this.#socket?.end());
+            this.#socket?.write(response, () => {
+              try {
+                this.#socket?.end();
+              } catch {
+                // ignore
+              }
+            });
           } catch {
             // ignore
           }
@@ -545,7 +557,13 @@ class BaseWebSocket extends EventEmitter {
     payload.writeUInt16BE(code, 0);
     const mask = !this.#expectMasked;
     try {
-      this.#socket.write(encodeFrame(0x8, payload, { mask }), () => this.#socket?.destroy());
+      this.#socket.write(encodeFrame(0x8, payload, { mask }), () => {
+        try {
+          this.#socket?.destroy();
+        } catch {
+          // ignore
+        }
+      });
     } catch {
       try {
         this.#socket.destroy();
@@ -655,29 +673,44 @@ export class WebSocketServer extends EventEmitter {
   #attachToServer() {
     if (!this.#server) return;
     this.#upgradeListener = (req, socket, head) => {
-      if (this.#options.path) {
-        const rawUrl = req.url ?? "/";
-        if (typeof rawUrl !== "string" || rawUrl.length > MAX_UPGRADE_URL_LEN) {
-          socket.destroy();
-          return;
+      try {
+        if (this.#options.path) {
+          let rawUrl;
+          try {
+            rawUrl = req.url ?? "/";
+          } catch {
+            destroyQuietly(socket);
+            return;
+          }
+          if (typeof rawUrl !== "string" || rawUrl.length > MAX_UPGRADE_URL_LEN) {
+            destroyQuietly(socket);
+            return;
+          }
+          let url;
+          try {
+            url = new URL(rawUrl, "http://localhost");
+          } catch {
+            destroyQuietly(socket);
+            return;
+          }
+          if (url.pathname !== this.#options.path) {
+            // Match `ws` behavior: path mismatch aborts the handshake.
+            destroyQuietly(socket);
+            return;
+          }
         }
-        let url;
+
         try {
-          url = new URL(rawUrl, "http://localhost");
+          this.handleUpgrade(req, socket, head, (ws) => {
+            this.emit("connection", ws, req);
+          });
         } catch {
-          socket.destroy();
-          return;
-        }
-        if (url.pathname !== this.#options.path) {
-          // Match `ws` behavior: path mismatch aborts the handshake.
           destroyQuietly(socket);
           return;
         }
+      } catch {
+        destroyQuietly(socket);
       }
-
-      this.handleUpgrade(req, socket, head, (ws) => {
-        this.emit("connection", ws, req);
-      });
     };
 
     this.#server.on("upgrade", this.#upgradeListener);
@@ -695,13 +728,13 @@ export class WebSocketServer extends EventEmitter {
     try {
       const key = req.headers["sec-websocket-key"];
       if (typeof key !== "string" || key === "" || key.length > MAX_WS_KEY_LEN) {
-        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        rejectHttpUpgrade(socket, 400, "Bad Request");
         return;
       }
 
       const offered = parseProtocolsHeader(req.headers["sec-websocket-protocol"]);
       if (offered === null) {
-        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        rejectHttpUpgrade(socket, 400, "Invalid Sec-WebSocket-Protocol header");
         return;
       }
       const protocols = new Set(offered);
@@ -710,28 +743,22 @@ export class WebSocketServer extends EventEmitter {
       if (this.#options.handleProtocols) {
         const res = this.#options.handleProtocols(protocols, req);
         if (res === false || typeof res !== "string" || res.trim() === "") {
-          socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          rejectHttpUpgrade(socket, 400, "Bad Request");
           return;
         }
         selected = res.trim();
         if (!protocols.has(selected)) {
-          socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          rejectHttpUpgrade(socket, 400, "Bad Request");
           return;
         }
       }
 
-      const accept = createHash("sha1").update(key + WS_GUID).digest("base64");
-
-      const headers = [
-        "HTTP/1.1 101 Switching Protocols",
-        "Upgrade: websocket",
-        "Connection: Upgrade",
-        `Sec-WebSocket-Accept: ${accept}`,
-        ...(selected ? [`Sec-WebSocket-Protocol: ${selected}`] : []),
-        "\r\n",
-      ].join("\r\n");
-
-      socket.write(headers);
+      try {
+        socket.write(encodeWebSocketHandshakeResponse({ key, protocol: selected }));
+      } catch {
+        destroyQuietly(socket);
+        return;
+      }
 
       // The constructor overload with a socket is internal-only.
       const ws = new WebSocket(socket, { protocol: selected, maxPayload: this.#options.maxPayload }, head);
@@ -782,21 +809,27 @@ export function createWebSocketStream(ws, opts = {}) {
     readableHighWaterMark: highWaterMark,
     writableHighWaterMark: highWaterMark,
     write(chunk, _enc, callback) {
-      try {
-        ws.send(chunk, (err) => callback(err));
-      } catch (err) {
-        callback(err);
-      }
+      let settled = false;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
+
+      const ok = wsSendSafe(ws, chunk, (err) => {
+        if (!err) {
+          finish(() => callback());
+          return;
+        }
+        finish(() => callback(err instanceof Error ? err : new Error("WebSocket send failed")));
+      });
+      if (!ok) finish(() => callback(new Error("WebSocket send failed")));
     },
     read() {
       // no-op: data is pushed from the WebSocket 'message' handler.
     },
     final(callback) {
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
+      wsCloseSafe(ws);
       callback();
     },
   });

@@ -20,11 +20,18 @@ export function tryReadWsFrame(buffer: Buffer, maxPayloadBytes: number): TryRead
   const second = buffer[1];
 
   const fin = (first & 0x80) !== 0;
+  const rsv = first & 0x70;
   const opcode = first & 0x0f;
 
   const masked = (second & 0x80) !== 0;
   let length = second & 0x7f;
   let offset = 2;
+
+  // Server-side parser: clients must mask frames (RFC 6455) and RSV bits must be 0 unless
+  // extensions are negotiated (we don't support extensions on raw-upgrade sockets here).
+  if (rsv !== 0 || !masked) {
+    return { frame: { fin: true, opcode: 0x8, payload: encodeWsClosePayload(1002) }, remaining: Buffer.alloc(0) };
+  }
 
   if (length === 126) {
     if (buffer.length < offset + 2) return null;
@@ -49,19 +56,15 @@ export function tryReadWsFrame(buffer: Buffer, maxPayloadBytes: number): TryRead
   }
 
   let maskKey: Buffer | null = null;
-  if (masked) {
-    if (buffer.length < offset + 4) return null;
-    maskKey = buffer.subarray(offset, offset + 4);
-    offset += 4;
-  }
+  if (buffer.length < offset + 4) return null;
+  maskKey = buffer.subarray(offset, offset + 4);
+  offset += 4;
 
   if (buffer.length < offset + length) return null;
   let payload = buffer.subarray(offset, offset + length);
   const remaining = buffer.subarray(offset + length);
 
-  if (masked) {
-    payload = unmask(payload, maskKey!);
-  }
+  payload = unmask(payload, maskKey);
 
   // If we consumed the entire buffer, avoid keeping a reference to the backing allocation
   // via an empty subarray view.

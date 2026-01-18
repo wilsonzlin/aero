@@ -36,11 +36,23 @@ export type UdpRelayTokenInfo = Readonly<{
 
 function encodeJwtHS256(payload: Record<string, unknown>, secret: string): string {
   const header = { alg: 'HS256', typ: 'JWT' };
-  const headerPart = encodeBase64Url(Buffer.from(JSON.stringify(header), 'utf8'));
+  let headerJson = '';
+  try {
+    headerJson = JSON.stringify(header);
+  } catch {
+    throw new Error('UDP relay JWT encoding failed');
+  }
+  const headerPart = encodeBase64Url(Buffer.from(headerJson, 'utf8'));
   if (headerPart.length > MAX_JWT_HEADER_B64_LEN) {
     throw new Error('UDP relay JWT header too long');
   }
-  const payloadPart = encodeBase64Url(Buffer.from(JSON.stringify(payload), 'utf8'));
+  let payloadJson = '';
+  try {
+    payloadJson = JSON.stringify(payload);
+  } catch {
+    throw new Error('UDP relay JWT encoding failed');
+  }
+  const payloadPart = encodeBase64Url(Buffer.from(payloadJson, 'utf8'));
   if (payloadPart.length > MAX_JWT_PAYLOAD_B64_LEN) {
     throw new Error('UDP relay JWT payload too long');
   }

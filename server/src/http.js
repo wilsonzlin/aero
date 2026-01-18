@@ -1,32 +1,53 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import dns from "node:dns/promises";
 import { getAuthTokenFromRequest, isOriginAllowed, isTokenAllowed } from "./auth.js";
 import { isHostAllowed, isIpAllowed } from "./policy.js";
 import { formatOneLineError } from "./text.js";
+import { isExpectedStreamAbort } from "../../src/stream_abort.js";
 
 const stat = promisify(fs.stat);
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
 
+function trySetHeader(res, name, value) {
+  try {
+    res.setHeader(name, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isResponseDestroyed(res) {
+  try {
+    return res.destroyed === true;
+  } catch {
+    // Fail closed: if we can't observe state, treat it as already destroyed.
+    return true;
+  }
+}
+
 function setCrossOriginIsolationHeaders(res) {
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  res.setHeader("Origin-Agent-Cluster", "?1");
+  trySetHeader(res, "Cross-Origin-Opener-Policy", "same-origin");
+  trySetHeader(res, "Cross-Origin-Embedder-Policy", "require-corp");
+  trySetHeader(res, "Cross-Origin-Resource-Policy", "same-origin");
+  trySetHeader(res, "Origin-Agent-Cluster", "?1");
 }
 
 function setCommonSecurityHeaders(res) {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Permissions-Policy", "camera=(), geolocation=(), microphone=(self), usb=(self)");
+  trySetHeader(res, "X-Content-Type-Options", "nosniff");
+  trySetHeader(res, "Referrer-Policy", "no-referrer");
+  trySetHeader(res, "Permissions-Policy", "camera=(), geolocation=(), microphone=(self), usb=(self)");
 }
 
 function setContentSecurityPolicy(res) {
   // Aero relies on dynamic WebAssembly compilation for its WASM-based JIT tier.
   // CSP controls this via `script-src 'wasm-unsafe-eval'` (preferred over 'unsafe-eval').
-  res.setHeader(
+  trySetHeader(
+    res,
     "Content-Security-Policy",
     "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'",
   );
@@ -59,28 +80,77 @@ function guessContentType(filePath) {
   }
 }
 
+function sendText(res, statusCode, message) {
+  // Defensive: response encoding must never throw.
+  let body;
+  let code = statusCode;
+  try {
+    body = Buffer.from(String(message), "utf8");
+  } catch {
+    code = 500;
+    body = Buffer.from("Internal Server Error\n", "utf8");
+  }
+
+  try {
+    res.statusCode = code;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Length", body.length);
+    res.setHeader("Cache-Control", "no-store");
+    res.end(body);
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function sendJson(res, statusCode, value) {
+  // Defensive: response encoding must never throw. If JSON.stringify throws
+  // (cyclic data, hostile toJSON, etc.), fall back to a stable 500 JSON body.
+  let body;
+  let code = statusCode;
+  try {
+    body = Buffer.from(JSON.stringify(value), "utf8");
+  } catch {
+    code = 500;
+    body = Buffer.from(`{"error":"internal server error"}\n`, "utf8");
+  }
+
+  try {
+    res.statusCode = code;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Length", body.length);
+    res.setHeader("Cache-Control", "no-store");
+    res.end(body);
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function handleDnsLookup(req, res, url, { config, logger, metrics }) {
   const token = getAuthTokenFromRequest(req, url.searchParams);
   if (!isTokenAllowed(token, config.tokens)) {
-    res.statusCode = 401;
-    res.end("Unauthorized");
+    sendText(res, 401, "Unauthorized");
     return;
   }
   if (!isOriginAllowed(req.headers.origin, config.allowedOrigins)) {
-    res.statusCode = 403;
-    res.end("Forbidden");
+    sendText(res, 403, "Forbidden");
     return;
   }
 
   const name = url.searchParams.get("name");
   if (!name) {
-    res.statusCode = 400;
-    res.end("Missing name");
+    sendText(res, 400, "Missing name");
     return;
   }
   if (!isHostAllowed(name, config.allowHosts)) {
-    res.statusCode = 403;
-    res.end("Host is not allowlisted");
+    sendText(res, 403, "Host is not allowlisted");
     return;
   }
 
@@ -88,17 +158,13 @@ async function handleDnsLookup(req, res, url, { config, logger, metrics }) {
   const answers = await dns.lookup(name, { all: true });
   const filtered = answers.filter((a) => isIpAllowed(a.address, config.allowPrivateRanges));
   if (filtered.length === 0) {
-    res.statusCode = 403;
-    res.end("DNS resolved to blocked address range");
+    sendText(res, 403, "DNS resolved to blocked address range");
     return;
   }
 
   logger.info("dns_lookup", { name, answerCount: filtered.length });
 
-  res.statusCode = 200;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-  res.end(JSON.stringify({ name, addresses: filtered }));
+  sendJson(res, 200, { name, addresses: filtered });
 }
 
 async function handleStatic(req, res, url, { config, logger }) {
@@ -109,8 +175,7 @@ async function handleStatic(req, res, url, { config, logger }) {
   const rootDir = path.resolve(config.staticDir);
   const targetPath = path.resolve(rootDir, "." + pathname);
   if (!targetPath.startsWith(rootDir + path.sep) && targetPath !== rootDir) {
-    res.statusCode = 400;
-    res.end("Bad path");
+    sendText(res, 400, "Bad path");
     return;
   }
 
@@ -118,41 +183,78 @@ async function handleStatic(req, res, url, { config, logger }) {
   try {
     st = await stat(targetPath);
   } catch {
-    res.statusCode = 404;
-    res.end("Not found");
+    sendText(res, 404, "Not found");
     return;
   }
   if (!st.isFile()) {
-    res.statusCode = 404;
-    res.end("Not found");
+    sendText(res, 404, "Not found");
     return;
   }
 
   const stream = fs.createReadStream(targetPath);
-  let opened = false;
-  stream.once("open", () => {
-    opened = true;
-    if (res.destroyed) {
+  try {
+    await new Promise((resolve, reject) => {
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err) => {
+        cleanup();
+        reject(err);
+      };
+      const cleanup = () => {
+        stream.off("open", onOpen);
+        stream.off("error", onError);
+      };
+      stream.once("open", onOpen);
+      stream.once("error", onError);
+    });
+  } catch (err) {
+    // Avoid leaking error details to clients; keep bounded one-line logs for debugging.
+    logger.error("static_stream_error", { err: formatOneLineError(err, 512) });
+    sendText(res, 500, "Internal Server Error");
+    return;
+  }
+
+  if (isResponseDestroyed(res)) {
+    try {
       stream.destroy();
-      return;
+    } catch {
+      // ignore
     }
+    return;
+  }
+
+  try {
     res.statusCode = 200;
     res.setHeader("Content-Type", guessContentType(targetPath));
     res.setHeader("Content-Length", st.size);
-    stream.pipe(res);
-  });
-  stream.once("error", (err) => {
-    // Avoid leaking error details to clients; keep bounded one-line logs for debugging.
-    logger.error("static_stream_error", { err: formatOneLineError(err, 512) });
-    if (res.writableEnded) return;
-    if (opened || res.headersSent) {
-      res.destroy();
-      return;
+  } catch {
+    try {
+      stream.destroy();
+    } catch {
+      // ignore
     }
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end("Internal Server Error");
-  });
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+    return;
+  }
+  try {
+    await pipeline(stream, res);
+  } catch (err) {
+    // Treat client disconnects/aborts as expected; avoid noisy error logs.
+    if (!isExpectedStreamAbort(err)) {
+      logger.error("static_stream_error", { err: formatOneLineError(err, 512) });
+    }
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export function createHttpHandler({ config, logger, metrics }) {
@@ -164,15 +266,11 @@ export function createHttpHandler({ config, logger, metrics }) {
 
       const rawUrl = req.url ?? "/";
       if (typeof rawUrl !== "string") {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Bad Request");
+        sendText(res, 400, "Bad Request");
         return;
       }
       if (rawUrl.length > MAX_REQUEST_URL_LEN) {
-        res.statusCode = 414;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("URI Too Long");
+        sendText(res, 414, "URI Too Long");
         return;
       }
 
@@ -180,29 +278,22 @@ export function createHttpHandler({ config, logger, metrics }) {
       try {
         url = new URL(rawUrl, "http://localhost");
       } catch {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Bad Request");
+        sendText(res, 400, "Bad Request");
         return;
       }
       if (url.pathname.length > MAX_PATHNAME_LEN) {
-        res.statusCode = 414;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("URI Too Long");
+        sendText(res, 414, "URI Too Long");
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/healthz") {
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("ok");
+        sendText(res, 200, "ok");
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/metrics") {
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end(metrics.toPrometheus());
+        const body = metrics.toPrometheus();
+        sendText(res, 200, body);
         return;
       }
 
@@ -214,13 +305,7 @@ export function createHttpHandler({ config, logger, metrics }) {
       await handleStatic(req, res, url, { config, logger });
     })().catch((err) => {
       logger.error("http_error", { err: formatOneLineError(err, 512) });
-      if (res.headersSent) {
-        res.destroy();
-        return;
-      }
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Internal Server Error");
+      sendText(res, 500, "Internal Server Error");
     });
   };
 }

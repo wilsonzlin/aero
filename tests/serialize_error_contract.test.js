@@ -34,6 +34,20 @@ test("serializeError: does not throw on hostile error-like objects", () => {
   assert.equal(out.code, "InternalError");
 });
 
+test("serializeError: does not throw when instanceof Error would throw (proxy traps)", () => {
+  const hostile = new Proxy(
+    {},
+    {
+      getPrototypeOf() {
+        throw new Error("boom");
+      },
+    },
+  );
+  assert.doesNotThrow(() => serializeError(hostile));
+  const out = serializeError(hostile);
+  assert.equal(out.message, "Error");
+});
+
 test("serializeError: message is single-line and byte-bounded", () => {
   const err = new Error("a\tb\nc");
   const out = serializeError(err);

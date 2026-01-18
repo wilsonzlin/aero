@@ -1,4 +1,7 @@
 import { ErrorCode, serializeError } from "../errors.js";
+import { createCustomEvent } from "../custom_event.js";
+import { isInstanceOfSafe } from "../instanceof_safe.js";
+import { tryGetNumberProp, tryGetProp, tryGetStringProp } from "../safe_props.js";
 import { formatOneLineError } from "../text.js";
 
 const DEFAULT_CONFIG = Object.freeze({
@@ -340,30 +343,65 @@ export class VmCoordinator extends EventTarget {
   _onWorkerMessage(msg) {
     if (!msg || typeof msg !== "object") return;
 
-    if (msg.type === "heartbeat") {
+    const type = tryGetStringProp(msg, "type");
+    if (!type) return;
+
+    if (type === "heartbeat") {
       this.lastHeartbeatAt = Date.now();
-      this.lastHeartbeat = msg;
+      const resources = tryGetProp(msg, "resources");
+      const safeResources =
+        resources && typeof resources === "object"
+          ? {
+              guestRamBytes: tryGetNumberProp(resources, "guestRamBytes") ?? 0,
+              diskCacheBytes: tryGetNumberProp(resources, "diskCacheBytes") ?? 0,
+              shaderCacheBytes: tryGetNumberProp(resources, "shaderCacheBytes") ?? 0,
+            }
+          : { guestRamBytes: 0, diskCacheBytes: 0, shaderCacheBytes: 0 };
+
+      const mic = tryGetProp(msg, "mic");
+      const safeMic =
+        mic && typeof mic === "object"
+          ? {
+              rms: tryGetNumberProp(mic, "rms") ?? 0,
+              dropped: tryGetNumberProp(mic, "dropped") ?? 0,
+              sampleRate: tryGetNumberProp(mic, "sampleRate") ?? 0,
+            }
+          : null;
+
+      const safeHeartbeat = {
+        type: "heartbeat",
+        at: tryGetNumberProp(msg, "at") ?? Date.now(),
+        executed: tryGetNumberProp(msg, "executed") ?? 0,
+        pc: tryGetNumberProp(msg, "pc") ?? 0,
+        totalInstructions: tryGetNumberProp(msg, "totalInstructions") ?? 0,
+        resources: safeResources,
+        mic: safeMic,
+      };
+
+      this.lastHeartbeat = safeHeartbeat;
       this.lastSnapshot = {
         reason: "heartbeat",
-        capturedAt: msg.at,
-        cpu: { pc: msg.pc, totalInstructions: msg.totalInstructions },
-        resources: msg.resources,
+        capturedAt: safeHeartbeat.at,
+        cpu: { pc: safeHeartbeat.pc, totalInstructions: safeHeartbeat.totalInstructions },
+        resources: safeResources,
       };
-      this.dispatchEvent(new CustomEvent("heartbeat", { detail: msg }));
+      this.dispatchEvent(createCustomEvent("heartbeat", safeHeartbeat));
       return;
     }
 
-    if (msg.type === "error") {
-      if (msg.snapshot) this.lastSnapshot = msg.snapshot;
-      this._emitError(msg.error, { snapshot: msg.snapshot });
+    if (type === "error") {
+      const snapshot = tryGetProp(msg, "snapshot");
+      if (snapshot) this.lastSnapshot = snapshot;
+      this._emitError(tryGetProp(msg, "error"), { snapshot });
       return;
     }
 
-    if (msg.type === "snapshot") {
-      this.lastSnapshot = msg.snapshot;
+    if (type === "snapshot") {
+      const snapshot = tryGetProp(msg, "snapshot");
+      if (snapshot) this.lastSnapshot = snapshot;
     }
 
-    const queue = this._ackQueues.get(msg.type);
+    const queue = this._ackQueues.get(type);
     if (queue && queue.length > 0) {
       const next = queue.shift();
       next.resolve(msg);
@@ -372,7 +410,8 @@ export class VmCoordinator extends EventTarget {
   }
 
   _onWorkerError(event) {
-    const err = event.error instanceof Error ? event.error : new Error(event.message);
+    const maybeError = tryGetProp(event, "error");
+    const err = isInstanceOfSafe(maybeError, Error) ? maybeError : new Error(tryGetStringProp(event, "message") ?? "Worker error");
     // Preserve the underlying error message so callers (and Playwright E2E) can
     // diagnose why the worker failed to load/execute. `worker.onerror` is often
     // the only signal for module-load failures (e.g. missing chunks, syntax
@@ -385,9 +424,9 @@ export class VmCoordinator extends EventTarget {
         message,
         details: {
           ...(baseMessage ? { workerMessage: baseMessage } : {}),
-          filename: event.filename,
-          lineno: event.lineno,
-          colno: event.colno,
+          filename: tryGetStringProp(event, "filename"),
+          lineno: tryGetNumberProp(event, "lineno"),
+          colno: tryGetNumberProp(event, "colno"),
         },
       }),
     );
@@ -475,9 +514,7 @@ export class VmCoordinator extends EventTarget {
 
   _emitError(error, { snapshot } = {}) {
     let structured = null;
-    if (error instanceof Error) {
-      structured = serializeError(error);
-    }
+    if (isInstanceOfSafe(error, Error)) structured = serializeError(error);
 
     let code = ErrorCode.InternalError;
     let message = "Error";
@@ -585,11 +622,11 @@ export class VmCoordinator extends EventTarget {
         void trySaveSnapshotToOpfs(snapshotToSave).then((savedTo) => {
           if (!savedTo) return;
           this.lastSnapshotSavedTo = savedTo;
-          this.dispatchEvent(new CustomEvent("snapshotSaved", { detail: { savedTo } }));
+          this.dispatchEvent(createCustomEvent("snapshotSaved", { savedTo }));
         });
       }
     }
-    this.dispatchEvent(new CustomEvent("error", { detail: { error: structured, snapshot } }));
+    this.dispatchEvent(createCustomEvent("error", { error: structured, snapshot }));
     this._rejectAllAcks(new Error(safeMessage));
     this._stopWatchdog();
     const worker = this.worker;
@@ -613,6 +650,6 @@ export class VmCoordinator extends EventTarget {
   _setState(next) {
     if (this.state === next) return;
     this.state = next;
-    this.dispatchEvent(new CustomEvent("statechange", { detail: { state: next } }));
+    this.dispatchEvent(createCustomEvent("statechange", { state: next }));
   }
 }

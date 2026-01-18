@@ -2,6 +2,8 @@ import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
 
+import { sendEmpty, sendText } from "./helpers/http_test_response.js";
+
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
 
@@ -25,13 +27,24 @@ export async function startStaticServer(
   const defaultPath = opts.defaultPath ?? "/shader_cache_demo.html";
 
   const server = http.createServer((req, res) => {
+    const method = req.method ?? "GET";
+    const allow = "GET, HEAD, OPTIONS";
+    if (method === "OPTIONS") {
+      sendEmpty(res, 204, { allow });
+      return;
+    }
+    if (method !== "GET" && method !== "HEAD") {
+      sendText(res, 405, "Method Not Allowed", { allow });
+      return;
+    }
+
     const rawUrl = req.url ?? "/";
     if (typeof rawUrl !== "string") {
-      res.writeHead(400).end("Bad Request");
+      sendText(res, 400, "Bad Request");
       return;
     }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
-      res.writeHead(414).end("URI Too Long");
+      sendText(res, 414, "URI Too Long");
       return;
     }
 
@@ -39,11 +52,11 @@ export async function startStaticServer(
     try {
       url = new URL(rawUrl, "http://localhost");
     } catch {
-      res.writeHead(400).end("Bad Request");
+      sendText(res, 400, "Bad Request");
       return;
     }
     if (url.pathname.length > MAX_PATHNAME_LEN) {
-      res.writeHead(414).end("URI Too Long");
+      sendText(res, 414, "URI Too Long");
       return;
     }
 
@@ -51,15 +64,15 @@ export async function startStaticServer(
     try {
       pathname = decodeURIComponent(url.pathname);
     } catch {
-      res.writeHead(400).end("Bad Request");
+      sendText(res, 400, "Bad Request");
       return;
     }
     if (pathname.length > MAX_PATHNAME_LEN) {
-      res.writeHead(414).end("URI Too Long");
+      sendText(res, 414, "URI Too Long");
       return;
     }
     if (pathname.includes("\0")) {
-      res.writeHead(400).end("Bad Request");
+      sendText(res, 400, "Bad Request");
       return;
     }
     if (pathname === "/") pathname = defaultPath;
@@ -67,16 +80,22 @@ export async function startStaticServer(
     const rootResolved = path.resolve(rootDir);
     const resolved = path.resolve(rootResolved, `.${pathname}`);
     if (!resolved.startsWith(rootResolved + path.sep) && resolved !== rootResolved) {
-      res.writeHead(403).end("Forbidden");
+      sendText(res, 403, "Forbidden");
       return;
     }
 
     fs.readFile(resolved, (err, data) => {
       if (err) {
-        res.writeHead(404).end("Not found");
+        sendText(res, 404, "Not found");
         return;
       }
-      res.writeHead(200, { "Content-Type": contentTypeForPath(resolved) });
+      res.statusCode = 200;
+      res.setHeader("Content-Type", contentTypeForPath(resolved));
+      res.setHeader("Content-Length", String(data.byteLength));
+      if (method === "HEAD") {
+        res.end();
+        return;
+      }
       res.end(data);
     });
   });

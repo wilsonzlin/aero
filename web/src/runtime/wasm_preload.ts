@@ -2,6 +2,7 @@ import { perf } from "../perf/perf";
 import type { WasmVariant } from "./wasm_loader";
 import { registerPrecompiledWasmModule } from "./wasm_precompiled_registry";
 import { formatOneLineError } from "../text";
+import { isErrorInstance } from "../errors/errorProps";
 
 export type PrecompiledWasm = { module: WebAssembly.Module; url: string };
 
@@ -129,7 +130,7 @@ export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledW
           }
         }
 
-        throw lastErr instanceof Error ? lastErr : new Error(formatOneLineError(lastErr, 512));
+        throw isErrorInstance(lastErr) ? lastErr : new Error(formatOneLineError(lastErr, 512));
       }
 
       const response = await fetch(url);

@@ -22,6 +22,7 @@ import {
   formatHeaderValueForError,
 } from "./http_headers";
 import { formatOneLineError } from "../text";
+import { isErrorInstance, isInstanceOf, tryGetErrorCause } from "../errors/errorProps";
 
 // Keep in sync with the Rust snapshot bounds where sensible.
 const MAX_REMOTE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -1242,13 +1243,14 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       // Only fall back when the caller opted into the defaults (OPFS-backed cache) and the
       // failure came from initializing/using the cache backend.
       const allowFallback = usedDefaultMetadataStore && usedDefaultSparseCacheFactory;
-      if (allowFallback && err instanceof RemoteRangeDiskCacheBackendInitError) {
+      if (allowFallback && isInstanceOf(err, RemoteRangeDiskCacheBackendInitError)) {
         return await openOnce(new MemoryRemoteRangeDiskMetadataStore(), new MemoryRemoteRangeDiskSparseCacheFactory());
       }
       // Preserve previous error behaviour: callers should see the original backend error, not
       // the wrapper.
-      if (err instanceof RemoteRangeDiskCacheBackendInitError) {
-        throw err.cause instanceof Error ? err.cause : err;
+      if (isInstanceOf(err, RemoteRangeDiskCacheBackendInitError)) {
+        const cause = tryGetErrorCause(err);
+        throw isErrorInstance(cause) ? cause : err;
       }
       throw err;
     }

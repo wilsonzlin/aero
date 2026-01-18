@@ -2,7 +2,9 @@ import http from "node:http";
 import fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { formatOneLineError, formatOneLineUtf8 } from "../src/text.js";
+import { isExpectedStreamAbort } from "../src/stream_abort.js";
 
 const MAX_REQUEST_URL_LEN = 8 * 1024;
 const MAX_PATHNAME_LEN = 4 * 1024;
@@ -35,24 +37,32 @@ function safeResolve(rootDir, requestPath) {
 
 function sendText(res, statusCode, text) {
   const safeText = formatOneLineUtf8(text, MAX_ERROR_BODY_BYTES) || "Error";
+  const body = Buffer.from(safeText, "utf8");
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.end(safeText);
+  res.setHeader("Content-Length", body.length);
+  res.setHeader("Cache-Control", "no-store");
+  res.end(body);
 }
 
 function pipeFile(res, filePath) {
   const stream = fs.createReadStream(filePath);
-  stream.on("error", (err) => {
+  void pipeline(stream, res).catch((err) => {
+    if (isExpectedStreamAbort(err)) return;
     // Avoid echoing internal errors back to clients; logs are sufficient for debugging.
     // eslint-disable-next-line no-console
     console.error(`bench static server: stream error: ${formatOneLineError(err, 512, "Error")}`);
+    if (res.writableEnded) return;
     if (res.headersSent) {
-      res.destroy();
+      try {
+        res.destroy();
+      } catch {
+        // ignore
+      }
       return;
     }
     sendText(res, 500, "Internal server error");
   });
-  stream.pipe(res);
 }
 
 /**
@@ -66,6 +76,21 @@ export async function startStaticServer(opts) {
 
   const server = http.createServer(async (req, res) => {
     try {
+      const method = req.method ?? "GET";
+      if (method === "OPTIONS") {
+        res.statusCode = 204;
+        res.setHeader("Allow", "GET, HEAD, OPTIONS");
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Content-Length", "0");
+        res.end();
+        return;
+      }
+      if (method !== "GET" && method !== "HEAD") {
+        res.setHeader("Allow", "GET, HEAD, OPTIONS");
+        sendText(res, 405, "Method Not Allowed");
+        return;
+      }
+
       const rawUrl = req.url ?? "/";
       if (typeof rawUrl !== "string") {
         sendText(res, 400, "Bad Request");
@@ -119,6 +144,11 @@ export async function startStaticServer(opts) {
 
       res.statusCode = 200;
       res.setHeader("Content-Type", contentType(filePath));
+      res.setHeader("Content-Length", st.size);
+      if (method === "HEAD") {
+        res.end();
+        return;
+      }
       pipeFile(res, filePath);
     } catch (err) {
       // Avoid echoing internal errors (and any attacker-controlled strings) back to clients.
@@ -126,7 +156,11 @@ export async function startStaticServer(opts) {
       // eslint-disable-next-line no-console
       console.error(`bench static server: handler error: ${formatOneLineError(err, 512, "Error")}`);
       if (res.headersSent) {
-        res.destroy();
+        try {
+          res.destroy();
+        } catch {
+          // ignore
+        }
         return;
       }
       sendText(res, 500, "Internal server error");

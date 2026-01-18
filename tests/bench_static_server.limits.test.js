@@ -69,3 +69,18 @@ test("bench static server: blocks path traversal with 403", async () => {
   }
 });
 
+test("bench static server: rejects non-GET/HEAD methods with 405 and Allow header", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-bench-static-server-"));
+  fs.writeFileSync(path.join(dir, "index.html"), "<!doctype html><title>ok</title>", "utf8");
+
+  const server = await startStaticServer({ rootDir: dir });
+  try {
+    const res = await fetch(`${server.baseUrl}index.html`, { method: "POST" });
+    assert.equal(res.status, 405);
+    assert.equal(res.headers.get("allow"), "GET, HEAD, OPTIONS");
+  } finally {
+    await server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+

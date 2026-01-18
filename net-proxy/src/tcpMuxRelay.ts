@@ -1,12 +1,17 @@
 import net from "node:net";
 import { createWebSocketStream, type WebSocket } from "ws";
 
+import { socketWritableLengthOrOverflow } from "../../src/socket_writable_length.cjs";
+import { tryGetStringProp } from "../../src/safe_props.cjs";
+
 import type { ProxyConfig } from "./config";
 import type { ProxyServerMetrics } from "./metrics";
 import { formatError, log } from "./logger";
 import { resolveAndAuthorizeTarget } from "./security";
 import { normalizeTargetHostForPolicy } from "./targetQuery";
-import { wsCloseSafe } from "./wsClose";
+import { wsCloseSafe, wsIsOpenSafe } from "./wsClose";
+import { formatOneLineUtf8 } from "./text";
+import { tryGetErrorCode } from "./errorCode";
 import {
   TCP_MUX_HEADER_BYTES,
   TCP_MUX_SUBPROTOCOL,
@@ -23,7 +28,7 @@ import {
 } from "./tcpMuxProtocol";
 
 function formatDialErrorForClient(err: unknown): string {
-  const code = typeof (err as { code?: unknown } | null)?.code === "string" ? (err as { code: string }).code : "";
+  const code = tryGetErrorCode(err) ?? "";
   switch (code) {
     case "ECONNREFUSED":
       return "connection refused";
@@ -59,15 +64,23 @@ export function handleTcpMuxRelay(
   config: ProxyConfig,
   metrics: ProxyServerMetrics
 ): void {
-  if (ws.protocol !== TCP_MUX_SUBPROTOCOL) {
+  if (tryGetStringProp(ws, "protocol") !== TCP_MUX_SUBPROTOCOL) {
     metrics.incConnectionError("denied");
     wsCloseSafe(ws, 1002, `Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`);
     return;
   }
 
-  metrics.connectionActiveInc("tcp_mux");
+  let wsStream: ReturnType<typeof createWebSocketStream>;
+  try {
+    wsStream = createWebSocketStream(ws, { highWaterMark: config.wsStreamHighWaterMarkBytes });
+  } catch (err) {
+    metrics.incConnectionError("error");
+    wsCloseSafe(ws, 1011, "WebSocket stream error");
+    log("error", "connect_error", { connId, proto: "tcp-mux", clientAddress, err: formatError(err) });
+    return;
+  }
 
-  const wsStream = createWebSocketStream(ws, { highWaterMark: config.wsStreamHighWaterMarkBytes });
+  metrics.connectionActiveInc("tcp_mux");
 
   const muxParser = new TcpMuxFrameParser(config.tcpMuxMaxFramePayloadBytes);
   const streams = new Map<number, TcpMuxStreamState>();
@@ -104,7 +117,11 @@ export function handleTcpMuxRelay(
     if (stream.socket) {
       metrics.tcpMuxStreamsActiveDec();
       stream.socket.removeAllListeners();
-      stream.socket.destroy();
+      try {
+        stream.socket.destroy();
+      } catch {
+        // ignore
+      }
     }
   };
 
@@ -117,8 +134,16 @@ export function handleTcpMuxRelay(
       destroyStream(streamId);
     }
 
-    if (ws.readyState === ws.OPEN) {
+    if (wsIsOpenSafe(ws)) {
       wsCloseSafe(ws, wsCode, wsReason);
+    } else {
+      // If the websocket is already closed or closing, ensure the stream wrapper
+      // is torn down without relying on a close event.
+      try {
+        wsStream.destroy();
+      } catch {
+        // ignore
+      }
     }
 
     log("info", "conn_close", {
@@ -135,7 +160,7 @@ export function handleTcpMuxRelay(
 
   const sendMuxFrame = (msgType: TcpMuxMsgType, streamId: number, payload?: Buffer) => {
     if (closed) return;
-    if (ws.readyState !== ws.OPEN) return;
+    if (!wsIsOpenSafe(ws)) return;
     const frame = encodeTcpMuxFrame(msgType, streamId, payload);
     let ok = false;
     try {
@@ -155,10 +180,31 @@ export function handleTcpMuxRelay(
     sendMuxFrame(TcpMuxMsgType.ERROR, streamId, encodeTcpMuxErrorPayload(code, message));
   };
 
+  const maxStreamBufferedBytes = () => config.tcpMuxMaxStreamBufferedBytes;
+
+  const enforceTcpBackpressure = (stream: TcpMuxStreamState): boolean => {
+    const socket = stream.socket;
+    if (!socket) return false;
+    const max = maxStreamBufferedBytes();
+    const socketBuffered = socketWritableLengthOrOverflow(socket, max);
+    const totalBuffered = stream.pendingWriteBytes + socketBuffered;
+    if (totalBuffered <= max) return true;
+    sendStreamError(stream.id, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "stream buffered too much data");
+    destroyStream(stream.id);
+    return false;
+  };
+
   const enqueueStreamWrite = (stream: TcpMuxStreamState, chunk: Buffer) => {
+    const max = maxStreamBufferedBytes();
     stream.pendingWrites.push(chunk);
     stream.pendingWriteBytes += chunk.length;
-    if (stream.pendingWriteBytes > config.tcpMuxMaxStreamBufferedBytes) {
+    // Enforce combined queued bytes + socket-level buffering (writableLength), even when writes
+    // are paused due to backpressure.
+    if (stream.socket) {
+      if (!enforceTcpBackpressure(stream)) return;
+      return;
+    }
+    if (stream.pendingWriteBytes > max) {
       sendStreamError(stream.id, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "stream buffered too much data");
       destroyStream(stream.id);
     }
@@ -191,6 +237,7 @@ export function handleTcpMuxRelay(
         });
         return;
       }
+      if (!enforceTcpBackpressure(stream)) return;
       if (!ok) {
         stream.writePaused = true;
         break;
@@ -334,13 +381,32 @@ export function handleTcpMuxRelay(
         decision: decision.target.decision
       });
 
-      const tcpSocket = net.createConnection({
-        host: decision.target.resolvedAddress,
-        family: decision.target.family,
-        port,
-        allowHalfOpen: true
-      });
-      tcpSocket.setNoDelay(true);
+      const createConnection = config.createTcpConnection ?? net.createConnection;
+      let tcpSocket: net.Socket;
+      try {
+        tcpSocket = createConnection({
+          host: decision.target.resolvedAddress,
+          family: decision.target.family,
+          port,
+          allowHalfOpen: true
+        });
+        tcpSocket.setNoDelay(true);
+      } catch (err) {
+        metrics.incConnectionError("error");
+        sendStreamError(current.id, TcpMuxErrorCode.DIAL_FAILED, formatDialErrorForClient(err));
+        destroyStream(current.id);
+        log("error", "connect_error", {
+          connId,
+          proto: "tcp-mux",
+          streamId: current.id,
+          host,
+          port,
+          clientAddress,
+          err: formatError(err)
+        });
+        return;
+      }
+
       metrics.tcpMuxStreamsActiveInc();
 
       current.socket = tcpSocket;
@@ -349,7 +415,11 @@ export function handleTcpMuxRelay(
       }
 
       const connectTimer = setTimeout(() => {
-        tcpSocket.destroy(new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
+        try {
+          tcpSocket.destroy(new Error(`Connect timeout after ${config.connectTimeoutMs}ms`));
+        } catch {
+          // ignore
+        }
       }, config.connectTimeoutMs);
       connectTimer.unref();
       current.connectTimer = connectTimer;
@@ -401,7 +471,12 @@ export function handleTcpMuxRelay(
           current.connectTimer = null;
         }
       });
-    })();
+    })().catch((err) => {
+      metrics.incConnectionError("error");
+      sendStreamError(stream.id, TcpMuxErrorCode.DIAL_FAILED, "dial failed");
+      destroyStream(stream.id);
+      log("error", "connect_error", { connId, proto: "tcp-mux", streamId: stream.id, host, port, clientAddress, err: formatError(err) });
+    });
   };
 
   const handleData = (frame: TcpMuxFrame) => {
@@ -441,6 +516,7 @@ export function handleTcpMuxRelay(
       });
       return;
     }
+    if (!enforceTcpBackpressure(stream)) return;
     if (!ok) {
       stream.writePaused = true;
     }
@@ -551,8 +627,7 @@ export function handleTcpMuxRelay(
   });
 
   ws.once("close", (code, reason) => {
-    wsStream.destroy();
-    closeAll("ws_close", code, reason.toString());
+    closeAll("ws_close", code, formatOneLineUtf8(reason, 123));
   });
 
   ws.once("error", (err) => {

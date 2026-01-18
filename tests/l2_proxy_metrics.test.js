@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { wsCloseSafe, wsSendSafe } from "../scripts/_shared/ws_safe.js";
 import { WebSocket } from "../tools/minimal_ws.js";
 import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.js";
 
@@ -189,10 +190,10 @@ test("l2 proxy exposes /metrics and counts rx frames", { timeout: 900_000 }, asy
 
     const payload = Buffer.alloc(60);
     await new Promise((resolve, reject) => {
-      ws.send(encodeL2Frame(payload), resolve);
+      wsSendSafe(ws, encodeL2Frame(payload), (err) => (err ? reject(err) : resolve()));
       ws.once("error", reject);
     });
-    ws.close(1000, "done");
+    wsCloseSafe(ws, 1000, "done");
     await waitForClose(ws);
 
     const deadline = Date.now() + 5_000;
