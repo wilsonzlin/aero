@@ -111,6 +111,9 @@ Pull requests (when GitHub CLI `gh` is unavailable):
   - `bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs`
 - Optional: also print the GitHub Actions URL for the branch:
   - `AERO_PR_INCLUDE_ACTIONS_URL=1 bash ./scripts/safe-run.sh node ./scripts/print-pr-url.mjs`
+- npm shortcuts (same behavior, without safe-run):
+  - `npm run pr:url`
+  - `npm run pr:links`
 
 Or use `timeout -k` directly (always include `-k` for SIGKILL fallback!):
 
