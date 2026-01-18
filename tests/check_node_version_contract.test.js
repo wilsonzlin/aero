@@ -42,7 +42,12 @@ function runNodeVersionCheck(env) {
 test("check-node-version: note output is brief for major mismatch", async () => {
   const expected = await readExpectedNodeVersion();
   const override = `${expected.major + 3}.0.0`;
-  const { status, output } = runNodeVersionCheck({ AERO_NODE_VERSION_OVERRIDE: override });
+  // If the outer environment (e.g. `scripts/safe-run.sh`) set quiet mode, explicitly opt out so
+  // this test can validate the non-fatal note output.
+  const { status, output } = runNodeVersionCheck({
+    AERO_NODE_VERSION_OVERRIDE: override,
+    AERO_CHECK_NODE_QUIET: "0",
+  });
 
   assert.equal(status, 0);
   assert.ok(output.includes("note: Node.js major version differs from CI baseline"), output);
@@ -69,6 +74,7 @@ test("check-node-version: AERO_ENFORCE_NODE_MAJOR fails on major mismatch", asyn
   const { status, output } = runNodeVersionCheck({
     AERO_NODE_VERSION_OVERRIDE: override,
     AERO_ENFORCE_NODE_MAJOR: "1",
+    AERO_CHECK_NODE_QUIET: "0",
   });
 
   assert.equal(status, 1);

@@ -717,6 +717,43 @@ test("safe-run.sh sets NODE_OPTIONS without disallowed flags (Linux)", { skip: p
   assert.ok(!stdout.includes("--test-concurrency"), `expected NODE_OPTIONS not to include --test-concurrency, got: ${stdout}`);
 });
 
+test("safe-run.sh silences check-node-version mismatch notes on Node major mismatch (Linux)", { skip: process.platform !== "linux" }, () => {
+  const nvmrc = fs.readFileSync(path.join(repoRoot, ".nvmrc"), "utf8").trim();
+  const expectedMajor = Number(nvmrc.replace(/^v/, "").split(".", 1)[0]);
+  assert.ok(Number.isFinite(expectedMajor), "expected .nvmrc to contain a major.minor.patch Node version");
+
+  const overrideMajor = expectedMajor + 3;
+  const overrideVersion = `${overrideMajor}.0.0`;
+
+  // Default: safe-run should set AERO_CHECK_NODE_QUIET=1 for a major mismatch, so `npm run check:node`
+  // should emit no "note: Node.js ..." noise from `scripts/check-node-version.mjs`.
+  const resQuiet = spawnSync("bash", ["scripts/safe-run.sh", "npm", "run", "check:node"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      // Used both by `check-node-version.mjs` *and* by safe-run's major mismatch detection.
+      AERO_NODE_VERSION_OVERRIDE: overrideVersion,
+    },
+    encoding: "utf8",
+  });
+  assert.equal(resQuiet.status, 0);
+  assert.ok(!`${resQuiet.stdout ?? ""}${resQuiet.stderr ?? ""}`.includes("note: Node.js"), "expected safe-run to silence Node mismatch notes");
+
+  // Opt-out: if the caller explicitly sets AERO_CHECK_NODE_QUIET (even to "0"), safe-run should not
+  // override it, and the note should be visible again.
+  const resNoisy = spawnSync("bash", ["scripts/safe-run.sh", "npm", "run", "check:node"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      AERO_NODE_VERSION_OVERRIDE: overrideVersion,
+      AERO_CHECK_NODE_QUIET: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(resNoisy.status, 0);
+  assert.ok(`${resNoisy.stdout ?? ""}${resNoisy.stderr ?? ""}`.includes("note: Node.js"), "expected note output when opt-out is set");
+});
+
 test("safe-run.sh does not force rustc codegen-units by default (Linux)", { skip: process.platform !== "linux" }, () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aero-safe-run-cargo-env-"));
   try {

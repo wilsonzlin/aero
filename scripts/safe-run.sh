@@ -193,6 +193,44 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Node.js version mismatch note noise:
+# - `scripts/check-node-version.mjs` intentionally allows newer Node versions (so contributors and
+#   agent sandboxes can run the repo), but it prints a non-fatal "note: ..." when the detected
+#   major differs from `.nvmrc`.
+# - `safe-run.sh` is frequently used in agent environments where the Node major may be newer than
+#   CI; silence those non-fatal mismatch notes by default *only for major mismatches*.
+#
+# Opt-out:
+#   AERO_CHECK_NODE_QUIET=0 bash ./scripts/safe-run.sh ...
+#
+# Test hook:
+# - For hermetic tests, honor `AERO_NODE_VERSION_OVERRIDE` (used by `check-node-version.mjs`) for the
+#   major mismatch detection below.
+if [[ -z "${AERO_CHECK_NODE_QUIET:-}" ]]; then
+    nvmrc_path="${REPO_ROOT}/.nvmrc"
+    if [[ -f "${nvmrc_path}" ]]; then
+        expected_raw="$(head -n 1 "${nvmrc_path}" | tr -d '\r' | xargs || true)"
+        expected_major="${expected_raw#v}"
+        expected_major="${expected_major%%.*}"
+
+        current_major=""
+        if [[ -n "${AERO_NODE_VERSION_OVERRIDE:-}" ]]; then
+            current_raw="$(printf '%s' "${AERO_NODE_VERSION_OVERRIDE}" | tr -d '\r' | xargs || true)"
+            current_major="${current_raw#v}"
+            current_major="${current_major%%.*}"
+            unset current_raw
+        elif command -v node >/dev/null 2>&1; then
+            current_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+        fi
+
+        if [[ -n "${expected_major}" && -n "${current_major}" && "${current_major}" != "${expected_major}" ]]; then
+            export AERO_CHECK_NODE_QUIET=1
+        fi
+
+        unset expected_raw expected_major current_major nvmrc_path 2>/dev/null || true
+    fi
+fi
+
 # `cargo-fuzz` requires a nightly toolchain (`-Zsanitizer=...`). The repository root is pinned to
 # stable via `rust-toolchain.toml`, but `fuzz/` has its own `rust-toolchain.toml` (nightly). When
 # invoking `cargo fuzz ...` from the repo root, rustup will otherwise select the stable toolchain
