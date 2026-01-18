@@ -2,6 +2,7 @@
 
 import { IoClient } from "../io/ipc/io_client.ts";
 import { SharedRingBuffer } from "../io/ipc/ring_buffer.ts";
+import { parseSerialDemoCpuWorkerInitMessage } from "./worker_init_parsers.ts";
 
 type InitMessage = {
   type: "init";
@@ -16,10 +17,11 @@ function encodeBytes(text: string): number[] {
 }
 
 globalThis.onmessage = (ev: MessageEvent<InitMessage>) => {
-  if (ev.data?.type !== "init") return;
+  const init = parseSerialDemoCpuWorkerInitMessage(ev.data);
+  if (!init) return;
 
-  const req = SharedRingBuffer.from(ev.data.requestRing);
-  const resp = SharedRingBuffer.from(ev.data.responseRing);
+  const req = SharedRingBuffer.from(init.requestRing);
+  const resp = SharedRingBuffer.from(init.responseRing);
 
   const io = new IoClient(req, resp, {
     onSerialOutput: (port, data) => {
@@ -32,8 +34,7 @@ globalThis.onmessage = (ev: MessageEvent<InitMessage>) => {
     },
   });
 
-  const text = ev.data.text ?? "Hello from COM1!\r\n";
-  const bytes = encodeBytes(text);
+  const bytes = encodeBytes(init.text);
   for (const b of bytes) {
     io.portWrite(0x3f8, 1, b);
   }

@@ -12,6 +12,7 @@ import { AeroIpcIoServer } from "../io/ipc/aero_ipc_io.ts";
 import { IRQ_REFCOUNT_ASSERT, IRQ_REFCOUNT_DEASSERT, IRQ_REFCOUNT_SATURATED, IRQ_REFCOUNT_UNDERFLOW, applyIrqRefCountChange } from "../io/irq_refcount.ts";
 import type { IrqSink } from "../io/device_manager.ts";
 import type { SerialOutputSink } from "../io/devices/uart16550.ts";
+import { parseIoAipcWorkerInitMessage } from "./worker_init_parsers.ts";
 
 const IS_DEV = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
@@ -24,17 +25,12 @@ export type IoAipcWorkerInitMessage = {
   devices?: string[];
 };
 
-const ctx = self as unknown as DedicatedWorkerGlobalScope;
+const ctx = globalThis as unknown as DedicatedWorkerGlobalScope;
 
 ctx.onmessage = (ev: MessageEvent<IoAipcWorkerInitMessage>) => {
-  if (ev.data?.type !== "init") return;
-  const {
-    ipcBuffer,
-    cmdKind = queueKind.CMD,
-    evtKind = queueKind.EVT,
-    tickIntervalMs = 5,
-    devices = ["i8042"],
-  } = ev.data;
+  const init = parseIoAipcWorkerInitMessage(ev.data);
+  if (!init) return;
+  const { ipcBuffer, cmdKind, evtKind, tickIntervalMs, devices } = init;
 
   const cmdQ = openRingByKind(ipcBuffer, cmdKind);
   const evtQ = openRingByKind(ipcBuffer, evtKind);

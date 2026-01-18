@@ -1220,6 +1220,17 @@ Approach:
 Outcomes:
 - Contract suite fails if production code starts parsing request targets via direct `req.url` getters instead of validating and threading a trusted `rawUrl` string.
 
+### Phase 97: Web worker init-message parsing hardening (in progress)
+Goal: ensure web worker init message handlers don’t crash on hostile `MessageEvent.data` (proxy/getter throws) and don’t implicitly trust inherited properties.
+
+Approach:
+- Centralize init-message parsing in `web/src/workers/worker_init_parsers.ts` using best-effort safe access helpers.
+- Refactor small worker entrypoints to parse `ev.data` defensively before touching any fields.
+- Add a contract test that the init parsers never throw when given hostile proxy payloads.
+
+Outcomes:
+- Worker init parsing is deterministic and resilient to “poisoned” message payloads.
+
 Some coding guidelines:
 
 ## General Principles
