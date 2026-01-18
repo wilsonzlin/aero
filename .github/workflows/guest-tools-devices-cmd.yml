@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Verify generated guest-tools/config/devices.cmd
         run: python3 scripts/ci/gen-guest-tools-devices-cmd.py --check

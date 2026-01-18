@@ -22,7 +22,7 @@ jobs:
       AERO_CONFORMANCE_CASES: "512"
       AERO_CONFORMANCE_REPORT_PATH: "${{ github.workspace }}/target/conformance/report.json"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Rust
         id: setup-rust
         uses: ./.github/actions/setup-rust
@@ -46,7 +46,7 @@ jobs:
       AERO_CONFORMANCE_CASES: "10000"
       AERO_CONFORMANCE_REPORT_PATH: "${{ github.workspace }}/target/conformance/report.json"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup Rust
         id: setup-rust
         uses: ./.github/actions/setup-rust

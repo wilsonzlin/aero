@@ -17,7 +17,7 @@ jobs:
       WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Prepare WDK download cache directory
         shell: pwsh

@@ -19,7 +19,7 @@ jobs:
       AERO_REQUIRE_WEBGPU: "1"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node workspace
         id: node-workspace

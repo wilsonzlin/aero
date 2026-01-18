@@ -58,7 +58,7 @@ jobs:
         project: ${{ fromJSON(github.event_name == 'workflow_dispatch' && github.event.inputs.project != 'all' && format('["{0}"]', github.event.inputs.project) || '["chromium","firefox","webkit"]') }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Rust
         id: setup-rust

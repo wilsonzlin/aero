@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node workspace
         uses: ./.github/actions/setup-node-workspace
@@ -64,7 +64,7 @@ jobs:
     needs: aero-gateway-ci
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node workspace (prod deps)
         uses: ./.github/actions/setup-node-workspace
@@ -108,7 +108,7 @@ jobs:
     needs: aero-gateway-ci
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Docker image
         env:
@@ -144,7 +144,7 @@ jobs:
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node workspace
         id: node-workspace

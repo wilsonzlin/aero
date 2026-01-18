@@ -26,13 +26,13 @@ jobs:
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
     steps:
       - name: Checkout (candidate)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           path: head
 
       - name: Checkout (baseline)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.base.sha }}

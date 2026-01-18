@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check Windows virtio contract wiring
         run: python3 scripts/ci/check-windows-virtio-contract.py --check
