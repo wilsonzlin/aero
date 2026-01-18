@@ -76,6 +76,13 @@ If you need to run tooling with a different Node version (unsupported), you can 
 AERO_ALLOW_UNSUPPORTED_NODE=1 node scripts/check-node-version.mjs
 ```
 
+PR/CI links for your current branch (when `gh` isn’t available):
+
+```bash
+npm run pr:url   # compare/PR URL
+npm run pr:links # compare/PR URL + GitHub Actions URL
+```
+
 #### Optional configuration
 
 The `justfile` is intentionally configurable so it can survive repo refactors:
