@@ -2,7 +2,7 @@ import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram
 import type { NetTracer } from "./net_tracer";
 import { dcSendSafe } from "./rtcSafe";
 import { buildWebSocketUrl } from "./wsUrl.ts";
-import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
+import { wsCloseSafe, wsIsClosedSafe, wsIsOpenSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type UdpProxyEvent = {
   srcIp: string;
@@ -340,10 +340,11 @@ export class WebSocketUdpProxyClient {
   }
 
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
-    if (!this.ws || this.ws.readyState === WebSocket.CLOSED) return;
+    const ws = this.ws;
+    if (!ws || wsIsClosedSafe(ws)) return;
     try {
       const pkt = encodeDatagram(srcPort, dstIp, dstPort, payload);
-      if (this.ready && this.ws.readyState === WebSocket.OPEN) {
+      if (this.ready && wsIsOpenSafe(ws)) {
         // NetTracer's UDP pseudo-header currently only supports IPv4.
         // Skip tracing IPv6 datagrams until the format is extended.
         if (!dstIp.includes(":") && !(dstIp.startsWith("[") && dstIp.endsWith("]"))) {
@@ -353,7 +354,7 @@ export class WebSocketUdpProxyClient {
             // Best-effort tracing: never interfere with proxy traffic.
           }
         }
-        if (!wsSendSafe(this.ws, pkt)) {
+        if (!wsSendSafe(ws, pkt)) {
           this.close();
           return;
         }

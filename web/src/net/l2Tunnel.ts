@@ -23,8 +23,8 @@ import {
   encodePing,
   encodePong,
 } from "../shared/l2TunnelProtocol";
-import { dcCloseSafe, dcSendSafe } from "./rtcSafe";
-import { wsBufferedAmountSafe, wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
+import { dcBufferedAmountSafe, dcCloseSafe, dcIsOpenSafe, dcSendSafe } from "./rtcSafe";
+import { wsBufferedAmountSafe, wsCloseSafe, wsIsClosedSafe, wsIsOpenSafe, wsProtocolSafe, wsSendSafe } from "./wsSafe.ts";
 
 export { L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_DATA_CHANNEL_LABEL };
 
@@ -656,17 +656,18 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
 
   connect(): void {
     if (this.isClosedOrClosing()) return;
-    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
+    if (this.ws && !wsIsClosedSafe(this.ws)) return;
 
     const ws = new WebSocket(this.buildWebSocketUrl(), this.buildWebSocketProtocols());
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
       // `docs/l2-tunnel-protocol.md` requires strict subprotocol negotiation.
-      if (ws.protocol !== L2_TUNNEL_SUBPROTOCOL) {
+      const negotiated = wsProtocolSafe(ws) ?? "";
+      if (negotiated !== L2_TUNNEL_SUBPROTOCOL) {
         this.onTransportError(
           new Error(
-            `L2 tunnel subprotocol not negotiated (wanted ${L2_TUNNEL_SUBPROTOCOL}, got ${ws.protocol || "none"})`,
+            `L2 tunnel subprotocol not negotiated (wanted ${L2_TUNNEL_SUBPROTOCOL}, got ${negotiated || "none"})`,
           ),
         );
         wsCloseSafe(ws, 1002);
@@ -734,7 +735,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
   }
 
   protected isTransportOpen(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return wsIsOpenSafe(this.ws);
   }
 
   protected getTransportBufferedAmount(): number {
@@ -793,9 +794,10 @@ export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
     channel.onerror = (err) => this.onTransportError(err);
 
     // If the channel is already open, `onopen` won't fire again.
-    if (channel.readyState === "open") {
-      queueMicrotask(() => this.onTransportOpen());
-    }
+    queueMicrotask(() => {
+      if (!dcIsOpenSafe(channel)) return;
+      this.onTransportOpen();
+    });
   }
 
   // WebRTC connections are established externally; `connect()` is a no-op.
@@ -806,11 +808,11 @@ export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
   }
 
   protected isTransportOpen(): boolean {
-    return this.channel.readyState === "open";
+    return dcIsOpenSafe(this.channel);
   }
 
   protected getTransportBufferedAmount(): number {
-    return this.channel.bufferedAmount;
+    return dcBufferedAmountSafe(this.channel);
   }
 
   protected transportSend(data: Uint8Array): void {

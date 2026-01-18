@@ -5,12 +5,44 @@ export type WebSocketSendData = string | ArrayBuffer | ArrayBufferView | Blob;
 // RFC 6455 close reason is limited to 123 bytes (125 total payload bytes incl. 2-byte code).
 const MAX_WS_CLOSE_REASON_BYTES = 123;
 
-export function wsSendSafe(ws: WebSocket, data: WebSocketSendData): boolean {
+// WebSocket readyState constants per spec:
+// - CONNECTING = 0
+// - OPEN = 1
+// - CLOSING = 2
+// - CLOSED = 3
+const WS_OPEN = 1;
+const WS_CLOSED = 3;
+
+export function wsIsOpenSafe(ws: WebSocket | null | undefined): boolean {
+  if (!ws) return false;
   try {
-    if (ws.readyState !== WebSocket.OPEN) return false;
+    return ws.readyState === WS_OPEN;
   } catch {
     return false;
   }
+}
+
+export function wsIsClosedSafe(ws: WebSocket | null | undefined): boolean {
+  if (!ws) return false;
+  try {
+    return ws.readyState === WS_CLOSED;
+  } catch {
+    return false;
+  }
+}
+
+export function wsProtocolSafe(ws: WebSocket | null | undefined): string | null {
+  if (!ws) return null;
+  try {
+    const proto = (ws as unknown as { protocol?: unknown }).protocol;
+    return typeof proto === "string" ? proto : null;
+  } catch {
+    return null;
+  }
+}
+
+export function wsSendSafe(ws: WebSocket, data: WebSocketSendData): boolean {
+  if (!wsIsOpenSafe(ws)) return false;
   try {
     ws.send(data);
     return true;

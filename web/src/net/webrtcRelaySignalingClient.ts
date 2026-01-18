@@ -7,8 +7,8 @@ import {
   type SignalMessage,
 } from "../shared/udpRelaySignaling";
 import { readJsonResponseWithLimit, readTextResponseWithLimit } from "../storage/response_json";
-import { pcCloseSafe } from "./rtcSafe";
-import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
+import { dcIsClosedSafe, dcIsOpenSafe, pcCloseSafe } from "./rtcSafe";
+import { wsCloseSafe, wsIsOpenSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type RelaySignalingMode = "ws-trickle" | "http-offer" | "legacy-offer";
 
@@ -227,8 +227,8 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
 }
 
 function waitForDataChannelOpen(dc: RTCDataChannel): Promise<void> {
-  if (dc.readyState === "open") return Promise.resolve();
-  if (dc.readyState === "closed") return Promise.reject(new Error("data channel closed"));
+  if (dcIsOpenSafe(dc)) return Promise.resolve();
+  if (dcIsClosedSafe(dc)) return Promise.reject(new Error("data channel closed"));
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -466,7 +466,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   let currentAttempt: symbol | null = null;
 
   const flushLocalCandidates = () => {
-    if (!trickleEnabled || !offerSent || !activeWs || activeWs.readyState !== WebSocket.OPEN) return;
+    if (!trickleEnabled || !offerSent || !activeWs || !wsIsOpenSafe(activeWs)) return;
     while (localCandidateCursor < localCandidates.length) {
       const cand = localCandidates[localCandidateCursor++];
       sendSignal(activeWs, { type: "candidate", candidate: cand });

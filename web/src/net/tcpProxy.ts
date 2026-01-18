@@ -1,7 +1,7 @@
 import { WebSocketTcpMuxProxyClient, type TcpMuxProxyOptions } from "./tcpMuxProxy.ts";
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
-import { wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
+import { wsCloseSafe, wsIsOpenSafe, wsSendSafe } from "./wsSafe.ts";
 
 export type TcpProxyEvent =
   | { type: "connected"; connectionId: number }
@@ -75,7 +75,8 @@ export class WebSocketTcpProxyClient {
 
   send(connectionId: number, data: Uint8Array): void {
     const ws = this.sockets.get(connectionId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws) return;
+    if (!wsIsOpenSafe(ws)) return;
     try {
       this.tracer?.recordTcpProxy("guest_to_remote", connectionId, data);
     } catch {

@@ -7,7 +7,7 @@
 import { buildWebSocketUrl } from "./wsUrl.ts";
 import type { NetTracer } from "./net_tracer.ts";
 import { formatOneLineError, formatOneLineUtf8 } from "../text.ts";
-import { wsBufferedAmountSafe, wsCloseSafe, wsSendSafe } from "./wsSafe.ts";
+import { wsBufferedAmountSafe, wsCloseSafe, wsIsOpenSafe, wsProtocolSafe, wsSendSafe } from "./wsSafe.ts";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
@@ -423,10 +423,11 @@ export class WebSocketTcpMuxProxyClient {
       // `aero-tcp-mux-v1` requires strict subprotocol negotiation. If the peer
       // doesn't select it, close immediately to avoid speaking the wrong framing
       // protocol on an otherwise-open WebSocket.
-      if (this.ws.protocol !== TCP_MUX_SUBPROTOCOL) {
+      const negotiated = wsProtocolSafe(this.ws) ?? "";
+      if (negotiated !== TCP_MUX_SUBPROTOCOL) {
         this.onError?.(0, {
           code: 0,
-          message: `tcp-mux subprotocol not negotiated (wanted ${TCP_MUX_SUBPROTOCOL}, got ${this.ws.protocol || "none"})`,
+          message: `tcp-mux subprotocol not negotiated (wanted ${TCP_MUX_SUBPROTOCOL}, got ${negotiated || "none"})`,
         });
         wsCloseSafe(this.ws, 1002);
         return;
@@ -576,11 +577,7 @@ export class WebSocketTcpMuxProxyClient {
   }
 
   private flush(): void {
-    try {
-      if (this.ws.readyState !== WebSocket.OPEN) return;
-    } catch {
-      return;
-    }
+    if (!wsIsOpenSafe(this.ws)) return;
     while (this.queuedHead < this.queued.length) {
       if (wsBufferedAmountSafe(this.ws) > this.maxBufferedAmount) {
         // Let the browser drain the socket; we'll try again shortly.
