@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload storage perf artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: storage-perf-smoke-${{ github.run_id }}
           path: head/storage-perf-results

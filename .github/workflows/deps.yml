@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload npm license reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: npm-license-reports
           path: license-reports/npm
@@ -215,7 +215,7 @@ jobs:
 
       - name: Upload go license reports
         if: steps.go.outputs.run == 'true' && failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: go-license-reports
           path: license-reports/go

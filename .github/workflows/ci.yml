@@ -313,7 +313,7 @@ jobs:
 
       - name: Upload Rust test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rust-test-results
           path: test-results/rust-*.xml
@@ -322,7 +322,7 @@ jobs:
 
       - name: Upload net traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: net-traces
           path: target/net-traces
@@ -331,7 +331,7 @@ jobs:
 
       - name: Upload network captures (pcapng)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: net-captures
           path: target/nt-test-artifacts/**/*.pcapng
@@ -559,7 +559,7 @@ jobs:
 
       - name: Upload wasm-pack output (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wasm-pack-pkg
           path: |
@@ -630,7 +630,7 @@ jobs:
 
       - name: Upload unit test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: unit-test-results
           path: |
@@ -807,7 +807,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: |
@@ -860,7 +860,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: disk-streaming-browser-e2e-report
           path: |

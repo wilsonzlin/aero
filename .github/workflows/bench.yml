@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload artifacts (PR)
         if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bench-pr
           path: |
@@ -195,7 +195,7 @@ jobs:
 
       - name: Upload artifacts (main)
         if: always() && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: criterion-run-${{ github.run_id }}
           path: |
@@ -204,7 +204,7 @@ jobs:
 
       - name: Upload baseline artifact (main)
         if: success() && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: criterion
           path: |

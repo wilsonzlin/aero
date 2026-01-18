@@ -131,7 +131,7 @@ jobs:
           Copy-Item -LiteralPath $exePath -Destination (Join-Path $outDir "${{ matrix.out_exe }}") -Force
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: win7-virtio-selftest-${{ matrix.arch }}
           if-no-files-found: error

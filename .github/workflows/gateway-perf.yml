@@ -89,7 +89,7 @@ jobs:
 
       - name: Upload gateway perf artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gateway-perf-smoke-${{ github.run_id }}
           path: head/gateway-perf-results

@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload GPU perf artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gpu-perf-smoke-${{ github.run_id }}
           path: head/gpu-perf-results

@@ -662,7 +662,7 @@ jobs:
 
       - name: Upload signed packages (out/packages + aero-test.cer)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: win7-drivers-signed-packages
           path: |
@@ -727,7 +727,7 @@ jobs:
 
       - name: Upload artifacts (out/artifacts/)
         if: steps.detect.outputs.skip != 'true' && steps.built.outputs.has_sys == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: win7-drivers
           path: out/artifacts/
@@ -832,7 +832,7 @@ jobs:
           }
 
       - name: Upload Guest Tools artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: aero-guest-tools
           # Upload the output directory so the artifact root contains the files

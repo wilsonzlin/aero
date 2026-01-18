@@ -132,7 +132,7 @@ jobs:
           python3 tools/driver-iso/verify_iso.py --require-arch both --iso "$tmp/aero-virtio.iso"
 
       - name: Upload ISO artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: aero-virtio-win7-drivers-sample-iso
           path: dist/aero-virtio-win7-drivers-sample.iso
