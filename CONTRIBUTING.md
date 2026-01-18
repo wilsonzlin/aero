@@ -98,6 +98,13 @@ When submitting a change:
 - If you compare against Windows behavior, do it locally and describe the
   methodology in the PR. Do not upload Windows binaries/media as evidence.
 
+## Pull requests and CI links
+
+- Quick sanity suite: `npm run test:contracts`
+- PR/CI links for your current branch:
+  - `npm run pr:url` (compare/PR URL)
+  - `npm run pr:links` (compare/PR URL + GitHub Actions URL)
+
 ## Dependency policy (licenses + advisories)
 
 ### Automated updates (Dependabot)
