@@ -136,9 +136,9 @@ function main() {
     return;
   }
 
-  if (!branch) {
+  if (!branch && !branchOverride) {
     console.error("error: not on a branch (detached HEAD)");
-    console.error("tip: checkout a branch, or pass a branch ref explicitly by setting AERO_PR_BRANCH=<ref>.");
+    console.error("tip: checkout a branch, or pass a branch ref explicitly with --branch <ref> (or AERO_PR_BRANCH=<ref>).");
     process.exitCode = 1;
     return;
   }
