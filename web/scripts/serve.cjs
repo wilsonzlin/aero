@@ -15,6 +15,48 @@ function safeTextBody(message) {
   return formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || 'Error';
 }
 
+function destroySafe(res) {
+  try {
+    res.destroy();
+  } catch {
+    // ignore
+  }
+}
+
+function writeHeadSafe(res, statusCode, headers) {
+  try {
+    res.writeHead(statusCode, headers);
+    return true;
+  } catch {
+    destroySafe(res);
+    return false;
+  }
+}
+
+function endSafe(res, body) {
+  try {
+    res.end(body);
+    return true;
+  } catch {
+    destroySafe(res);
+    return false;
+  }
+}
+
+function sendText(res, statusCode, message) {
+  const body = safeTextBody(message);
+  if (
+    !writeHeadSafe(res, statusCode, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Length': String(Buffer.byteLength(body)),
+    })
+  ) {
+    return;
+  }
+  endSafe(res, body);
+}
+
 function parseArgs(argv) {
   const out = { host: '127.0.0.1', port: 4173 };
   for (let i = 2; i < argv.length; i++) {
@@ -121,13 +163,11 @@ const server = http.createServer((req, res) => {
   (async () => {
     const rawUrl = req.url ?? '/';
     if (typeof rawUrl !== 'string') {
-      res.writeHead(400);
-      res.end(safeTextBody('Bad Request'));
+      sendText(res, 400, 'Bad Request');
       return;
     }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
-      res.writeHead(414);
-      res.end(safeTextBody('URI Too Long'));
+      sendText(res, 414, 'URI Too Long');
       return;
     }
 
@@ -136,13 +176,11 @@ const server = http.createServer((req, res) => {
       // Base URL is only used to parse the request target; avoid tying it to the listen host.
       url = new URL(rawUrl, 'http://localhost');
     } catch {
-      res.writeHead(400);
-      res.end(safeTextBody('Bad Request'));
+      sendText(res, 400, 'Bad Request');
       return;
     }
     if (url.pathname.length > MAX_PATHNAME_LEN) {
-      res.writeHead(414);
-      res.end(safeTextBody('URI Too Long'));
+      sendText(res, 414, 'URI Too Long');
       return;
     }
 
@@ -150,18 +188,15 @@ const server = http.createServer((req, res) => {
     try {
       pathname = decodeURIComponent(url.pathname);
     } catch {
-      res.writeHead(400);
-      res.end(safeTextBody('Bad Request'));
+      sendText(res, 400, 'Bad Request');
       return;
     }
     if (pathname.length > MAX_PATHNAME_LEN) {
-      res.writeHead(414);
-      res.end(safeTextBody('URI Too Long'));
+      sendText(res, 414, 'URI Too Long');
       return;
     }
     if (pathname.includes('\0')) {
-      res.writeHead(400);
-      res.end(safeTextBody('Bad Request'));
+      sendText(res, 400, 'Bad Request');
       return;
     }
 
@@ -169,8 +204,7 @@ const server = http.createServer((req, res) => {
 
     const absPath = resolveRequestPath(rawPath);
     if (!absPath) {
-      res.writeHead(404);
-      res.end(safeTextBody('Not found'));
+      sendText(res, 404, 'Not found');
       return;
     }
 
@@ -187,30 +221,34 @@ const server = http.createServer((req, res) => {
 
     if (absPath.endsWith('.ts') || absPath.endsWith('.tsx')) {
       const code = await transpileTs(absPath);
-      res.writeHead(200, {
-        ...commonHeaders,
-        'Content-Type': 'text/javascript; charset=utf-8',
-      });
-      res.end(code);
+      if (
+        !writeHeadSafe(res, 200, {
+          ...commonHeaders,
+          'Content-Type': 'text/javascript; charset=utf-8',
+        })
+      ) {
+        return;
+      }
+      endSafe(res, code);
       return;
     }
 
     const data = await fs.promises.readFile(absPath);
-    res.writeHead(200, {
-      ...commonHeaders,
-      'Content-Type': contentTypeFor(absPath),
-    });
-    res.end(data);
+    if (
+      !writeHeadSafe(res, 200, {
+        ...commonHeaders,
+        'Content-Type': contentTypeFor(absPath),
+      })
+    ) {
+      return;
+    }
+    endSafe(res, data);
   })().catch((err) => {
     // Avoid echoing internal error details back to the client.
     // eslint-disable-next-line no-console
     console.error(`web serve: handler error: ${formatOneLineError(err, 512, "Error")}`);
-    if (res.headersSent) {
-      res.destroy();
-      return;
-    }
-    res.writeHead(500);
-    res.end(safeTextBody('Internal server error'));
+    // Defensive: avoid relying on response state getters. Best-effort emit a 500.
+    sendText(res, 500, 'Internal server error');
   });
 });
 
