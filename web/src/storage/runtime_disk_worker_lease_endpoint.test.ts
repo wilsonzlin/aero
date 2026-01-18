@@ -66,7 +66,25 @@ describe("RuntimeDiskWorker (leaseEndpoint)", () => {
     };
 
     const { baseUrl: startedBaseUrl, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+      const rawUrl = req.url;
+      if (typeof rawUrl !== "string" || rawUrl === "") {
+        res.statusCode = 400;
+        res.end("bad request");
+        return;
+      }
+      if (rawUrl.trim() !== rawUrl) {
+        res.statusCode = 400;
+        res.end("bad request");
+        return;
+      }
+      let url: URL;
+      try {
+        url = new URL(rawUrl, "http://localhost");
+      } catch {
+        res.statusCode = 400;
+        res.end("bad request");
+        return;
+      }
       const token = url.searchParams.get("token") ?? "";
 
       if (url.pathname === "/lease") {

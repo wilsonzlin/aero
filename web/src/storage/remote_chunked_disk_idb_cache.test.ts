@@ -15,17 +15,35 @@ function buildTestImageBytes(totalSize: number): Uint8Array {
   return bytes;
 }
 
-async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<{
+async function withServer(handler: (req: IncomingMessage, res: ServerResponse, url: URL) => void): Promise<{
   baseUrl: string;
   hits: Map<string, number>;
   close: () => Promise<void>;
 }> {
   const hits = new Map<string, number>();
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const rawUrl = req.url;
+    if (typeof rawUrl !== "string" || rawUrl === "") {
+      res.statusCode = 400;
+      res.end("bad request");
+      return;
+    }
+    if (rawUrl.trim() !== rawUrl) {
+      res.statusCode = 400;
+      res.end("bad request");
+      return;
+    }
+    let url: URL;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      res.statusCode = 400;
+      res.end("bad request");
+      return;
+    }
     hits.set(url.pathname, (hits.get(url.pathname) ?? 0) + 1);
     res.setHeader("cache-control", "no-transform");
-    handler(req, res);
+    handler(req, res, url);
   });
 
   await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -117,8 +135,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     let manifestVersion = "v1";
     let manifestEtag = '"m1"';
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -209,8 +226,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -277,8 +293,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -345,8 +360,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -417,8 +431,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -485,8 +498,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -556,8 +568,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -617,8 +628,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -681,8 +691,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunks = [img.slice(0, totalSize)];
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -758,8 +767,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunks = [img.slice(0, totalSize)];
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -826,8 +834,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -894,8 +901,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     const img = buildTestImageBytes(totalSize);
     const chunk0 = img.slice(0, chunkSize);
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -980,8 +986,7 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
       releaseChunkResponsesResolve = resolve;
     });
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");

@@ -253,17 +253,36 @@ function buildTestImageBytes(totalSize: number): Uint8Array {
   return bytes;
 }
 
-async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<{
+async function withServer(handler: (req: IncomingMessage, res: ServerResponse, url: URL) => void): Promise<{
   baseUrl: string;
   hits: Map<string, number>;
   close: () => Promise<void>;
 }> {
   const hits = new Map<string, number>();
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    const rawUrl = req.url;
+    if (typeof rawUrl !== "string" || rawUrl === "") {
+      res.statusCode = 400;
+      res.end("bad request");
+      return;
+    }
+    if (rawUrl.trim() !== rawUrl) {
+      res.statusCode = 400;
+      res.end("bad request");
+      return;
+    }
+
+    let url: URL;
+    try {
+      url = new URL(rawUrl, "http://localhost");
+    } catch {
+      res.statusCode = 400;
+      res.end("bad request");
+      return;
+    }
     hits.set(url.pathname, (hits.get(url.pathname) ?? 0) + 1);
     res.setHeader("cache-control", "no-transform");
-    handler(req, res);
+    handler(req, res, url);
   });
 
   await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -309,8 +328,7 @@ describe("RemoteChunkedDisk", () => {
     try {
       Object.defineProperty(Object.prototype, "schema", { value: "aero.chunked-disk-image.v1", configurable: true });
 
-      const { baseUrl, close } = await withServer((_req, res) => {
-        const url = new URL(_req.url ?? "/", "http://localhost");
+      const { baseUrl, close } = await withServer((_req, res, url) => {
         if (url.pathname === "/manifest.json") {
           res.statusCode = 200;
           res.setHeader("content-type", "application/json");
@@ -349,8 +367,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: String(chunkCount - 1).length,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -385,8 +402,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -424,8 +440,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -471,8 +486,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -510,8 +524,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -557,8 +570,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -593,8 +605,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: MAX_REMOTE_CHUNK_INDEX_WIDTH + 1,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -636,8 +647,7 @@ describe("RemoteChunkedDisk", () => {
       ],
     };
 
-    const { baseUrl, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -830,8 +840,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -868,8 +877,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -914,8 +922,7 @@ describe("RemoteChunkedDisk", () => {
       ],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1045,8 +1052,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 8,
     };
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1131,8 +1137,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 8,
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1201,8 +1206,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1281,8 +1285,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1358,8 +1361,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1432,8 +1434,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1504,8 +1505,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1581,8 +1581,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 8,
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1664,8 +1663,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: chunkSize, sha256: await sha256Hex(chunks[0]!) }],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1735,8 +1733,7 @@ describe("RemoteChunkedDisk", () => {
       ],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1821,8 +1818,7 @@ describe("RemoteChunkedDisk", () => {
       ],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1905,8 +1901,7 @@ describe("RemoteChunkedDisk", () => {
       ],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -1979,8 +1974,7 @@ describe("RemoteChunkedDisk", () => {
       chunkIndexWidth: 1,
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -2080,8 +2074,7 @@ describe("RemoteChunkedDisk", () => {
       ],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -2158,8 +2151,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: chunkSize, sha256: await sha256Hex(chunks[0]!) }],
     };
 
-    const { baseUrl, hits, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -2235,8 +2227,7 @@ describe("RemoteChunkedDisk", () => {
       ],
     };
 
-    const { baseUrl, hits, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, hits, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -2303,8 +2294,7 @@ describe("RemoteChunkedDisk", () => {
       chunks: [{ size: 1024, sha256: await sha256Hex(chunks[0]!) }],
     };
 
-    const { baseUrl, close } = await withServer((_req, res) => {
-      const url = new URL(_req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((_req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
@@ -2385,8 +2375,7 @@ describe("RemoteChunkedDisk", () => {
       twoChunkRequestsResolve = resolve;
     });
 
-    const { baseUrl, close } = await withServer((req, res) => {
-      const url = new URL(req.url ?? "/", "http://localhost");
+    const { baseUrl, close } = await withServer((req, res, url) => {
       if (url.pathname === "/manifest.json") {
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");

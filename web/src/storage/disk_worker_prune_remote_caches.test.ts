@@ -41,6 +41,53 @@ async function writeValidMeta(dir: FileSystemDirectoryHandle, lastAccessedAtMs: 
 }
 
 describe("disk_worker prune_remote_caches", () => {
+  it("rejects non-number olderThanMs without calling valueOf()", async () => {
+    vi.resetModules();
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    const hostile = {
+      valueOf() {
+        throw new Error("boom");
+      },
+    };
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "prune_remote_caches",
+        payload: { olderThanMs: hostile },
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/olderThanMs/i);
+  });
+
   it("prunes stale OPFS RemoteCacheManager caches by lastAccessedAtMs (and corrupt meta)", async () => {
     vi.resetModules();
     vi.useFakeTimers();

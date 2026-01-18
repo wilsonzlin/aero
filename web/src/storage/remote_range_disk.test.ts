@@ -173,13 +173,15 @@ async function startRangeServer(state: RangeServerState): Promise<{
 
   const server = http.createServer((req, res) => {
     if (state.requiredToken) {
-      const reqUrl = req.url ?? "";
+      const reqUrl = req.url;
       let token: string | null = null;
-      try {
-        const parsed = new URL(reqUrl, "http://127.0.0.1");
-        token = parsed.searchParams.get("token");
-      } catch {
-        token = null;
+      if (typeof reqUrl === "string" && reqUrl !== "") {
+        try {
+          const parsed = new URL(reqUrl, "http://127.0.0.1");
+          token = parsed.searchParams.get("token");
+        } catch {
+          token = null;
+        }
       }
       if (token !== state.requiredToken) {
         res.statusCode = 403;

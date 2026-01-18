@@ -147,6 +147,30 @@ describe("disk_worker message validation", () => {
     }
   });
 
+  it("create_remote rejects non-string name without calling toString()", async () => {
+    const hostile = {
+      toString() {
+        throw new Error("boom");
+      },
+    };
+    const resp = await sendRawMessage({
+      type: "request",
+      requestId: 1,
+      backend: "opfs",
+      op: "create_remote",
+      payload: {
+        name: hostile,
+        imageId: "img",
+        version: "v1",
+        delivery: "range",
+        sizeBytes: 512,
+        urls: { url: "https://example.com/disk.img" },
+      },
+    });
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/name/i);
+  });
+
   it("update_remote ignores inherited patch fields", async () => {
     const { send } = await setupWorkerHarness();
 
@@ -181,5 +205,42 @@ describe("disk_worker message validation", () => {
       if (nameExisting) Object.defineProperty(Object.prototype, "name", nameExisting);
       else Reflect.deleteProperty(Object.prototype, "name");
     }
+  });
+
+  it("update_remote rejects non-number patch fields without calling valueOf()", async () => {
+    const { send } = await setupWorkerHarness();
+
+    const create = await send({
+      type: "request",
+      requestId: 1,
+      backend: "opfs",
+      op: "create_remote",
+      payload: {
+        name: "original",
+        imageId: "img",
+        version: "v1",
+        delivery: "range",
+        sizeBytes: 512,
+        urls: { url: "https://example.com/disk.img" },
+      },
+    });
+    expect(create.ok).toBe(true);
+    const id = create.result?.id;
+    expect(typeof id).toBe("string");
+
+    const hostile = {
+      valueOf() {
+        throw new Error("boom");
+      },
+    };
+    const update = await send({
+      type: "request",
+      requestId: 2,
+      backend: "opfs",
+      op: "update_remote",
+      payload: { id, sizeBytes: hostile },
+    });
+    expect(update.ok).toBe(false);
+    expect(String(update.error?.message ?? "")).toMatch(/sizeBytes/i);
   });
 });

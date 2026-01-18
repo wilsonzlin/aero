@@ -97,6 +97,17 @@ async function sendAddRemote(payload: any): Promise<any> {
 }
 
 describe("disk_worker add_remote validation", () => {
+  it("rejects non-string url without calling toString()", async () => {
+    const hostile = {
+      toString() {
+        throw new Error("boom");
+      },
+    };
+    const resp = await sendAddRemote({ url: hostile });
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.message).toMatch(/Missing url/i);
+  });
+
   it("rejects blockSizeBytes > 64MiB", async () => {
     const resp = await sendAddRemote({
       url: "https://example.invalid/disk.img",
