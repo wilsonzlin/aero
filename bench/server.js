@@ -38,11 +38,19 @@ function safeResolve(rootDir, requestPath) {
 function sendText(res, statusCode, text) {
   const safeText = formatOneLineUtf8(text, MAX_ERROR_BODY_BYTES) || "Error";
   const body = Buffer.from(safeText, "utf8");
-  res.statusCode = statusCode;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Content-Length", body.length);
-  res.setHeader("Cache-Control", "no-store");
-  res.end(body);
+  try {
+    res.statusCode = statusCode;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Length", body.length);
+    res.setHeader("Cache-Control", "no-store");
+    res.end(body);
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function pipeFile(res, filePath) {
@@ -52,15 +60,8 @@ function pipeFile(res, filePath) {
     // Avoid echoing internal errors back to clients; logs are sufficient for debugging.
     // eslint-disable-next-line no-console
     console.error(`bench static server: stream error: ${formatOneLineError(err, 512, "Error")}`);
-    if (res.writableEnded) return;
-    if (res.headersSent) {
-      try {
-        res.destroy();
-      } catch {
-        // ignore
-      }
-      return;
-    }
+    // Defensive: avoid relying on response state getters (they can throw on hostile/monkeypatched
+    // objects). Best-effort emit a 500; `sendText` will destroy on write failure.
     sendText(res, 500, "Internal server error");
   });
 }
@@ -78,15 +79,27 @@ export async function startStaticServer(opts) {
     try {
       const method = req.method ?? "GET";
       if (method === "OPTIONS") {
-        res.statusCode = 204;
-        res.setHeader("Allow", "GET, HEAD, OPTIONS");
-        res.setHeader("Cache-Control", "no-store");
-        res.setHeader("Content-Length", "0");
-        res.end();
+        try {
+          res.statusCode = 204;
+          res.setHeader("Allow", "GET, HEAD, OPTIONS");
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Content-Length", "0");
+          res.end();
+        } catch {
+          try {
+            res.destroy();
+          } catch {
+            // ignore
+          }
+        }
         return;
       }
       if (method !== "GET" && method !== "HEAD") {
-        res.setHeader("Allow", "GET, HEAD, OPTIONS");
+        try {
+          res.setHeader("Allow", "GET, HEAD, OPTIONS");
+        } catch {
+          // ignore (sendText will destroy if response is unusable)
+        }
         sendText(res, 405, "Method Not Allowed");
         return;
       }
@@ -155,14 +168,8 @@ export async function startStaticServer(opts) {
       // This server is dev-only; logs are sufficient for debugging.
       // eslint-disable-next-line no-console
       console.error(`bench static server: handler error: ${formatOneLineError(err, 512, "Error")}`);
-      if (res.headersSent) {
-        try {
-          res.destroy();
-        } catch {
-          // ignore
-        }
-        return;
-      }
+      // Defensive: avoid relying on response state getters. Best-effort emit a 500; `sendText`
+      // will destroy the response on write failure.
       sendText(res, 500, "Internal server error");
     }
   });

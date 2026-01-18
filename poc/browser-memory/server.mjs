@@ -37,10 +37,18 @@ function logServerError(prefix, err) {
 
 function send(res, statusCode, body, contentType = "text/plain; charset=utf-8") {
   const bytes = Buffer.isBuffer(body) ? body : Buffer.from(String(body), "utf8");
-  res.statusCode = statusCode;
-  res.setHeader("Content-Type", contentType);
-  res.setHeader("Content-Length", String(bytes.byteLength));
-  res.end(bytes);
+  try {
+    res.statusCode = statusCode;
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", String(bytes.byteLength));
+    res.end(bytes);
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function safeResolve(rootDir, requestPath) {
@@ -54,10 +62,19 @@ function safeResolve(rootDir, requestPath) {
 
 const server = http.createServer((req, res) => {
   // Required for SharedArrayBuffer/crossOriginIsolated.
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  res.setHeader("Cache-Control", "no-store");
+  try {
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+    res.setHeader("Cache-Control", "no-store");
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+    return;
+  }
 
   const rawUrl = req.url ?? "/";
   if (typeof rawUrl !== "string") return send(res, 400, "Bad Request");
@@ -96,22 +113,24 @@ const server = http.createServer((req, res) => {
   }
 
   const ext = path.extname(filePath);
-  res.setHeader("Content-Type", MIME.get(ext) ?? "application/octet-stream");
-  res.setHeader("Content-Length", String(stat.size));
+  try {
+    res.setHeader("Content-Type", MIME.get(ext) ?? "application/octet-stream");
+    res.setHeader("Content-Length", String(stat.size));
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+    return;
+  }
 
   const stream = fs.createReadStream(filePath);
   void pipeline(stream, res).catch((err) => {
     if (isExpectedStreamAbort(err)) return;
     logServerError("poc browser-memory: stream error", err);
-    if (res.writableEnded) return;
-    if (res.headersSent) {
-      try {
-        res.destroy();
-      } catch {
-        // ignore
-      }
-      return;
-    }
+    // Defensive: avoid reading response state getters in error paths. Best-effort emit a stable
+    // 500; `send` will destroy on write failure.
     send(res, 500, "Internal server error");
   });
 });

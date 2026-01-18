@@ -36,6 +36,38 @@ function clearHeaders(res) {
   }
 }
 
+function trySetHeader(res, name, value) {
+  try {
+    res.setHeader(name, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function endSafe(res, body) {
+  try {
+    res.end(body);
+    return true;
+  } catch {
+    try {
+      res.destroy();
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+}
+
+function setStatusCodeSafe(res, statusCode) {
+  try {
+    res.statusCode = statusCode;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function parseArgs(argv) {
   const args = { dir: process.cwd(), port: 8080, coopCoep: false, authToken: null };
   for (let i = 2; i < argv.length; i++) {
@@ -177,73 +209,78 @@ function cacheControlForRequest(req) {
 }
 
 function setCommonHeaders(req, res, stat, { contentLength, statusCode, urlPath }) {
-  res.statusCode = statusCode;
-  res.setHeader("Content-Length", String(contentLength));
-  res.setHeader("Content-Type", contentTypeFor(urlPath));
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Content-Encoding", "identity");
-  res.setHeader("Cache-Control", cacheControlForRequest(req));
-  res.setHeader("Last-Modified", stat.mtime.toUTCString());
-  res.setHeader("ETag", computeEtag(stat));
+  if (!setStatusCodeSafe(res, statusCode)) return;
+  trySetHeader(res, "Content-Length", String(contentLength));
+  trySetHeader(res, "Content-Type", contentTypeFor(urlPath));
+  trySetHeader(res, "X-Content-Type-Options", "nosniff");
+  trySetHeader(res, "Content-Encoding", "identity");
+  trySetHeader(res, "Cache-Control", cacheControlForRequest(req));
+  trySetHeader(res, "Last-Modified", stat.mtime.toUTCString());
+  trySetHeader(res, "ETag", computeEtag(stat));
 
   // Defence-in-depth for COEP compatibility: allow the resource to be embedded/fetched cross-origin
   // by default. This is a dev helper; production deployments should choose an appropriate CORP
   // policy (same-site vs cross-origin).
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  trySetHeader(res, "Cross-Origin-Resource-Policy", "cross-origin");
 
   // CORS for browser fetches.
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.setHeader(
+  trySetHeader(res, "Access-Control-Allow-Origin", "*");
+  trySetHeader(res, "Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  trySetHeader(
+    res,
     "Access-Control-Allow-Headers",
     "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type"
   );
-  res.setHeader(
+  trySetHeader(
+    res,
     "Access-Control-Expose-Headers",
     "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified, Cache-Control, Content-Type"
   );
-  res.setHeader("Access-Control-Max-Age", "86400");
-  res.setHeader(
+  trySetHeader(res, "Access-Control-Max-Age", "86400");
+  trySetHeader(
+    res,
     "Vary",
     "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
   );
 
   if (args.coopCoep) {
-    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    trySetHeader(res, "Cross-Origin-Opener-Policy", "same-origin");
+    trySetHeader(res, "Cross-Origin-Embedder-Policy", "require-corp");
   }
 }
 
 function sendRequestError(req, res, { statusCode, message }) {
   const safeMessage = formatOneLineUtf8(message, MAX_ERROR_BODY_BYTES) || "Error";
   const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from(safeMessage, "utf8");
-  res.statusCode = statusCode;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Content-Length", String(body.length));
-  res.setHeader("Cache-Control", "no-store, no-transform");
-  res.setHeader("Content-Encoding", "identity");
+  setStatusCodeSafe(res, statusCode);
+  trySetHeader(res, "Content-Type", "text/plain; charset=utf-8");
+  trySetHeader(res, "Content-Length", String(body.length));
+  trySetHeader(res, "Cache-Control", "no-store, no-transform");
+  trySetHeader(res, "Content-Encoding", "identity");
 
   // Defence-in-depth for COEP compatibility.
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.setHeader(
+  trySetHeader(res, "Cross-Origin-Resource-Policy", "cross-origin");
+  trySetHeader(res, "Access-Control-Allow-Origin", "*");
+  trySetHeader(res, "Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  trySetHeader(
+    res,
     "Access-Control-Allow-Headers",
     "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type",
   );
-  res.setHeader(
+  trySetHeader(
+    res,
     "Access-Control-Expose-Headers",
     "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified, Cache-Control, Content-Type",
   );
-  res.setHeader("Access-Control-Max-Age", "86400");
-  res.setHeader("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
+  trySetHeader(res, "Access-Control-Max-Age", "86400");
+  trySetHeader(res, "Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
 
   if (args.coopCoep) {
-    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    trySetHeader(res, "Cross-Origin-Opener-Policy", "same-origin");
+    trySetHeader(res, "Cross-Origin-Embedder-Policy", "require-corp");
   }
 
-  res.end(body);
+  endSafe(res, body);
 }
 
 function sendAuthError(req, res, { statusCode }) {
@@ -263,31 +300,34 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "OPTIONS") {
     // CORS preflight for cross-origin fetches.
-    res.statusCode = 204;
-    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    res.setHeader(
+    setStatusCodeSafe(res, 204);
+    trySetHeader(res, "Cross-Origin-Resource-Policy", "cross-origin");
+    trySetHeader(res, "Access-Control-Allow-Origin", "*");
+    trySetHeader(res, "Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    trySetHeader(
+      res,
       "Access-Control-Allow-Headers",
       "Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type"
     );
-    res.setHeader(
+    trySetHeader(
+      res,
       "Access-Control-Expose-Headers",
       "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified, Cache-Control, Content-Type"
     );
-    res.setHeader("Access-Control-Max-Age", "86400");
-    res.setHeader(
+    trySetHeader(res, "Access-Control-Max-Age", "86400");
+    trySetHeader(
+      res,
       "Vary",
       "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
     );
     if (args.coopCoep) {
-      res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-      res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+      trySetHeader(res, "Cross-Origin-Opener-Policy", "same-origin");
+      trySetHeader(res, "Cross-Origin-Embedder-Policy", "require-corp");
     }
-    res.setHeader("Content-Encoding", "identity");
-    res.setHeader("Cache-Control", "no-store, no-transform");
-    res.setHeader("Content-Length", "0");
-    res.end();
+    trySetHeader(res, "Content-Encoding", "identity");
+    trySetHeader(res, "Cache-Control", "no-store, no-transform");
+    trySetHeader(res, "Content-Length", "0");
+    endSafe(res);
     return;
   }
 
@@ -322,13 +362,13 @@ const server = http.createServer((req, res) => {
 
     if (isNotModified(req, stat)) {
       setCommonHeaders(req, res, stat, { contentLength: 0, statusCode: 304, urlPath: url.pathname });
-      res.end();
+      endSafe(res);
       return;
     }
 
     if (req.method === "HEAD") {
       setCommonHeaders(req, res, stat, { contentLength: stat.size, statusCode: 200, urlPath: url.pathname });
-      res.end();
+      endSafe(res);
       return;
     }
 
@@ -346,15 +386,6 @@ const server = http.createServer((req, res) => {
     void pipeline(stream, res).catch((e) => {
       if (isExpectedStreamAbort(e)) return;
       logServerError("chunk_server: stream error", e);
-      if (res.writableEnded) return;
-      if (res.headersSent) {
-        try {
-          res.destroy();
-        } catch {
-          // ignore
-        }
-        return;
-      }
       clearHeaders(res);
       sendRequestError(req, res, { statusCode: 500, message: "Internal server error" });
     });
