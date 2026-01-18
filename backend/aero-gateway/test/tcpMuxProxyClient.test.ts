@@ -334,7 +334,11 @@ describe("tcp-mux browser client integration", () => {
       handleProtocols: (protocols) => (protocols.has(TCP_MUX_SUBPROTOCOL) ? TCP_MUX_SUBPROTOCOL : false),
     });
     const seenUrlPromise = new Promise<string>((resolve) => {
-      wss.once("connection", (_ws, req) => resolve(req.url ?? ""));
+      wss.once("connection", (_ws, req) => {
+        const rawUrl = req.url;
+        assert.equal(typeof rawUrl, "string");
+        resolve(rawUrl);
+      });
     });
 
     let client: WebSocketTcpMuxProxyClient | null = null;

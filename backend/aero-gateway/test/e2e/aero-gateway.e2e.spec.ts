@@ -183,7 +183,9 @@ async function startHttpsProxy(targetPort: number, listenPort: number): Promise<
 
   server.on('upgrade', (req, socket, head) => {
     const upstream = net.connect({ host: '127.0.0.1', port: targetPort }, () => {
-      let requestHeader = `${req.method} ${req.url ?? '/'} HTTP/1.1\r\n`;
+      const method = typeof req.method === 'string' && req.method ? req.method : 'GET';
+      const url = typeof req.url === 'string' && req.url ? req.url : '/';
+      let requestHeader = `${method} ${url} HTTP/1.1\r\n`;
       for (let i = 0; i < req.rawHeaders.length; i += 2) {
         const key = req.rawHeaders[i];
         const value = req.rawHeaders[i + 1] ?? '';

@@ -66,8 +66,12 @@ export function handleTcpProxyUpgrade(
   head: Buffer,
   opts: TcpProxyUpgradeOptions = {},
 ): void {
-  const rawUrl = tryGetStringProp(req, "url") ?? "";
-  if (!enforceUpgradeRequestUrlLimit(rawUrl, socket, opts.upgradeUrl)) return;
+  const rawUrl = opts.upgradeUrl ? "" : tryGetStringProp(req, "url");
+  if (!opts.upgradeUrl && (!rawUrl || rawUrl === "" || rawUrl.trim() !== rawUrl)) {
+    respondUpgradeHttp(socket, 400, "Invalid request");
+    return;
+  }
+  if (!enforceUpgradeRequestUrlLimit(rawUrl ?? "", socket, opts.upgradeUrl)) return;
 
   let handshakeKey = sanitizeWebSocketHandshakeKey(opts.handshakeKey);
   if (!handshakeKey) {
@@ -87,7 +91,7 @@ export function handleTcpProxyUpgrade(
 
   let target: TcpTarget;
   try {
-    const url = resolveUpgradeRequestUrl(rawUrl, socket, opts.upgradeUrl, "Invalid request");
+    const url = resolveUpgradeRequestUrl(rawUrl ?? "", socket, opts.upgradeUrl, "Invalid request");
     if (!url) return;
     if (!opts.upgradeUrl && url.pathname !== "/tcp") {
       respondUpgradeHttp(socket, 404, "Not Found");

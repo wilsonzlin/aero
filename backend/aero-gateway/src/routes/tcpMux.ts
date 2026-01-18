@@ -4,7 +4,7 @@ import type { Duplex } from "node:stream";
 import {
   TCP_MUX_SUBPROTOCOL,
 } from "../protocol/tcpMux.js";
-import { tryGetStringProp } from "./safeProps.js";
+import { tryGetProp, tryGetStringProp } from "./safeProps.js";
 import { validateWsUpgradePolicy } from "./tcpPolicy.js";
 import { enforceUpgradeRequestUrlLimit, resolveUpgradeRequestUrl, respondUpgradeHttp } from "./upgradeHttp.js";
 import { writeWebSocketHandshake } from "./wsHandshake.js";
@@ -45,8 +45,12 @@ export function handleTcpMuxUpgrade(
   head: Buffer,
   opts: TcpMuxUpgradeOptions = {},
 ): void {
-  const rawUrl = tryGetStringProp(req, "url") ?? "";
-  if (!enforceUpgradeRequestUrlLimit(rawUrl, socket)) return;
+  const rawUrl = opts.upgradeUrl ? "" : tryGetStringProp(req, "url");
+  if (!opts.upgradeUrl && (!rawUrl || rawUrl === "" || rawUrl.trim() !== rawUrl)) {
+    respondUpgradeHttp(socket, 400, "Invalid request");
+    return;
+  }
+  if (!enforceUpgradeRequestUrlLimit(rawUrl ?? "", socket, opts.upgradeUrl)) return;
 
   let handshakeKey = sanitizeWebSocketHandshakeKey(opts.handshakeKey);
   if (!handshakeKey) {
@@ -64,14 +68,16 @@ export function handleTcpMuxUpgrade(
     return;
   }
 
-  const url = resolveUpgradeRequestUrl(rawUrl, socket, opts.upgradeUrl, "Invalid request");
+  const url = resolveUpgradeRequestUrl(rawUrl ?? "", socket, opts.upgradeUrl, "Invalid request");
   if (!url) return;
   if (!opts.upgradeUrl && url.pathname !== "/tcp-mux") {
     respondUpgradeHttp(socket, 404, "Not Found");
     return;
   }
 
-  const protocolHeader = req.headers["sec-websocket-protocol"];
+  const protocolHeaderRaw = tryGetProp(tryGetProp(req, "headers"), "sec-websocket-protocol");
+  const protocolHeader =
+    typeof protocolHeaderRaw === "string" || Array.isArray(protocolHeaderRaw) ? protocolHeaderRaw : undefined;
   const subprotocol = hasWebSocketSubprotocol(protocolHeader, TCP_MUX_SUBPROTOCOL);
   if (!subprotocol.ok) {
     respondUpgradeHttp(socket, 400, "Invalid Sec-WebSocket-Protocol header");

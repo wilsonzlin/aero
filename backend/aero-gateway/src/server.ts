@@ -138,7 +138,11 @@ export function buildServer(config: Config): ServerBundle {
   // Conservative cap to avoid spending unbounded CPU/memory on attacker-controlled request targets.
   // Many HTTP stacks enforce ~8KB request target limits; keep the gateway strict and predictable.
   app.addHook('onRequest', async (request, reply) => {
-    const rawUrl = request.raw.url ?? '';
+    const rawUrl = request.raw.url;
+    if (typeof rawUrl !== 'string' || rawUrl === '' || rawUrl.trim() !== rawUrl) {
+      reply.code(400).send({ error: 'bad_request', message: 'Invalid request URL' });
+      return;
+    }
     if (rawUrl.length > MAX_REQUEST_URL_LEN) {
       reply.code(414).send({ error: 'url_too_long', message: 'Request URL too long' });
       return;
@@ -341,7 +345,11 @@ export function buildServer(config: Config): ServerBundle {
         return;
       }
 
-      const rawUrl = req.url ?? '';
+      const rawUrl = req.url;
+      if (typeof rawUrl !== 'string' || rawUrl === '' || rawUrl.trim() !== rawUrl) {
+        respondUpgradeHttp(socket, 400, 'Invalid request URL');
+        return;
+      }
       if (!enforceUpgradeRequestUrlLimit(rawUrl, socket)) return;
       const url = parseUpgradeRequestUrl(rawUrl, socket, { invalidUrlMessage: 'Invalid request URL' });
       if (!url) return;

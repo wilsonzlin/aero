@@ -42,3 +42,29 @@ test("parseUpgradeRequestUrl rejects invalid URLs with 400", async () => {
   assert.ok(text.includes("Invalid request URL\n"));
 });
 
+test("parseUpgradeRequestUrl rejects empty URLs with 400", async () => {
+  const socket = new PassThrough();
+  const chunks: Buffer[] = [];
+  socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+
+  const url = parseUpgradeRequestUrl("", socket, { invalidUrlMessage: "Invalid request URL" });
+  assert.equal(url, null);
+
+  const text = Buffer.concat(chunks).toString("utf8");
+  assert.ok(text.startsWith("HTTP/1.1 400 "));
+  assert.ok(text.includes("Invalid request URL\n"));
+});
+
+test("parseUpgradeRequestUrl rejects whitespace-padded URLs with 400", async () => {
+  const socket = new PassThrough();
+  const chunks: Buffer[] = [];
+  socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+
+  const url = parseUpgradeRequestUrl(" /tcp-mux", socket, { invalidUrlMessage: "Invalid request URL" });
+  assert.equal(url, null);
+
+  const text = Buffer.concat(chunks).toString("utf8");
+  assert.ok(text.startsWith("HTTP/1.1 400 "));
+  assert.ok(text.includes("Invalid request URL\n"));
+});
+

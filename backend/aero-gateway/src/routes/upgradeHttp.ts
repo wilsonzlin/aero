@@ -30,6 +30,14 @@ export function parseUpgradeRequestUrl(
   socket: Duplex,
   opts: Readonly<{ invalidUrlMessage: string }>,
 ): URL | null {
+  // WHATWG URL parsing trims leading/trailing ASCII whitespace. That means `new URL(" ", base)`
+  // behaves like `new URL("", base)` and resolves to the base URL (i.e. `/`), silently treating a
+  // missing/invalid request target as a real root request. Reject whitespace-padded/empty strings
+  // explicitly.
+  if (rawUrl === "" || rawUrl.trim() !== rawUrl) {
+    respondUpgradeHttp(socket, 400, opts.invalidUrlMessage);
+    return null;
+  }
   try {
     return new URL(rawUrl, "http://localhost");
   } catch {
