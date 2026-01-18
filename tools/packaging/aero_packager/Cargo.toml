@@ -27,7 +27,7 @@ serde_json = "1"
 sha2 = "0.10"
 time = { version = "0.3", default-features = false, features = ["std"] }
 walkdir = "2"
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
+zip = { version = "7.1", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"
