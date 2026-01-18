@@ -26,7 +26,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:WDK_DOWNLOAD_CACHE | Out-Null
 
       - name: Cache WDK downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.WDK_DOWNLOAD_CACHE }}
           key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1', 'ci/lib/Toolchain.psm1') }}

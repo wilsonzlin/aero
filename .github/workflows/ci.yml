@@ -489,14 +489,14 @@ jobs:
 
       - name: Cache FreeDOS download (FD14-FloppyEdition.zip)
         id: freedos-zip-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: test-images/cache/FD14-FloppyEdition.zip
           key: freedos-zip-${{ runner.os }}-${{ env.FREEDOS_CACHE_VERSION }}-${{ steps.freedos-cache-key.outputs.zip_url_sanitized }}-${{ steps.freedos-cache-key.outputs.zip_sha256 }}
 
       - name: Cache patched FreeDOS boot image (fd14-boot-aero.img)
         id: freedos-img-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             test-images/freedos/fd14-boot-aero.img
