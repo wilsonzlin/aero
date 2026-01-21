@@ -96,7 +96,7 @@
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
     "@types/w3c-web-usb": "^1.0.13",
-    "@vitest/coverage-v8": "^1.6.0",
+    "@vitest/coverage-v8": "^4.0.16",
     "esbuild": "^0.21.3",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^24.0.0",
