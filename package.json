@@ -97,7 +97,7 @@
     "@types/pngjs": "^6.0.5",
     "@types/w3c-web-usb": "^1.0.13",
     "@vitest/coverage-v8": "^1.6.0",
-    "esbuild": "^0.21.3",
+    "esbuild": "^0.27.2",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^24.0.0",
     "license-checker-rseidelsohn": "4.3.0",
