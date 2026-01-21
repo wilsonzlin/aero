@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check Windows 7 virtio contract consistency (docs + INFs)
         run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
@@ -146,7 +146,7 @@ jobs:
           - clang
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check virtio driver uniqueness (INF HWIDs + MSBuild)
         shell: pwsh
@@ -199,7 +199,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run AeroGPU host tests (CMake)
         shell: bash
@@ -217,7 +217,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run AeroGPU host tests (CMake)
         shell: pwsh
@@ -244,7 +244,7 @@ jobs:
       WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Version stamping derives from git tags/commits; fetch full history + tags so
           # `git describe` and commit-distance calculations are accurate.
@@ -740,7 +740,7 @@ jobs:
     if: needs.drivers-win7.outputs.skip != 'true' && needs.drivers-win7.outputs.has_sys == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Version stamping derives from git tags/commits; fetch full history + tags so
           # `git describe` and commit-distance calculations are accurate.

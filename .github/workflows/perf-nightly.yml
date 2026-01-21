@@ -31,7 +31,7 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -250,7 +250,7 @@ jobs:
           retention-days: 14
 
       - name: Checkout gh-pages (optional; used to load prior history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         continue-on-error: true
         with:
           ref: gh-pages

@@ -23,7 +23,7 @@ jobs:
     name: cargo-deny (Rust)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Detect Rust workspace
         id: rust
@@ -74,7 +74,7 @@ jobs:
     # License metadata doesn't change without a dependency bump; run on PRs/pushes (and manual runs) only.
     if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node workspace
         uses: ./.github/actions/setup-node-workspace
@@ -107,7 +107,7 @@ jobs:
     # NPM advisory churn can be noisy; gate only on the nightly job (and manual runs) for now.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Detect npm lockfile
         id: npm
@@ -135,7 +135,7 @@ jobs:
     name: go-licenses (allowlist)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -224,7 +224,7 @@ jobs:
     name: govulncheck (Go)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
