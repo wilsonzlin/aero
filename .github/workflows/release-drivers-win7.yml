@@ -182,7 +182,7 @@ jobs:
           locked: always
 
       - name: Download signed packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: win7-drivers-signed-packages
           # The signed-packages artifact is uploaded with `out/` as its root,
@@ -211,7 +211,7 @@ jobs:
           throw "Unexpected signed packages layout after download. Expected out/packages + out/certs (or nested out/out/*)."
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: win7-drivers-release
           path: artifacts
