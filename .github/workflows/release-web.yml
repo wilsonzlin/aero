@@ -163,7 +163,7 @@ jobs:
           echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact (workflow)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: aero-web-dist-${{ env.AERO_VERSION }}
           path: |

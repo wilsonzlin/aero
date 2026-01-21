@@ -53,7 +53,7 @@ jobs:
         run: npm -w backend/aero-gateway run build
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: aero-gateway-dist
           path: backend/aero-gateway/dist
@@ -162,7 +162,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: aero-gateway-playwright-artifacts
           path: |

@@ -41,7 +41,7 @@ jobs:
 
       - name: Upload artifacts (failure only)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: net-proxy-artifacts
           path: |
