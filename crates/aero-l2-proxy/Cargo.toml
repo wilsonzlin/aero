@@ -12,7 +12,7 @@ aero-auth-tokens = { path = "../aero-auth-tokens" }
 aero-net-stack = { path = "../aero-net-stack" }
 aero-pcapng = { path = "../aero-pcapng" }
 anyhow = "1"
-axum = { version = "0.7.9", features = ["ws"] }
+axum = { version = "0.8.8", features = ["ws"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"

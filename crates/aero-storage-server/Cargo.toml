@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 anyhow = "1"
 async-trait = "0.1"
 aero-http-range = { path = "../aero-http-range" }
-axum = "0.7"
+axum = "0.8"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
