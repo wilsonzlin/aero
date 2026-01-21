@@ -30,7 +30,7 @@ wasmi = "1.0.7"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 rand = "0.8.5"
-rand_chacha = "0.3"
+rand_chacha = "0.9"
 # Enable shared-memory instantiation tests (`wasmtime::SharedMemory` + `Config::wasm_threads`) without
 # forcing the entire crate's normal build to depend on Wasmtime's threads support.
 wasmtime = { version = "40.0.1", default-features = false, features = ["cranelift", "runtime", "std", "threads"] }

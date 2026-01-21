@@ -466,7 +466,7 @@ dependencies = [
  "aero-x86",
  "memoffset",
  "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand_chacha 0.9.0",
  "thiserror 2.0.17",
  "wasm-encoder 0.244.0",
  "wasmi",
