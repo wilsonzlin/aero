@@ -32,7 +32,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/node": "^20.11.30",
+    "@types/node": "^25.0.9",
     "autocannon": "^7.15.0",
     "dns-packet": "^5.6.1",
     "fast-check": "^3.16.0",
