@@ -130,7 +130,7 @@ aero-dxbc = { path = "crates/aero-dxbc", features = ["test-utils"] }
 aero-gpu = { path = "crates/aero-gpu" }
 aero-protocol = { path = "emulator/protocol" }
 anyhow = "1.0"
-bytemuck = { version = "1.14", features = ["derive"] }
+bytemuck = { version = "1.25", features = ["derive"] }
 futures-intrusive = "0.5"
 image = { version = "0.25.5", default-features = false, features = ["png", "pnm"] }
 pollster = "0.3"
@@ -148,6 +148,6 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process"
 edition = "2021"
 
 [workspace.dependencies]
-bitflags = "2.4.2"
+bitflags = "2.11.0"
 iced-x86 = { version = "1.21.0", default-features = false, features = ["decoder", "instr_info", "std"] }
 thiserror = "1.0.56"
