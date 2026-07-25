@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.101"
-base64 = "0.22.0"
+base64 = "0.23.0"
 clap = { version = "4.5.57", features = ["derive"] }
 pem = "3.0.3"
 serde = { version = "1.0.196", features = ["derive"] }
