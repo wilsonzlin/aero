@@ -103,7 +103,7 @@
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^24.0.0",
     "license-checker-rseidelsohn": "4.3.0",
-    "pixelmatch": "^7.1.0",
+    "pixelmatch": "^7.2.0",
     "pngjs": "^7.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.5.4",
