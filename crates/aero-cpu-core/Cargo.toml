@@ -24,7 +24,7 @@ web-time = "1.1"
 memoffset = "0.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 
 [[test]]
 name = "bus_wrapping"

@@ -18,12 +18,12 @@ bytemuck = { version = "1.14", features = ["derive"] }
 aero-dxbc = { path = "../aero-dxbc" }
 futures-intrusive = "0.5"
 half = "2.7.1"
-hashbrown = "0.16"
+hashbrown = "0.17"
 thiserror = "2.0.9"
 tracing = "0.1"
 # WebGPU pipeline creation/state translation.
-lru = "0.16"
-wgpu = "0.20"
+lru = "0.18"
+wgpu = "29.0"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
@@ -31,15 +31,15 @@ aero-dxbc = { path = "../aero-dxbc", features = ["test-utils"] }
 aero-gpu-utils = { path = "../aero-gpu-utils" }
 futures = "0.3"
 insta = "1.39.0"
-naga = { version = "24.0.0", default-features = false, features = ["wgsl-in"] }
-pollster = "0.3"
+naga = { version = "29.0.4", default-features = false, features = ["wgsl-in"] }
+pollster = "1.0"
 pretty_assertions = "1.4.1"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"

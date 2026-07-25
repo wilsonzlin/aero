@@ -10,8 +10,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 futures-channel = "0.3"
 js-sys = "0.3"
-lru = "0.16"
-thiserror = "1"
+lru = "0.18"
+thiserror = "2"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 

@@ -11,7 +11,7 @@ legacy-baseline = []
 # Emit an inline direct-mapped TLB + direct-RAM fast-path for Tier-1 WASM codegen.
 tier1-inline-tlb = []
 [dependencies]
-wasm-encoder = "0.244.0"
+wasm-encoder = "0.246.2"
 thiserror = "2.0.17"
 aero-pc-constants = { path = "../aero-pc-constants" }
 aero-cpu-core = { path = "../aero-cpu-core" }
@@ -21,19 +21,19 @@ aero-x86 = { path = "../aero-x86" }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Wasmtime is only used as a reference backend for executing Tier-1 WASM blocks on native targets.
 # Disable its default feature set to keep compile times and dependency size manageable.
-wasmtime = { version = "40.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime = { version = "41.0.4", default-features = false, features = ["cranelift", "runtime", "std"] }
 
 [dev-dependencies]
 memoffset = "0.9"
-wasmparser = "0.244.0"
+wasmparser = "0.246.2"
 wasmi = "1.0.7"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 rand = "0.9"
-rand_chacha = "0.9"
+rand_chacha = "0.10"
 # Enable shared-memory instantiation tests (`wasmtime::SharedMemory` + `Config::wasm_threads`) without
 # forcing the entire crate's normal build to depend on Wasmtime's threads support.
-wasmtime = { version = "40.0.1", default-features = false, features = ["cranelift", "runtime", "std", "threads"] }
+wasmtime = { version = "41.0.4", default-features = false, features = ["cranelift", "runtime", "std", "threads"] }
 
 [[test]]
 name = "wasm_codegen"

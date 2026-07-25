@@ -65,13 +65,13 @@ aero-gpu = { path = "../aero-gpu", optional = true }
 aero-storage = { path = "../aero-storage" }
 aero-storage-adapters = { path = "../aero-storage-adapters" }
 anyhow = { version = "1", optional = true }
-lru = "0.16"
+lru = "0.18"
 memory = { path = "../memory" }
 aero-net-stack = { path = "../aero-net-stack" }
-pollster = { version = "0.3", optional = true }
+pollster = { version = "1.0", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "1"
+thiserror = "2"
 aero-d3d11 = { path = "../aero-d3d11", optional = true }
 
 [dev-dependencies]
@@ -82,7 +82,7 @@ firmware = { path = "../firmware" }
 aero-net-pump = { path = "../aero-net-pump", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
 proptest = "1.4"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }

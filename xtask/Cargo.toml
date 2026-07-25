@@ -21,7 +21,7 @@ aero-d3d9 = { path = "../crates/aero-d3d9", optional = true }
 aero-dxbc = { path = "../crates/aero-dxbc", optional = true }
 aero-snapshot = { path = "../crates/aero-snapshot" }
 firmware = { path = "../crates/firmware" }
-lz4_flex = "0.11.5"
+lz4_flex = "0.14.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 assert_cmd = "2"

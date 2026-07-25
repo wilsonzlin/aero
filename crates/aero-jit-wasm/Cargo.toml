@@ -26,4 +26,4 @@ js-sys = "0.3"
 # Native unit tests validate the emitted WASM import set via `wasmparser`.
 aero-jit-x86 = { path = "../aero-jit-x86", features = ["tier1-inline-tlb"] }
 aero-types = { path = "../aero-types" }
-wasmparser = "0.244.0"
+wasmparser = "0.246.2"
