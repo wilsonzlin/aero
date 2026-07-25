@@ -24,7 +24,7 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Node workspace
         id: node-workspace
@@ -51,14 +51,14 @@ jobs:
           cargo llvm-cov ${{ steps.setup-rust.outputs.cargo_locked_flag }} --workspace --lcov --output-path target/coverage/rust.lcov
 
       - name: Upload Rust coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: target/coverage/rust.lcov
           flags: rust
           fail_ci_if_error: false
 
       - name: Upload TypeScript coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: ${{ steps.node-workspace.outputs.dir }}/coverage/lcov.info
           flags: typescript

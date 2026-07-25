@@ -19,7 +19,7 @@ jobs:
       AERO_REQUIRE_WEBGPU: "1"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node workspace
         id: node-workspace
@@ -38,7 +38,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-webgpu-${{ matrix.os }}
           path: |

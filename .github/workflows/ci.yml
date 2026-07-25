@@ -36,7 +36,7 @@ jobs:
       BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
       HEAD_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -118,7 +118,7 @@ jobs:
         run: python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
@@ -178,10 +178,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
@@ -195,10 +195,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
@@ -223,7 +223,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         id: setup-rust
@@ -304,7 +304,7 @@ jobs:
 
       - name: Publish Rust test report
         if: always()
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         with:
           name: Rust tests
           path: test-results/rust-*.xml
@@ -313,7 +313,7 @@ jobs:
 
       - name: Upload Rust test artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: rust-test-results
           path: test-results/rust-*.xml
@@ -322,7 +322,7 @@ jobs:
 
       - name: Upload net traces
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: net-traces
           path: target/net-traces
@@ -331,7 +331,7 @@ jobs:
 
       - name: Upload network captures (pcapng)
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: net-captures
           path: target/nt-test-artifacts/**/*.pcapng
@@ -360,7 +360,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install ACPICA tools (iasl)
         run: |
@@ -377,7 +377,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Win7 virtqueue_split guardrails (headers + driver build files)
         run: |
           set -euo pipefail
@@ -412,7 +412,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build + run AeroGPU D3D9 UMD portable tests
         run: |
           set -euo pipefail
@@ -435,7 +435,7 @@ jobs:
       # Bump to intentionally bust the FreeDOS download cache.
       FREEDOS_CACHE_VERSION: v1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         id: setup-rust
@@ -489,14 +489,14 @@ jobs:
 
       - name: Cache FreeDOS download (FD14-FloppyEdition.zip)
         id: freedos-zip-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: test-images/cache/FD14-FloppyEdition.zip
           key: freedos-zip-${{ runner.os }}-${{ env.FREEDOS_CACHE_VERSION }}-${{ steps.freedos-cache-key.outputs.zip_url_sanitized }}-${{ steps.freedos-cache-key.outputs.zip_sha256 }}
 
       - name: Cache patched FreeDOS boot image (fd14-boot-aero.img)
         id: freedos-img-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             test-images/freedos/fd14-boot-aero.img
@@ -530,7 +530,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         id: setup-rust
@@ -541,7 +541,7 @@ jobs:
           locked: always
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
@@ -559,7 +559,7 @@ jobs:
 
       - name: Upload wasm-pack output (on failure)
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wasm-pack-pkg
           path: |
@@ -575,7 +575,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust (for Node black-box tests that spawn Rust binaries)
         id: setup-rust
@@ -612,7 +612,7 @@ jobs:
 
       - name: Publish Node unit test report
         if: always()
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         with:
           name: Node unit tests
           path: ${{ steps.node-workspace.outputs.dir }}/test-results/node-junit.xml
@@ -621,7 +621,7 @@ jobs:
 
       - name: Publish Vitest report
         if: always()
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         with:
           name: Vitest
           path: ${{ steps.node-workspace.outputs.dir }}/test-results/vitest-junit.xml
@@ -630,7 +630,7 @@ jobs:
 
       - name: Upload unit test artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-results
           path: |
@@ -662,7 +662,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node workspace
         id: node-workspace
@@ -688,7 +688,7 @@ jobs:
           - windows-latest
           - macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         id: setup-rust
@@ -746,7 +746,7 @@ jobs:
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         id: setup-rust
@@ -798,7 +798,7 @@ jobs:
 
       - name: Publish E2E test report
         if: always()
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         with:
           name: Playwright
           path: ${{ steps.node-workspace.outputs.dir }}/test-results/junit.xml
@@ -807,7 +807,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
@@ -836,7 +836,7 @@ jobs:
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -860,7 +860,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: disk-streaming-browser-e2e-report
           path: |

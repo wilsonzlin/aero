@@ -25,13 +25,13 @@ jobs:
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
     steps:
       - name: Checkout (candidate)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           path: head
 
       - name: Checkout (baseline)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.base.sha }}
@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload storage perf artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: storage-perf-smoke-${{ github.run_id }}
           path: head/storage-perf-results
@@ -126,14 +126,14 @@ jobs:
     steps:
       - name: Download storage perf artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: storage-perf-smoke-${{ github.run_id }}
           path: storage-perf-results
 
       - name: Comment on PR (summary)
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require("node:fs");

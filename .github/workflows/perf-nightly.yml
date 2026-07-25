@@ -31,7 +31,7 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - name: Checkout main
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -242,7 +242,7 @@ jobs:
 
       - name: Upload perf artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: perf-nightly-${{ github.run_id }}
           path: perf-results
@@ -250,7 +250,7 @@ jobs:
           retention-days: 14
 
       - name: Checkout gh-pages (optional; used to load prior history)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         continue-on-error: true
         with:
           ref: gh-pages
@@ -314,7 +314,7 @@ jobs:
           cp bench/history.schema.json dist/perf-dashboard/history.schema.json
 
       - name: Upload history + dashboard artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: perf-history-dashboard
           path: dist/perf-dashboard

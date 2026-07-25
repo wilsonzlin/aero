@@ -17,7 +17,7 @@ jobs:
       # Cache only installer/download payloads (not the installed WDK itself).
       WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Needed for `git describe --tags` in INF stamping/version derivation.
           fetch-depth: 0
@@ -30,7 +30,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:WDK_DOWNLOAD_CACHE | Out-Null
 
       - name: Cache WDK downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.WDK_DOWNLOAD_CACHE }}
           key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1', 'ci/lib/Toolchain.psm1') }}
@@ -77,7 +77,7 @@ jobs:
           }
 
       - name: Upload signed packages (out/packages + aero-test.cer)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: win7-drivers-signed-packages
           path: |
@@ -156,7 +156,7 @@ jobs:
           Copy-Item -LiteralPath 'build-guest-selftest-x86/Release/aero-virtio-selftest.exe' -Destination 'out/artifacts/aero-virtio-selftest-x86.exe' -Force
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: win7-drivers-release
           if-no-files-found: error
@@ -168,7 +168,7 @@ jobs:
     needs: build-sign-package
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Needed for version stamping and deterministic version derivation inside CI scripts.
           fetch-depth: 0
@@ -182,7 +182,7 @@ jobs:
           locked: always
 
       - name: Download signed packages
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: win7-drivers-signed-packages
           # The signed-packages artifact is uploaded with `out/` as its root,
@@ -211,7 +211,7 @@ jobs:
           throw "Unexpected signed packages layout after download. Expected out/packages + out/certs (or nested out/out/*)."
 
       - name: Download artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: win7-drivers-release
           path: artifacts
@@ -276,7 +276,7 @@ jobs:
           Copy-Item -LiteralPath 'artifacts/aero-guest-tools.manifest.json' -Destination (Join-Path $dst 'aero-guest-tools.manifest.json') -Force
 
       - name: Publish GitHub Release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/*.zip
@@ -289,7 +289,7 @@ jobs:
           generate_release_notes: true
 
       - name: Upload Guest Tools artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: aero-guest-tools
           # Upload a dedicated directory so the artifact root contains the files

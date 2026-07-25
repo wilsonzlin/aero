@@ -59,10 +59,10 @@ jobs:
       TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
       TF_IN_AUTOMATION: "1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
@@ -72,7 +72,7 @@ jobs:
         run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
 
       - name: Cache Terraform plugins
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.terraform.d/plugin-cache
           key: ${{ runner.os }}-terraform-${{ env.TERRAFORM_VERSION }}-${{ hashFiles('infra/**/.terraform.lock.hcl') }}
@@ -80,12 +80,12 @@ jobs:
             ${{ runner.os }}-terraform-
 
       - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
+        uses: terraform-linters/setup-tflint@v6
         with:
           tflint_version: ${{ env.TFLINT_VERSION }}
 
       - name: Cache TFLint plugins
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.tflint.d/plugins
           key: ${{ runner.os }}-tflint-${{ env.TFLINT_VERSION }}-${{ hashFiles('infra/**/.tflint.hcl') }}
@@ -147,10 +147,10 @@ jobs:
       KUBECONFORM_SHA256: "2ff56999a6ed9e96fe5ab9ee52271f2db5335baf7f17789035b9561970cdd3eb"
       KUBECONFORM_CRD_SCHEMA: "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.14.4
 
@@ -165,7 +165,7 @@ jobs:
           kubeconform -v
 
       - name: Cache kubeconform schemas
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/kubeconform
           key: ${{ runner.os }}-kubeconform-${{ env.K8S_VERSION }}-${{ env.KUBECONFORM_VERSION }}
@@ -266,10 +266,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 

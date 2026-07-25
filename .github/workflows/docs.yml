@@ -123,10 +123,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Markdown lint
-        uses: DavidAnson/markdownlint-cli2-action@v17
+        uses: DavidAnson/markdownlint-cli2-action@v24
         with:
           globs: |
             AGENTS.md
@@ -162,7 +162,7 @@ jobs:
       # We intentionally run lychee in `--offline` mode so docs-only PRs get
       # meaningful CI without depending on external network reliability.
       - name: Check internal markdown links (offline)
-        uses: lycheeverse/lychee-action@v1
+        uses: lycheeverse/lychee-action@v2
         with:
           args: >-
             --no-progress
@@ -180,7 +180,7 @@ jobs:
       # Optional: manually check external links. This is opt-in to avoid flakes.
       - name: Check external links (manual)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.check_external == 'true'
-        uses: lycheeverse/lychee-action@v1
+        uses: lycheeverse/lychee-action@v2
         with:
           args: >-
             --no-progress

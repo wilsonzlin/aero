@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -53,7 +53,7 @@ jobs:
       - name: Download baseline artifact (previous main run)
         if: github.event_name != 'pull_request'
         continue-on-error: true
-        uses: dawidd6/action-download-artifact@v2
+        uses: dawidd6/action-download-artifact@v21
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           workflow: bench.yml
@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload artifacts (PR)
         if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: bench-pr
           path: |
@@ -195,7 +195,7 @@ jobs:
 
       - name: Upload artifacts (main)
         if: always() && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: criterion-run-${{ github.run_id }}
           path: |
@@ -204,7 +204,7 @@ jobs:
 
       - name: Upload baseline artifact (main)
         if: success() && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: criterion
           path: |
