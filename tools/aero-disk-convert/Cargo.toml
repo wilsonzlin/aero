@@ -14,7 +14,7 @@ path = "src/main.rs"
 anyhow = "1"
 aero-storage = { path = "../../crates/aero-storage" }
 clap = { version = "4", features = ["derive"] }
-indicatif = "0.17"
+indicatif = "0.18"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 assert_cmd = "2"
 tempfile = "3"

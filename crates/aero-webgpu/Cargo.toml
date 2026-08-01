@@ -7,12 +7,12 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 bytemuck = { version = "1.14", features = ["derive"] }
 futures-intrusive = "0.5"
-thiserror = "1.0"
+thiserror = "2.0"
 tracing = "0.1"
-wgpu = { version = "0.20", features = ["webgl"] }
+wgpu = { version = "29.0", features = ["webgl"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["HtmlCanvasElement", "OffscreenCanvas"] }
 
 [dev-dependencies]
-pollster = "0.3"
+pollster = "1.0"

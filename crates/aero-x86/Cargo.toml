@@ -16,5 +16,5 @@ proptest = "1.4"
 # `yaxpeax-arch`'s default features enable `crossterm` for colored terminal output,
 # which is not available on `wasm32`. We only need the decoder/operand model for the
 # structured decoder tests.
-yaxpeax-x86 = { version = "1.1", default-features = false, features = ["std"] }
-yaxpeax-arch = { version = "0.2", default-features = false, features = ["std"] }
+yaxpeax-x86 = { version = "2.2", default-features = false, features = ["std"] }
+yaxpeax-arch = { version = "0.3", default-features = false, features = ["std"] }

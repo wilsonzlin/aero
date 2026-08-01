@@ -11,8 +11,8 @@ io-snapshot = ["dep:aero-io-snapshot"]
 [dependencies]
 aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
 aero-cpu-core = { path = "../aero-cpu-core" }
-lz4_flex = "0.11"
-thiserror = "1"
+lz4_flex = "0.14"
+thiserror = "2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 aero-devices-input = { path = "../aero-devices-input" }
@@ -20,7 +20,7 @@ aero-net-e1000 = { path = "../aero-net-e1000", features = ["io-snapshot"] }
 memory = { path = "../memory" }
 aero-net-stack = { path = "../aero-net-stack" }
 proptest = "1.5"
-rand = "0.8"
+rand = "0.9"
 
 [[test]]
 name = "io_snapshot_bridge"

@@ -18,4 +18,4 @@ aero-l2-protocol = { path = "../aero-l2-protocol" }
 futures-util = "0.3"
 serde_json = "1.0"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
-tokio-tungstenite = "0.26"
+tokio-tungstenite = "0.28"

@@ -11,7 +11,7 @@ aero-mem = { path = "../aero-mem", optional = true }
 [dev-dependencies]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 
 [features]
 default = []

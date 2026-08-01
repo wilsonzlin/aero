@@ -16,7 +16,7 @@ memory = { path = "../memory" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "nvme_vs_ahci"
