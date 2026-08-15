@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref != '' && inputs.ref || github.ref }}
@@ -163,7 +163,7 @@ jobs:
           echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact (workflow)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: aero-web-dist-${{ env.AERO_VERSION }}
           path: |
@@ -174,7 +174,7 @@ jobs:
 
       - name: Publish GitHub Release asset
         if: env.RELEASE_TAG != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: |

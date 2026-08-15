@@ -31,7 +31,7 @@ jobs:
             out_exe: aero-virtio-selftest-x64.exe
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Configure + build
         shell: pwsh
@@ -131,7 +131,7 @@ jobs:
           Copy-Item -LiteralPath $exePath -Destination (Join-Path $outDir "${{ matrix.out_exe }}") -Force
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: win7-virtio-selftest-${{ matrix.arch }}
           if-no-files-found: error

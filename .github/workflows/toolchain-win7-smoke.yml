@@ -17,7 +17,7 @@ jobs:
       WDK_DOWNLOAD_CACHE: C:\wdk-download-cache
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Prepare WDK download cache directory
         shell: pwsh
@@ -26,7 +26,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:WDK_DOWNLOAD_CACHE | Out-Null
 
       - name: Cache WDK downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.WDK_DOWNLOAD_CACHE }}
           key: wdk-download-${{ runner.os }}-${{ hashFiles('ci/install-wdk.ps1', 'ci/lib/Toolchain.psm1') }}
@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload validation logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: toolchain-win7-smoke-logs
           if-no-files-found: warn

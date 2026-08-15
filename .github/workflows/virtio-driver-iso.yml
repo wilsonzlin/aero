@@ -14,13 +14,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -132,7 +132,7 @@ jobs:
           python3 tools/driver-iso/verify_iso.py --require-arch both --iso "$tmp/aero-virtio.iso"
 
       - name: Upload ISO artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: aero-virtio-win7-drivers-sample-iso
           path: dist/aero-virtio-win7-drivers-sample.iso
